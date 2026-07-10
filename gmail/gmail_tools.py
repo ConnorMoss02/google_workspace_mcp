@@ -118,6 +118,76 @@ def _html_to_text(html: str) -> str:
         return html
 
 
+class _HTMLSignatureExtractor(HTMLParser):
+    """Extract text from signature HTML, preserving block-level line breaks.
+
+    _HTMLTextExtractor (above) is tuned for reading arbitrary message
+    bodies, where flowing single-line text is preferred -- it inserts no
+    separator at all between block elements (</div><div> etc.), and its
+    get_text() collapses every whitespace run, including newlines, to a
+    single space. Gmail signatures are structured line-by-line (name /
+    title / phone / ...) using <br> or one <div>/<p> per line; run through
+    the general extractor, adjacent lines end up concatenated with zero
+    whitespace between them (e.g. "-Erik" immediately followed by
+    "Erik Holzhauer" with no break at all), which no amount of whitespace
+    collapsing afterward can repair since there was never a separating
+    character to begin with. This extractor treats block boundaries as
+    real newlines and only collapses horizontal whitespace within a line.
+    """
+
+    _BLOCK_TAGS = ("div", "p", "tr", "li")
+
+    def __init__(self):
+        super().__init__()
+        self._text = []
+        self._skip = False
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("script", "style"):
+            self._skip = True
+            return
+        if self._skip:
+            return
+        if tag == "br":
+            self._text.append("\n")
+
+    def handle_endtag(self, tag):
+        # Break only on the closing tag of a block container (not also on
+        # its opening tag) so ordinary consecutive lines get a single
+        # newline between them rather than a blank line; a genuinely empty
+        # paragraph (e.g. "<p><br></p>" used as an intentional spacer)
+        # still produces a blank line via its own <br>.
+        if tag in ("script", "style"):
+            self._skip = False
+        elif tag in self._BLOCK_TAGS and not self._skip:
+            self._text.append("\n")
+
+    def handle_data(self, data):
+        if not self._skip:
+            self._text.append(data)
+
+    def get_text(self) -> str:
+        raw = "".join(self._text)
+        # Collapse horizontal whitespace within each line, but keep the
+        # newlines that mark real line/paragraph breaks. Adjacent block
+        # boundaries (e.g. </div><div>) produce back-to-back newlines,
+        # which the re.sub below caps at one blank line.
+        lines = [" ".join(line.split()) for line in raw.splitlines()]
+        text = "\n".join(lines)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
+
+
+def _signature_html_to_text(html: str) -> str:
+    """Convert Gmail signature HTML to plain text, preserving line breaks."""
+    try:
+        parser = _HTMLSignatureExtractor()
+        parser.feed(html)
+        return parser.get_text()
+    except Exception:
+        return html
+
+
 def _extract_message_body(payload):
     """
     Helper function to extract plain text body from a Gmail message payload.
@@ -409,7 +479,7 @@ def _append_signature_to_body(
         separator = "<br><br>" if body.strip() else ""
         return f"{body}{separator}{signature_html}"
 
-    signature_text = _html_to_text(signature_html).strip()
+    signature_text = _signature_html_to_text(signature_html).strip()
     if not signature_text:
         return body
     separator = "\n\n" if body.strip() else ""
@@ -486,7 +556,7 @@ def _build_quoted_reply_body(
     # Plain text path
     sig_block = ""
     if signature_html and signature_html.strip():
-        sig_text = _html_to_text(signature_html).strip()
+        sig_text = _signature_html_to_text(signature_html).strip()
         if sig_text:
             sig_block = f"\n\n{sig_text}"
 
@@ -778,7 +848,13 @@ async def _fetch_thread_reply_context(
             if msg.get("message_id") == in_reply_to:
                 target = msg
                 break
-    if target is None:
+    if target is None and message_contexts:
+        # message_contexts can be empty even though the thread itself has
+        # messages, if every message in it is trashed (see the TRASH skip
+        # above) -- message_contexts[-1] would then raise IndexError.
+        # Leaving target as None is safe: callers already treat a missing
+        # target as "no reply context available" and degrade gracefully
+        # (e.g. draft_gmail_message falls back to an unthreaded draft).
         target = message_contexts[-1]
 
     return {
