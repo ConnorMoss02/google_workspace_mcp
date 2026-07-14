@@ -66,6 +66,7 @@ _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 # Default authority ports per scheme, used to compare an Origin against the Host
 # header that received the request (a same-origin check).
 _DEFAULT_PORTS = {"http": 80, "https": 443, "ws": 80, "wss": 443}
+_ALLOW_NULL_ORIGIN_CONSENT_ENV = "WORKSPACE_MCP_ALLOW_NULL_ORIGIN_CONSENT"
 
 
 def _normalize_parsed(parsed: ParseResult) -> Optional[str]:
@@ -136,6 +137,19 @@ def _is_same_origin_as_host(origin: str, host_header: Optional[str]) -> bool:
     return parsed.hostname == host.hostname and origin_port == host_port
 
 
+def _is_null_origin_consent_compat_allowed(scope: Scope, origin: str) -> bool:
+    """Allow known opaque-origin consent POSTs only when explicitly enabled."""
+    if origin != "null":
+        return False
+    if scope.get("method") != "POST":
+        return False
+    if scope.get("path") != "/consent":
+        return False
+
+    value = os.getenv(_ALLOW_NULL_ORIGIN_CONSENT_ENV, "").strip().lower()
+    return value in ("1", "true", "yes", "on")
+
+
 class OriginValidationMiddleware:
     """Reject browser-originated HTTP requests from untrusted origins."""
 
@@ -153,6 +167,14 @@ class OriginValidationMiddleware:
                 if not _is_origin_allowed(origin) and not _is_same_origin_as_host(
                     origin, host_header
                 ):
+                    if _is_null_origin_consent_compat_allowed(scope, origin):
+                        logger.info(
+                            "Allowing OAuth consent POST with Origin: null because "
+                            "%s is enabled",
+                            _ALLOW_NULL_ORIGIN_CONSENT_ENV,
+                        )
+                        await self.app(scope, receive, send)
+                        return
                     logger.warning("Rejected HTTP request from Origin: %s", origin)
                     response = JSONResponse(
                         {"error": "Origin not allowed"}, status_code=403

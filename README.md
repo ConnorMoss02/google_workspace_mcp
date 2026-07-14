@@ -269,6 +269,7 @@ uv run main.py --transport streamable-http --tools gmail drive calendar
 | `GOOGLE_OAUTH_REDIRECT_URI` | | Override OAuth callback URL — default auto-constructed |
 | `OAUTH_CUSTOM_REDIRECT_URIS` | | Comma-separated additional redirect URIs |
 | `OAUTH_ALLOWED_ORIGINS` | | Comma-separated additional CORS origins |
+| `WORKSPACE_MCP_ALLOW_NULL_ORIGIN_CONSENT` | `false` | Allow `Origin: null` only for `POST /consent` OAuth compatibility flows |
 | `WORKSPACE_MCP_OAUTH_PROXY_STORAGE_BACKEND` | | `memory`, `disk`, or `valkey` — see [storage backends](#oauth-proxy-storage-backends) |
 | `FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY` | | Custom encryption key for OAuth proxy storage; required for public OAuth 2.1 clients when `GOOGLE_OAUTH_CLIENT_SECRET` is omitted |
 | `WORKSPACE_MCP_ALLOWED_CLIENT_REDIRECT_URIS` | | Comma-separated allowlist of redirect URIs that dynamically-registered OAuth clients may use. Default is unset (any URI permitted, per DCR). Supports FastMCP's glob patterns (`*`, `*.example.com`) |
@@ -1425,6 +1426,7 @@ export GOOGLE_OAUTH_REDIRECT_URI="https://your-domain.com/oauth2callback"
 You also have options for:
 | `OAUTH_CUSTOM_REDIRECT_URIS` *(optional)* | Comma-separated list of additional redirect URIs |
 | `OAUTH_ALLOWED_ORIGINS` *(optional)* | Comma-separated list of additional CORS origins |
+| `WORKSPACE_MCP_ALLOW_NULL_ORIGIN_CONSENT` *(optional)* | Set to `true` to allow `Origin: null` only for `POST /consent` compatibility flows |
 
 **Important**:
 - Use `WORKSPACE_EXTERNAL_URL` when all OAuth endpoints should use the external URL (recommended for reverse proxy setups)
@@ -1432,6 +1434,7 @@ You also have options for:
 - The redirect URI must exactly match what's configured in your Google Cloud Console
 - Your reverse proxy must forward OAuth-related requests (`/oauth2callback`, `/oauth2/*`, `/.well-known/*`) to the MCP server
 - Do **not** set `Referrer-Policy: no-referrer` on your proxy. It makes browsers send `Origin: null` on the same-origin consent `POST`, which origin validation rejects with `{"error": "Origin not allowed"}` (logged as `Rejected HTTP request from Origin: null`) even when `WORKSPACE_EXTERNAL_URL` is correct. Use `strict-origin-when-cross-origin` (the browser default) or `same-origin` instead.
+- If you cannot reliably rewrite headers at the proxy, set `WORKSPACE_MCP_ALLOW_NULL_ORIGIN_CONSENT=true` to allow only `POST /consent` requests whose `Origin` is exactly `null`. Other paths, methods, and real cross-site origins are still validated normally.
 - Some clients send `Origin: null` on the consent `POST` even with correct headers — Chrome serializes the form origin as opaque after the cross-origin OAuth redirect chain (seen with the Claude Code CLI flow). If you hit this, strip **only** a literal `null` `Origin` for the `/consent` endpoint. The consent endpoint is CSRF-protected by its unguessable `txn_id`, and nginx sends the empty-valued `Origin` header as an empty value that ASGI decodes to `b""`; the middleware validates only when `raw_origin` is truthy, so empty bytes skip this request while real origins still pass through and get validated:
 
   ```nginx
