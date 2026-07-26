@@ -1,7 +1,7 @@
 """Tests for suggestions_view_mode support in Google Docs tools."""
 
-import sys
 import os
+import sys
 from unittest.mock import Mock
 
 import pytest

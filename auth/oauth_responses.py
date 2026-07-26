@@ -6,8 +6,8 @@ to eliminate duplication between server.py and oauth_callback_server.py.
 """
 
 from html import escape as html_escape
+
 from fastapi.responses import HTMLResponse
-from typing import Optional
 
 
 def create_error_response(error_message: str, status_code: int = 400) -> HTMLResponse:
@@ -34,7 +34,7 @@ def create_error_response(error_message: str, status_code: int = 400) -> HTMLRes
     return HTMLResponse(content=content, status_code=status_code)
 
 
-def create_success_response(verified_user_id: Optional[str] = None) -> HTMLResponse:
+def create_success_response(verified_user_id: str | None = None) -> HTMLResponse:
     """
     Create a standardized success response for OAuth authentication.
 

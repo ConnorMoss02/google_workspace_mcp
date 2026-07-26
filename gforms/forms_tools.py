@@ -4,11 +4,10 @@ Google Forms MCP Tools
 This module provides MCP tools for interacting with Google Forms API.
 """
 
-import logging
 import asyncio
 import json
-from typing import List, Optional, Dict, Any
-
+import logging
+from typing import Any
 
 from mcp.types import ToolAnnotations
 
@@ -19,7 +18,7 @@ from core.utils import handle_http_errors
 logger = logging.getLogger(__name__)
 
 
-def _extract_option_values(options: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _extract_option_values(options: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Extract valid option objects from Forms choice option objects.
 
     Returns the full option dicts (preserving fields like ``isOther``,
@@ -29,7 +28,7 @@ def _extract_option_values(options: List[Dict[str, Any]]) -> List[Dict[str, Any]
     return [option for option in options if option.get("value")]
 
 
-def _get_question_type(question: Dict[str, Any]) -> str:
+def _get_question_type(question: dict[str, Any]) -> str:
     """Infer a stable question/item type label from a Forms question payload."""
     choice_question = question.get("choiceQuestion")
     if choice_question:
@@ -55,9 +54,9 @@ def _get_question_type(question: Dict[str, Any]) -> str:
     return "QUESTION"
 
 
-def _serialize_form_item(item: Dict[str, Any], index: int) -> Dict[str, Any]:
+def _serialize_form_item(item: dict[str, Any], index: int) -> dict[str, Any]:
     """Serialize a Forms item with the key metadata agents need for edits."""
-    serialized_item: Dict[str, Any] = {
+    serialized_item: dict[str, Any] = {
         "index": index,
         "itemId": item.get("itemId"),
         "title": item.get("title", f"Question {index}"),
@@ -91,7 +90,7 @@ def _serialize_form_item(item: Dict[str, Any], index: int) -> Dict[str, Any]:
 
         rows = []
         for question in question_group.get("questions", []):
-            row: Dict[str, Any] = {
+            row: dict[str, Any] = {
                 "title": question.get("rowQuestion", {}).get("title", "")
             }
             row_question_id = question.get("questionId")
@@ -133,8 +132,8 @@ async def create_form(
     service,
     user_google_email: str,
     title: str,
-    description: Optional[str] = None,
-    document_title: Optional[str] = None,
+    description: str | None = None,
+    document_title: str | None = None,
 ) -> str:
     """
     Create a new form using the title given in the provided form message in the request.
@@ -150,7 +149,7 @@ async def create_form(
     """
     logger.info(f"[create_form] Invoked. Email: '{user_google_email}', Title: {title}")
 
-    form_body: Dict[str, Any] = {"info": {"title": title}}
+    form_body: dict[str, Any] = {"info": {"title": title}}
 
     if description:
         form_body["info"]["description"] = description
@@ -379,7 +378,7 @@ async def list_form_responses(
     user_google_email: str,
     form_id: str,
     page_size: int = 10,
-    page_token: Optional[str] = None,
+    page_token: str | None = None,
 ) -> str:
     """
     List a form's responses.
@@ -444,7 +443,7 @@ async def list_form_responses(
 async def _batch_update_form_impl(
     service: Any,
     form_id: str,
-    requests: List[Dict[str, Any]],
+    requests: list[dict[str, Any]],
 ) -> str:
     """Internal implementation for batch_update_form.
 
@@ -507,7 +506,7 @@ async def batch_update_form(
     service,
     user_google_email: str,
     form_id: str,
-    requests: List[Dict[str, Any]],
+    requests: list[dict[str, Any]],
 ) -> str:
     """
     Apply batch updates to a Google Form.

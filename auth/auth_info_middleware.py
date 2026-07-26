@@ -5,9 +5,8 @@ Authentication middleware to populate context state with user information
 import logging
 import time
 
+from fastmcp.server.dependencies import get_access_token, get_http_headers
 from fastmcp.server.middleware import Middleware, MiddlewareContext
-from fastmcp.server.dependencies import get_access_token
-from fastmcp.server.dependencies import get_http_headers
 
 from auth.external_oauth_provider import get_session_time
 from auth.oauth21_session_store import ensure_session_from_access_token
@@ -388,7 +387,7 @@ class AuthInfoMiddleware(Middleware):
             ) or "Access denied: Cannot retrieve credentials" in str(e):
                 logger.info(f"Authentication check failed: {e}")
             else:
-                logger.error(f"Error in on_call_tool middleware: {e}", exc_info=True)
+                logger.exception("Error in on_call_tool middleware")
             raise
 
     async def on_get_prompt(self, context: MiddlewareContext, call_next):
@@ -410,5 +409,5 @@ class AuthInfoMiddleware(Middleware):
             ) or "Access denied: Cannot retrieve credentials" in str(e):
                 logger.info(f"Authentication check failed in prompt: {e}")
             else:
-                logger.error(f"Error in on_get_prompt middleware: {e}", exc_info=True)
+                logger.exception("Error in on_get_prompt middleware")
             raise

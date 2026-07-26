@@ -4,8 +4,9 @@ Tests for update_paragraph_style batch operation support.
 Covers the helpers, validation, and batch manager integration.
 """
 
-import pytest
 from unittest.mock import AsyncMock, Mock
+
+import pytest
 
 from gdocs.docs_helpers import (
     build_paragraph_style,
@@ -21,7 +22,7 @@ class TestBuildParagraphStyle:
         assert fields == []
 
     def test_heading_zero_maps_to_normal_text(self):
-        style, fields = build_paragraph_style(heading_level=0)
+        style, _fields = build_paragraph_style(heading_level=0)
         assert style["namedStyleType"] == "NORMAL_TEXT"
 
     def test_heading_maps_to_named_style(self):
@@ -181,7 +182,7 @@ class TestBatchManagerIntegration:
     @pytest.mark.asyncio
     async def test_end_to_end_execute(self, manager):
         manager._execute_batch_requests = AsyncMock(return_value={"replies": [{}]})
-        success, message, meta = await manager.execute_batch_operations(
+        success, _message, meta = await manager.execute_batch_operations(
             "doc-123",
             [
                 {
@@ -198,7 +199,7 @@ class TestBatchManagerIntegration:
     @pytest.mark.asyncio
     async def test_end_to_end_execute_with_named_style_type(self, manager):
         manager._execute_batch_requests = AsyncMock(return_value={"replies": [{}]})
-        success, message, meta = await manager.execute_batch_operations(
+        success, _message, meta = await manager.execute_batch_operations(
             "doc-123",
             [
                 {

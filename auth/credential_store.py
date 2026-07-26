@@ -11,7 +11,6 @@ import os
 import re
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import List, Optional
 from urllib.parse import quote, unquote
 
 from google.oauth2.credentials import Credentials
@@ -25,7 +24,7 @@ class CredentialStore(ABC):
     FILE_EXTENSION = ".json"
 
     @abstractmethod
-    def get_credential(self, user_email: str) -> Optional[Credentials]:
+    def get_credential(self, user_email: str) -> Credentials | None:
         """
         Get credentials for a user by email.
 
@@ -35,7 +34,6 @@ class CredentialStore(ABC):
         Returns:
             Google Credentials object or None if not found
         """
-        pass
 
     @abstractmethod
     def store_credential(self, user_email: str, credentials: Credentials) -> bool:
@@ -49,7 +47,6 @@ class CredentialStore(ABC):
         Returns:
             True if successfully stored, False otherwise
         """
-        pass
 
     @abstractmethod
     def delete_credential(self, user_email: str) -> bool:
@@ -62,23 +59,21 @@ class CredentialStore(ABC):
         Returns:
             True if successfully deleted, False otherwise
         """
-        pass
 
     @abstractmethod
-    def list_users(self) -> List[str]:
+    def list_users(self) -> list[str]:
         """
         List all users with stored credentials.
 
         Returns:
             List of user email addresses
         """
-        pass
 
 
 class LocalDirectoryCredentialStore(CredentialStore):
     """Credential store that uses local JSON files for storage."""
 
-    def __init__(self, base_dir: Optional[str] = None):
+    def __init__(self, base_dir: str | None = None):
         """
         Initialize the local JSON credential store.
 
@@ -174,7 +169,7 @@ class LocalDirectoryCredentialStore(CredentialStore):
 
         return creds_path
 
-    def get_credential(self, user_email: str) -> Optional[Credentials]:
+    def get_credential(self, user_email: str) -> Credentials | None:
         """Get credentials from local JSON file."""
         creds_path = self._get_credential_path(user_email)
 
@@ -210,7 +205,7 @@ class LocalDirectoryCredentialStore(CredentialStore):
             logger.debug(f"Loaded credentials for {user_email} from {creds_path}")
             return credentials
 
-        except (IOError, json.JSONDecodeError, KeyError) as e:
+        except (OSError, json.JSONDecodeError, KeyError) as e:
             logger.error(
                 f"Error loading credentials for {user_email} from {creds_path}: {e}"
             )
@@ -236,7 +231,7 @@ class LocalDirectoryCredentialStore(CredentialStore):
                 json.dump(creds_data, f, indent=2)
             logger.info(f"Stored credentials for {user_email} to {creds_path}")
             return True
-        except IOError as e:
+        except OSError as e:
             logger.error(
                 f"Error storing credentials for {user_email} to {creds_path}: {e}"
             )
@@ -256,13 +251,13 @@ class LocalDirectoryCredentialStore(CredentialStore):
                     f"No credential file to delete for {user_email} at {creds_path}"
                 )
                 return True  # Consider it a success if file doesn't exist
-        except IOError as e:
+        except OSError as e:
             logger.error(
                 f"Error deleting credentials for {user_email} from {creds_path}: {e}"
             )
             return False
 
-    def list_users(self) -> List[str]:
+    def list_users(self) -> list[str]:
         """List all users with credential files."""
         if not os.path.exists(self.base_dir):
             return []
@@ -323,9 +318,9 @@ class GCSCredentialStore(CredentialStore):
 
     def __init__(
         self,
-        bucket_name: Optional[str] = None,
-        prefix: Optional[str] = None,
-        require_cmek: Optional[bool] = None,
+        bucket_name: str | None = None,
+        prefix: str | None = None,
+        require_cmek: bool | None = None,
     ):
         from google.cloud import storage
         from google.cloud.exceptions import NotFound, PreconditionFailed
@@ -394,7 +389,7 @@ class GCSCredentialStore(CredentialStore):
         safe_email = quote(user_email, safe="@._-")
         return f"{self.prefix}{safe_email}{self.FILE_EXTENSION}"
 
-    def get_credential(self, user_email: str) -> Optional[Credentials]:
+    def get_credential(self, user_email: str) -> Credentials | None:
         """Download and deserialize credentials for a user."""
         blob = self._bucket.blob(self._blob_name(user_email))
         try:
@@ -490,7 +485,7 @@ class GCSCredentialStore(CredentialStore):
             logger.error(f"Error deleting credentials for {user_email}: {e}")
             return False
 
-    def list_users(self) -> List[str]:
+    def list_users(self) -> list[str]:
         """Not supported by this backend.
 
         Designed for multi-user OAuth 2.1 mode where users are looked up
@@ -510,7 +505,7 @@ _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 _FALSE_VALUES = frozenset({"", "0", "false", "no", "off"})
 
 
-def _parse_bool_env(value: Optional[str]) -> bool:
+def _parse_bool_env(value: str | None) -> bool:
     """Parse a boolean env var value, failing loudly on anything unrecognised.
 
     Accepts (case-insensitive, whitespace-trimmed):
@@ -548,7 +543,7 @@ def _selected_backend() -> str:
 
 
 # Global credential store instance
-_credential_store: Optional[CredentialStore] = None
+_credential_store: CredentialStore | None = None
 
 
 def get_credential_store() -> CredentialStore:

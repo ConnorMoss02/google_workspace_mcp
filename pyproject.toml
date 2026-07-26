@@ -87,7 +87,7 @@ dev = [
     "pytest-asyncio>=0.23.0",
     "google-cloud-storage>=2.18.0",
     "requests>=2.32.3",
-    "ruff>=0.12.4",
+    "ruff>=0.16.0,<0.17",
     "tomlkit>=0.13.3",
     "twine>=5.0.0",
 ]
@@ -114,7 +114,7 @@ dev = [
     "pytest-asyncio>=0.23.0",
     "google-cloud-storage>=2.18.0",
     "requests>=2.32.3",
-    "ruff>=0.12.4",
+    "ruff>=0.16.0,<0.17",
     "tomlkit>=0.13.3",
     "twine>=5.0.0",
 ]
@@ -139,6 +139,34 @@ filterwarnings = [
 
 [tool.setuptools.package-data]
 core = ["tool_tiers.yaml"]
+
+[tool.ruff]
+# Ruff 0.16 formats Python code blocks inside Markdown. Our docs contain MCP tool
+# names like `mcp__google-workspace__export_doc_to_pdf`, which it reparses as
+# subtraction (`mcp__google - workspace__...`), corrupting README.md and the
+# skills/ reference files. Astral's documented opt-out is excluding *.md.
+extend-exclude = ["*.md"]
+
+[tool.ruff.lint]
+# Ruff 0.16 enables 413 rules by default (up from 59). We take that default set
+# and subtract only the rules that conflict with a deliberate choice here.
+ignore = [
+    # Broad `except Exception` is deliberate at this project's boundaries: auth
+    # probes, per-MIME-part decoding, batch-API fallbacks, and best-effort
+    # persistence all need to degrade rather than propagate, and are already
+    # logged at an appropriate level.
+    "BLE001",
+    # `raise Exception(msg)` is load-bearing: the message is the LLM-visible error
+    # string, and tests assert on it via `pytest.raises(Exception, match=...)`.
+    # Retyping those sites onto UserInputError/ToolError is an error-handling
+    # refactor, tracked separately from this lint config.
+    "TRY002",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# PYI034 wants `typing.Self` (3.11+); requires-python is >=3.10.
+# RUF012 (ClassVar) is noise on throwaway test fixture classes.
+"tests/**" = ["PYI034", "RUF012"]
 
 [tool.uv]
 # Security floors for transitively-pulled deps (not direct dependencies).

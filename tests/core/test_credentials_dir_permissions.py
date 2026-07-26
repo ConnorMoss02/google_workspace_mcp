@@ -23,7 +23,7 @@ def test_concurrent_checks_on_shared_dir_all_succeed(tmp_path):
             barrier.wait()
             for _ in range(5):
                 check_credentials_directory_permissions(target)
-        except Exception as e:  # noqa: BLE001 - capture for assertion
+        except Exception as e:  # capture for assertion
             errors.append(repr(e))
 
     threads = [threading.Thread(target=worker) for _ in range(n)]

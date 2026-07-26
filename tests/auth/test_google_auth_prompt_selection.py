@@ -1,7 +1,6 @@
 from types import SimpleNamespace
 
 import pytest
-
 from google.auth.exceptions import RefreshError
 
 from auth.google_auth import _determine_oauth_prompt

@@ -207,7 +207,7 @@ class _FakeJwtIssuer:
     def __init__(self, payload):
         self._payload = payload
 
-    def verify_token(self, token, expected_token_use="access"):  # noqa: ARG002
+    def verify_token(self, token, expected_token_use="access"):
         if token != "fastmcp-jwt":
             raise ValueError("not a FastMCP-issued token")
         return self._payload

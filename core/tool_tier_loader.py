@@ -7,7 +7,7 @@ It integrates with the existing tool enablement workflow to support tiered tool 
 
 import logging
 from pathlib import Path
-from typing import Dict, List, Set, Literal, Optional
+from typing import Literal
 
 import yaml
 
@@ -19,7 +19,7 @@ TierLevel = Literal["core", "extended", "complete"]
 class ToolTierLoader:
     """Loads and manages tool tiers from configuration."""
 
-    def __init__(self, config_path: Optional[str] = None):
+    def __init__(self, config_path: str | None = None):
         """
         Initialize the tool tier loader.
 
@@ -31,9 +31,9 @@ class ToolTierLoader:
             config_path = Path(__file__).parent / "tool_tiers.yaml"
 
         self.config_path = Path(config_path)
-        self._tiers_config: Optional[Dict] = None
+        self._tiers_config: dict | None = None
 
-    def _load_config(self) -> Dict:
+    def _load_config(self) -> dict:
         """Load the tool tiers configuration from YAML file."""
         if self._tiers_config is not None:
             return self._tiers_config
@@ -53,14 +53,14 @@ class ToolTierLoader:
         except Exception as e:
             raise RuntimeError(f"Failed to load tool tiers configuration: {e}")
 
-    def get_available_services(self) -> List[str]:
+    def get_available_services(self) -> list[str]:
         """Get list of all available services defined in the configuration."""
         config = self._load_config()
         return list(config.keys())
 
     def get_tools_for_tier(
-        self, tier: TierLevel, services: Optional[List[str]] = None
-    ) -> List[str]:
+        self, tier: TierLevel, services: list[str] | None = None
+    ) -> list[str]:
         """
         Get all tools for a specific tier level.
 
@@ -97,8 +97,8 @@ class ToolTierLoader:
         return tools
 
     def get_tools_up_to_tier(
-        self, tier: TierLevel, services: Optional[List[str]] = None
-    ) -> List[str]:
+        self, tier: TierLevel, services: list[str] | None = None
+    ) -> list[str]:
         """
         Get all tools up to and including the specified tier level.
 
@@ -127,7 +127,7 @@ class ToolTierLoader:
 
         return unique_tools
 
-    def get_services_for_tools(self, tool_names: List[str]) -> Set[str]:
+    def get_services_for_tools(self, tool_names: list[str]) -> set[str]:
         """
         Get the service names that provide the specified tools.
 
@@ -141,7 +141,7 @@ class ToolTierLoader:
         services = set()
 
         for service, service_config in config.items():
-            for tier_name, tier_tools in service_config.items():
+            for tier_tools in service_config.values():
                 if tier_tools and any(tool in tier_tools for tool in tool_names):
                     services.add(service)
                     break
@@ -149,9 +149,7 @@ class ToolTierLoader:
         return services
 
 
-def get_tools_for_tier(
-    tier: TierLevel, services: Optional[List[str]] = None
-) -> List[str]:
+def get_tools_for_tier(tier: TierLevel, services: list[str] | None = None) -> list[str]:
     """
     Convenience function to get tools for a specific tier.
 
@@ -167,8 +165,8 @@ def get_tools_for_tier(
 
 
 def resolve_tools_from_tier(
-    tier: TierLevel, services: Optional[List[str]] = None
-) -> tuple[List[str], List[str]]:
+    tier: TierLevel, services: list[str] | None = None
+) -> tuple[list[str], list[str]]:
     """
     Resolve tool names and service names for the specified tier.
 

@@ -15,7 +15,6 @@ from core.utils import UserInputError
 from gdocs import docs_tools
 from gdocs.managers.batch_operation_manager import BatchOperationManager
 
-
 COMMON_RESPONSE_KEYS = {
     "action",
     "success",

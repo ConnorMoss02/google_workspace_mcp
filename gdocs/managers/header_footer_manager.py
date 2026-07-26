@@ -5,9 +5,10 @@ This module provides high-level operations for managing headers and footers
 in Google Docs, extracting complex logic from the main tools module.
 """
 
-import logging
 import asyncio
-from typing import Any, Optional
+import contextlib
+import logging
+from typing import Any
 
 from gdocs.docs_helpers import (
     create_create_header_footer_request,
@@ -144,8 +145,8 @@ class HeaderFooterManager:
                 return False, replace_message
 
         except Exception as e:
-            logger.error(f"Failed to update {section_type}: {str(e)}")
-            return False, f"Failed to update {section_type}: {str(e)}"
+            logger.error(f"Failed to update {section_type}: {e!s}")
+            return False, f"Failed to update {section_type}: {e!s}"
 
     async def _get_document(self, document_id: str) -> dict[str, Any]:
         """Get the full document data."""
@@ -157,7 +158,7 @@ class HeaderFooterManager:
 
     def _get_target_doc_for_header_footer(
         self, doc: dict[str, Any]
-    ) -> tuple[dict[str, Any], Optional[str]]:
+    ) -> tuple[dict[str, Any], str | None]:
         """
         Return the document-like content container for header/footer operations.
 
@@ -192,7 +193,7 @@ class HeaderFooterManager:
 
     async def _find_target_section(
         self, doc: dict[str, Any], section_type: str, header_footer_type: str
-    ) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+    ) -> tuple[dict[str, Any] | None, str | None]:
         """
         Find the target header or footer section.
 
@@ -245,7 +246,7 @@ class HeaderFooterManager:
 
     def _resolve_section_id_from_styles(
         self, doc: dict[str, Any], section_type: str, header_footer_type: str
-    ) -> Optional[str]:
+    ) -> str | None:
         """Resolve a header/footer segment ID from document or section styles."""
         style_field = self._style_field_map.get(section_type, {}).get(
             header_footer_type
@@ -271,7 +272,7 @@ class HeaderFooterManager:
         section: dict[str, Any],
         new_content: str,
         section_id: str,
-        tab_id: Optional[str],
+        tab_id: str | None,
     ) -> tuple[bool, str]:
         """
         Replace the content in a header or footer section.
@@ -342,10 +343,10 @@ class HeaderFooterManager:
             return True, "ok"
 
         except Exception as e:
-            logger.error(f"Failed to replace section content: {str(e)}")
+            logger.error(f"Failed to replace section content: {e!s}")
             return (
                 False,
-                f"Failed to write {section_id} segment content: {str(e)}",
+                f"Failed to write {section_id} segment content: {e!s}",
             )
 
     def _segment_has_meaningful_content(
@@ -370,7 +371,7 @@ class HeaderFooterManager:
 
     async def _create_missing_section(
         self, document_id: str, section_type: str, header_footer_type: str = "DEFAULT"
-    ) -> Optional[str]:
+    ) -> str | None:
         """Create a missing header/footer and return its new segment ID."""
         request = create_create_header_footer_request(section_type, header_footer_type)
         try:
@@ -381,14 +382,14 @@ class HeaderFooterManager:
             )
         except Exception as e:
             if "already exists" in str(e).lower():
-                try:
+                # Best-effort recovery: if we can't resolve the existing section,
+                # fall through to the error path below.
+                with contextlib.suppress(Exception):
                     doc = await self._get_document(document_id)
                     return self._resolve_section_id_from_styles(
                         doc, section_type, header_footer_type
                     )
-                except Exception:
-                    pass
-            logger.error(f"Failed to create missing {section_type}: {str(e)}")
+            logger.error(f"Failed to create missing {section_type}: {e!s}")
             return None
 
         replies = result.get("replies", [])
@@ -402,7 +403,7 @@ class HeaderFooterManager:
 
     def _find_first_paragraph(
         self, content_elements: list[dict[str, Any]]
-    ) -> Optional[dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Find the first paragraph element in content."""
         for element in content_elements:
             if "paragraph" in element:
@@ -438,7 +439,7 @@ class HeaderFooterManager:
             }
 
         except Exception as e:
-            logger.error(f"Failed to get header/footer info: {str(e)}")
+            logger.error(f"Failed to get header/footer info: {e!s}")
             return {"error": str(e)}
 
     def _extract_section_info(self, section_data: dict[str, Any]) -> dict[str, Any]:

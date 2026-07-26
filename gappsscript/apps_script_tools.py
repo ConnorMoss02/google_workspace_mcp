@@ -4,14 +4,15 @@ Google Apps Script MCP Tools
 This module provides MCP tools for interacting with Google Apps Script API.
 """
 
-import logging
 import asyncio
-from typing import List, Dict, Any, Optional
+import logging
+from typing import Any
+
+from mcp.types import ToolAnnotations
 
 from auth.service_decorator import require_google_service
 from core.server import server
-from mcp.types import ToolAnnotations
-from core.utils import handle_http_errors, ObjectList
+from core.utils import ObjectList, handle_http_errors
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,7 @@ async def _list_script_projects_impl(
     service: Any,
     user_google_email: str,
     page_size: int = 50,
-    page_token: Optional[str] = None,
+    page_token: str | None = None,
 ) -> str:
     """Internal implementation for list_script_projects.
 
@@ -85,7 +86,7 @@ async def list_script_projects(
     service: Any,
     user_google_email: str,
     page_size: int = 50,
-    page_token: Optional[str] = None,
+    page_token: str | None = None,
 ) -> str:
     """
     Lists Google Apps Script projects accessible to the user.
@@ -254,7 +255,7 @@ async def _create_script_project_impl(
     service: Any,
     user_google_email: str,
     title: str,
-    parent_id: Optional[str] = None,
+    parent_id: str | None = None,
 ) -> str:
     """Internal implementation for create_script_project."""
     logger.info(f"[create_script_project] Email: {user_google_email}, Title: {title}")
@@ -296,7 +297,7 @@ async def create_script_project(
     service: Any,
     user_google_email: str,
     title: str,
-    parent_id: Optional[str] = None,
+    parent_id: str | None = None,
 ) -> str:
     """
     Creates a new Apps Script project.
@@ -319,7 +320,7 @@ async def _update_script_content_impl(
     service: Any,
     user_google_email: str,
     script_id: str,
-    files: List[Dict[str, str]],
+    files: list[dict[str, str]],
 ) -> str:
     """Internal implementation for update_script_content."""
     logger.info(
@@ -358,7 +359,7 @@ async def update_script_content(
     service: Any,
     user_google_email: str,
     script_id: str,
-    files: List[Dict[str, str]],
+    files: list[dict[str, str]],
 ) -> str:
     """
     Updates or creates files in a script project.
@@ -382,7 +383,7 @@ async def _run_script_function_impl(
     user_google_email: str,
     script_id: str,
     function_name: str,
-    parameters: Optional[list[object]] = None,
+    parameters: list[object] | None = None,
     dev_mode: bool = False,
 ) -> str:
     """Internal implementation for run_script_function."""
@@ -418,8 +419,8 @@ async def _run_script_function_impl(
         return "\n".join(output)
 
     except Exception as e:
-        logger.error(f"[run_script_function] Execution error: {str(e)}")
-        return f"Execution failed\nFunction: {function_name}\nError: {str(e)}"
+        logger.error(f"[run_script_function] Execution error: {e!s}")
+        return f"Execution failed\nFunction: {function_name}\nError: {e!s}"
 
 
 @server.tool(
@@ -438,7 +439,7 @@ async def run_script_function(
     user_google_email: str,
     script_id: str,
     function_name: str,
-    parameters: Optional[ObjectList] = None,
+    parameters: ObjectList | None = None,
     dev_mode: bool = False,
 ) -> str:
     """
@@ -465,7 +466,7 @@ async def _create_deployment_impl(
     user_google_email: str,
     script_id: str,
     description: str,
-    version_description: Optional[str] = None,
+    version_description: str | None = None,
 ) -> str:
     """Internal implementation for create_deployment.
 
@@ -528,10 +529,10 @@ async def manage_deployment(
     user_google_email: str,
     action: str,
     script_id: str,
-    deployment_id: Optional[str] = None,
-    description: Optional[str] = None,
-    version_description: Optional[str] = None,
-    version_number: Optional[int] = None,
+    deployment_id: str | None = None,
+    description: str | None = None,
+    version_description: str | None = None,
+    version_number: int | None = None,
 ) -> str:
     """
     Manages Apps Script deployments. Supports creating, updating, and deleting deployments.
@@ -653,8 +654,8 @@ async def _update_deployment_impl(
     user_google_email: str,
     script_id: str,
     deployment_id: str,
-    description: Optional[str] = None,
-    version_number: Optional[int] = None,
+    description: str | None = None,
+    version_number: int | None = None,
 ) -> str:
     """Internal implementation for update_deployment.
 
@@ -668,7 +669,7 @@ async def _update_deployment_impl(
         f"[update_deployment] Email: {user_google_email}, Script: {script_id}, Deployment: {deployment_id}"
     )
 
-    deployment_config: Dict[str, Any] = {"scriptId": script_id}
+    deployment_config: dict[str, Any] = {"scriptId": script_id}
     if version_number is not None:
         deployment_config["versionNumber"] = version_number
     if description:
@@ -728,7 +729,7 @@ async def _list_script_processes_impl(
     service: Any,
     user_google_email: str,
     page_size: int = 50,
-    script_id: Optional[str] = None,
+    script_id: str | None = None,
 ) -> str:
     """Internal implementation for list_script_processes."""
     logger.info(
@@ -781,7 +782,7 @@ async def list_script_processes(
     service: Any,
     user_google_email: str,
     page_size: int = 50,
-    script_id: Optional[str] = None,
+    script_id: str | None = None,
 ) -> str:
     """
     Lists recent execution processes for user's scripts.
@@ -928,7 +929,7 @@ async def _create_version_impl(
     service: Any,
     user_google_email: str,
     script_id: str,
-    description: Optional[str] = None,
+    description: str | None = None,
 ) -> str:
     """Internal implementation for create_version."""
     logger.info(f"[create_version] Email: {user_google_email}, ScriptID: {script_id}")
@@ -972,7 +973,7 @@ async def create_version(
     service: Any,
     user_google_email: str,
     script_id: str,
-    description: Optional[str] = None,
+    description: str | None = None,
 ) -> str:
     """
     Creates a new immutable version of a script project.

@@ -11,9 +11,9 @@ import os
 import re
 import unicodedata
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import NamedTuple, Optional, Dict
-from datetime import datetime, timedelta
+from typing import NamedTuple
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ def _ensure_storage_dir() -> None:
     STORAGE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
 
 
-def sanitize_attachment_filename(filename: Optional[str]) -> str:
+def sanitize_attachment_filename(filename: str | None) -> str:
     """Return a filesystem-safe attachment filename."""
     if not filename:
         return "attachment"
@@ -76,13 +76,13 @@ class AttachmentStorage:
 
     def __init__(self, expiration_seconds: int = DEFAULT_EXPIRATION_SECONDS):
         self.expiration_seconds = expiration_seconds
-        self._metadata: Dict[str, Dict] = {}
+        self._metadata: dict[str, dict] = {}
 
     def save_attachment(
         self,
         base64_data: str,
-        filename: Optional[str] = None,
-        mime_type: Optional[str] = None,
+        filename: str | None = None,
+        mime_type: str | None = None,
     ) -> SavedAttachment:
         """
         Save an attachment to local disk.
@@ -166,20 +166,22 @@ class AttachmentStorage:
             raise
 
         # Store metadata
-        expires_at = datetime.now() + timedelta(seconds=self.expiration_seconds)
+        expires_at = datetime.now(timezone.utc) + timedelta(
+            seconds=self.expiration_seconds
+        )
         self._metadata[file_id] = {
             "file_path": str(file_path),
             "filename": save_name,
             "original_filename": filename,
             "mime_type": mime_type or "application/octet-stream",
             "size": len(file_bytes),
-            "created_at": datetime.now(),
+            "created_at": datetime.now(timezone.utc),
             "expires_at": expires_at,
         }
 
         return SavedAttachment(file_id=file_id, path=str(file_path))
 
-    def get_attachment_path(self, file_id: str) -> Optional[Path]:
+    def get_attachment_path(self, file_id: str) -> Path | None:
         """
         Get the file path for an attachment ID.
 
@@ -197,7 +199,7 @@ class AttachmentStorage:
         file_path = Path(metadata["file_path"])
 
         # Check if expired
-        if datetime.now() > metadata["expires_at"]:
+        if datetime.now(timezone.utc) > metadata["expires_at"]:
             logger.info(f"Attachment {file_id} has expired, cleaning up")
             self._cleanup_file(file_id)
             return None
@@ -210,7 +212,7 @@ class AttachmentStorage:
 
         return file_path
 
-    def get_attachment_metadata(self, file_id: str) -> Optional[Dict]:
+    def get_attachment_metadata(self, file_id: str) -> dict | None:
         """
         Get metadata for an attachment.
 
@@ -226,7 +228,7 @@ class AttachmentStorage:
         metadata = self._metadata[file_id].copy()
 
         # Check if expired
-        if datetime.now() > metadata["expires_at"]:
+        if datetime.now(timezone.utc) > metadata["expires_at"]:
             self._cleanup_file(file_id)
             return None
 
@@ -251,7 +253,7 @@ class AttachmentStorage:
         Returns:
             Number of files cleaned up
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         expired_ids = [
             file_id
             for file_id, metadata in self._metadata.items()
@@ -265,7 +267,7 @@ class AttachmentStorage:
 
 
 # Global instance
-_attachment_storage: Optional[AttachmentStorage] = None
+_attachment_storage: AttachmentStorage | None = None
 
 
 def get_attachment_storage() -> AttachmentStorage:
@@ -286,13 +288,12 @@ def get_attachment_url(file_id: str) -> str:
     Returns:
         Full URL to access the attachment
     """
-    from core.config import WORKSPACE_MCP_PORT, WORKSPACE_MCP_BASE_URI
-
     # In stdio mode the attachment route is served by the lazily-started callback
     # server; bring it up now so the URL we hand out is actually reachable. The
     # import is local to avoid pulling the FastAPI/uvicorn auth stack into this
     # lightweight, widely-imported module (matches every other call site, #832).
     from auth.oauth_callback_server import ensure_stdio_oauth_callback_available
+    from core.config import WORKSPACE_MCP_BASE_URI, WORKSPACE_MCP_PORT
 
     success, error_msg = ensure_stdio_oauth_callback_available()
     if not success:

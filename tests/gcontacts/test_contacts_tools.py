@@ -4,18 +4,18 @@ Unit tests for Google Contacts (People API) tools.
 Tests helper functions and formatting utilities.
 """
 
-import sys
 import os
+import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 import pytest
 
-from gcontacts.contacts_tools import (
-    _format_contact,
-    _build_person_body,
-)
 from gcontacts.contacts_helpers import _parse_birthday
+from gcontacts.contacts_tools import (
+    _build_person_body,
+    _format_contact,
+)
 
 
 class TestFormatContact:
@@ -272,7 +272,7 @@ class TestBuildPersonBody:
 
     def test_build_full_body(self):
         """Test building a person body with all fields."""
-        from gcontacts.contacts_tools import EmailInput, PhoneInput, OrganizationInput
+        from gcontacts.contacts_tools import EmailInput, OrganizationInput, PhoneInput
 
         body = _build_person_body(
             given_name="John",

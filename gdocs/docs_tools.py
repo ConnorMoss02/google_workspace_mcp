@@ -4,72 +4,70 @@ Google Docs MCP Tools
 This module provides MCP tools for interacting with Google Docs API and managing Google Docs via Drive.
 """
 
-import logging
 import asyncio
-import io
 import inspect
+import io
+import json
+import logging
 import re
-from typing import List, Any, Literal, Optional, Union
-
-from typing_extensions import TypedDict
+from typing import Any, Literal
 
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
-
 from mcp.types import ToolAnnotations
+from typing_extensions import TypedDict
 
 # Auth & server utilities
 from auth.service_decorator import require_google_service, require_multiple_services
+from core.comments import create_comment_tools
+from core.server import server
 from core.utils import (
     GOOGLE_API_WRITE_RETRIES,
+    UserInputError,
     extract_office_xml_text,
     handle_http_errors,
-    UserInputError,
 )
-from core.server import server
-from core.comments import create_comment_tools
 
 # Import helper functions for document operations
 from gdocs.docs_helpers import (
-    create_insert_text_request,
-    create_delete_range_request,
-    create_format_text_request,
-    create_find_replace_request,
-    create_insert_table_request,
-    create_insert_page_break_request,
-    create_insert_image_request,
     create_bullet_list_request,
-    create_insert_doc_tab_request,
-    create_update_doc_tab_request,
     create_delete_doc_tab_request,
-    validate_suggestions_view_mode,
+    create_delete_range_request,
+    create_find_replace_request,
+    create_format_text_request,
+    create_insert_doc_tab_request,
+    create_insert_image_request,
+    create_insert_page_break_request,
+    create_insert_table_request,
+    create_insert_text_request,
+    create_update_doc_tab_request,
     create_update_paragraph_style_request,
+    validate_suggestions_view_mode,
 )
-
-# Import document structure and table utilities
-from gdocs.docs_structure import (
-    parse_document_structure,
-    find_tables,
-    analyze_document_complexity,
-)
-from gdocs.docs_tables import extract_table_as_data
 from gdocs.docs_markdown import (
     convert_doc_to_markdown,
-    format_comments_inline,
     format_comments_appendix,
+    format_comments_inline,
     parse_drive_comments,
 )
 from gdocs.docs_markdown_writer import markdown_to_docs_requests
-from gdocs.operation_schemas import BatchDocOperations
+
+# Import document structure and table utilities
+from gdocs.docs_structure import (
+    analyze_document_complexity,
+    find_tables,
+    parse_document_structure,
+)
+from gdocs.docs_tables import extract_table_as_data
 
 # Import operation managers for complex business logic
 from gdocs.managers import (
-    TableOperationManager,
-    HeaderFooterManager,
-    ValidationManager,
     BatchOperationManager,
+    HeaderFooterManager,
+    TableOperationManager,
+    ValidationManager,
 )
-import json
+from gdocs.operation_schemas import BatchDocOperations
 
 logger = logging.getLogger(__name__)
 HEADER_FOOTER_RUNTIME_CANARY = "docs-hf-canary-20260328b"
@@ -306,7 +304,7 @@ async def get_doc_content(
         loop = asyncio.get_event_loop()
         done = False
         while not done:
-            status, done = await loop.run_in_executor(None, downloader.next_chunk)
+            _status, done = await loop.run_in_executor(None, downloader.next_chunk)
 
         file_content_bytes = fh.getvalue()
 
@@ -457,24 +455,24 @@ async def modify_doc_text(
     user_google_email: str,
     document_id: str,
     start_index: int,
-    end_index: int = None,
-    text: str = None,
-    tab_id: str = None,
-    segment_id: str = None,
+    end_index: int | None = None,
+    text: str | None = None,
+    tab_id: str | None = None,
+    segment_id: str | None = None,
     end_of_segment: bool = False,
-    bold: bool = None,
-    italic: bool = None,
-    underline: bool = None,
-    strikethrough: bool = None,
-    font_size: int = None,
-    font_family: str = None,
-    font_weight: int = None,
-    text_color: str = None,
-    background_color: str = None,
-    link_url: str = None,
-    clear_link: bool = None,
-    baseline_offset: str = None,
-    small_caps: bool = None,
+    bold: bool | None = None,
+    italic: bool | None = None,
+    underline: bool | None = None,
+    strikethrough: bool | None = None,
+    font_size: int | None = None,
+    font_family: str | None = None,
+    font_weight: int | None = None,
+    text_color: str | None = None,
+    background_color: str | None = None,
+    link_url: str | None = None,
+    clear_link: bool | None = None,
+    baseline_offset: str | None = None,
+    small_caps: bool | None = None,
 ) -> str:
     """
     Modifies text in a Google Doc - can insert/replace text and/or apply formatting in a single operation.
@@ -742,7 +740,7 @@ async def find_and_replace_doc(
     find_text: str,
     replace_text: str,
     match_case: bool = False,
-    tab_id: Optional[str] = None,
+    tab_id: str | None = None,
 ) -> str:
     """
     Finds and replaces text throughout a Google Doc. No index calculation required.
@@ -783,7 +781,7 @@ async def find_and_replace_doc(
 
     # Extract number of replacements from response
     replacements = 0
-    if "replies" in result and result["replies"]:
+    if result.get("replies"):
         reply = result["replies"][0]
         if "replaceAllText" in reply:
             replacements = reply["replaceAllText"].get("occurrencesChanged", 0)
@@ -809,10 +807,10 @@ async def insert_doc_elements(
     document_id: str,
     element_type: str,
     index: int,
-    rows: int = None,
-    columns: int = None,
-    list_type: str = None,
-    text: str = None,
+    rows: int | None = None,
+    columns: int | None = None,
+    list_type: str | None = None,
+    text: str | None = None,
 ) -> str:
     """
     Inserts structural elements like tables, lists, or page breaks into a Google Doc.
@@ -937,9 +935,7 @@ async def insert_doc_image(
         index = 1
 
     # Determine if source is a Drive file ID or URL
-    is_drive_file = not (
-        image_source.startswith("http://") or image_source.startswith("https://")
-    )
+    is_drive_file = not (image_source.startswith(("http://", "https://")))
 
     if is_drive_file:
         # Verify Drive file exists and get metadata
@@ -960,7 +956,7 @@ async def insert_doc_image(
             image_uri = f"https://drive.google.com/uc?id={image_source}"
             source_description = f"Drive file {file_metadata.get('name', image_source)}"
         except Exception as e:
-            return f"Error: Could not access Drive file {image_source}: {str(e)}"
+            return f"Error: Could not access Drive file {image_source}: {e!s}"
     else:
         image_uri = image_source
         source_description = "URL image"
@@ -1352,7 +1348,7 @@ async def inspect_doc_structure(
     user_google_email: str,
     document_id: str,
     detailed: bool = False,
-    tab_id: str = None,
+    tab_id: str | None = None,
 ) -> str:
     """
     Essential tool for finding safe insertion points and understanding document structure.
@@ -1598,7 +1594,7 @@ async def inspect_doc_structure(
 
 
 def _rewrite_modify_doc_text_http_error(
-    error: HttpError, segment_id: Optional[str]
+    error: HttpError, segment_id: str | None
 ) -> Exception:
     """
     Convert common low-level Docs API failures into actionable caller guidance.
@@ -1736,10 +1732,10 @@ async def create_table_with_data(
     service: Any,
     user_google_email: str,
     document_id: str,
-    table_data: List[List[str]],
+    table_data: list[list[str]],
     index: int,
     bold_headers: bool = True,
-    tab_id: Optional[str] = None,
+    tab_id: str | None = None,
     header_rows: int = 0,
 ) -> str:
     """
@@ -1949,8 +1945,8 @@ async def export_doc_to_pdf(
     service: Any,
     user_google_email: str,
     document_id: str,
-    pdf_filename: str = None,
-    folder_id: str = None,
+    pdf_filename: str | None = None,
+    folder_id: str | None = None,
 ) -> str:
     """
     Exports a Google Doc to PDF format and saves it to Google Drive.
@@ -1980,7 +1976,7 @@ async def export_doc_to_pdf(
             .execute
         )
     except Exception as e:
-        return f"Error: Could not access document {document_id}: {str(e)}"
+        return f"Error: Could not access document {document_id}: {e!s}"
 
     mime_type = file_metadata.get("mimeType", "")
     original_name = file_metadata.get("name", "Unknown Document")
@@ -2009,7 +2005,7 @@ async def export_doc_to_pdf(
         pdf_size = len(pdf_content)
 
     except Exception as e:
-        return f"Error: Failed to export document to PDF: {str(e)}"
+        return f"Error: Failed to export document to PDF: {e!s}"
 
     # Determine PDF filename
     if not pdf_filename:
@@ -2061,7 +2057,7 @@ async def export_doc_to_pdf(
         return f"Successfully exported '{original_name}' to PDF and saved to Drive as '{pdf_filename}' (ID: {pdf_file_id}, {pdf_size:,} bytes){folder_info}. PDF: {pdf_web_link} | Original: {web_view_link}"
 
     except Exception as e:
-        return f"Error: Failed to upload PDF to Drive: {str(e)}. PDF was generated successfully ({pdf_size:,} bytes) but could not be saved to Drive."
+        return f"Error: Failed to upload PDF to Drive: {e!s}. PDF was generated successfully ({pdf_size:,} bytes) but could not be saved to Drive."
 
 
 # ==============================================================================
@@ -2115,27 +2111,27 @@ async def update_paragraph_style(
     document_id: str,
     start_index: int,
     end_index: int,
-    heading_level: int = None,
-    alignment: str = None,
-    line_spacing: float = None,
-    indent_first_line: float = None,
-    indent_start: float = None,
-    indent_end: float = None,
-    space_above: float = None,
-    space_below: float = None,
-    named_style_type: str = None,
-    tab_id: str = None,
-    segment_id: str = None,
-    direction: str = None,
-    keep_lines_together: bool = None,
-    keep_with_next: bool = None,
-    avoid_widow_and_orphan: bool = None,
-    page_break_before: bool = None,
-    spacing_mode: str = None,
-    shading_color: str = None,
-    list_type: str = None,
-    list_nesting_level: int = None,
-    bullet_preset: str = None,
+    heading_level: int | None = None,
+    alignment: str | None = None,
+    line_spacing: float | None = None,
+    indent_first_line: float | None = None,
+    indent_start: float | None = None,
+    indent_end: float | None = None,
+    space_above: float | None = None,
+    space_below: float | None = None,
+    named_style_type: str | None = None,
+    tab_id: str | None = None,
+    segment_id: str | None = None,
+    direction: str | None = None,
+    keep_lines_together: bool | None = None,
+    keep_with_next: bool | None = None,
+    avoid_widow_and_orphan: bool | None = None,
+    page_break_before: bool | None = None,
+    spacing_mode: str | None = None,
+    shading_color: str | None = None,
+    list_type: str | None = None,
+    list_nesting_level: int | None = None,
+    bullet_preset: str | None = None,
 ) -> str:
     """
     Apply paragraph-level formatting, heading styles, and/or list formatting to a range in a Google Doc.
@@ -2499,7 +2495,7 @@ async def get_doc_as_markdown(
         return markdown.rstrip("\n") + "\n\n" + appendix
 
 
-def _find_tab_end_index(doc: dict, target_tab_id: str) -> Optional[int]:
+def _find_tab_end_index(doc: dict, target_tab_id: str) -> int | None:
     """Walk the document tabs tree and return the end index of target tab's body.
 
     Returns:
@@ -2508,7 +2504,7 @@ def _find_tab_end_index(doc: dict, target_tab_id: str) -> Optional[int]:
         has no ``documentTab``.
     """
 
-    def walk(tabs: list) -> Optional[int]:
+    def walk(tabs: list) -> int | None:
         for tab in tabs:
             tab_props = tab.get("tabProperties", {})
             if tab_props.get("tabId") == target_tab_id:
@@ -2534,44 +2530,44 @@ class CreateDocTabResponse(TypedDict):
     action: Literal["create"]
     success: bool
     message: str
-    tab_id: Optional[str]
+    tab_id: str | None
     requests_applied: int
-    link: Optional[str]
+    link: str | None
 
 
 class DeleteDocTabResponse(TypedDict):
     action: Literal["delete"]
     success: bool
     message: str
-    tab_id: Optional[str]
+    tab_id: str | None
     requests_applied: int
-    link: Optional[str]
+    link: str | None
 
 
 class RenameDocTabResponse(TypedDict):
     action: Literal["rename"]
     success: bool
     message: str
-    tab_id: Optional[str]
+    tab_id: str | None
     requests_applied: int
-    link: Optional[str]
+    link: str | None
 
 
 class PopulateMarkdownTabResponse(TypedDict):
     action: Literal["populate_from_markdown"]
     success: bool
     message: str
-    tab_id: Optional[str]
+    tab_id: str | None
     requests_applied: int
-    link: Optional[str]
+    link: str | None
 
 
-ManageDocTabResponse = Union[
-    CreateDocTabResponse,
-    DeleteDocTabResponse,
-    RenameDocTabResponse,
-    PopulateMarkdownTabResponse,
-]
+ManageDocTabResponse = (
+    CreateDocTabResponse
+    | DeleteDocTabResponse
+    | RenameDocTabResponse
+    | PopulateMarkdownTabResponse
+)
 
 
 @server.tool(
@@ -2590,11 +2586,11 @@ async def manage_doc_tab(
     user_google_email: str,
     document_id: str,
     action: Literal["create", "rename", "delete", "populate_from_markdown"],
-    tab_id: Optional[str] = None,
-    title: Optional[str] = None,
-    index: Optional[int] = None,
-    parent_tab_id: Optional[str] = None,
-    markdown_text: Optional[str] = None,
+    tab_id: str | None = None,
+    title: str | None = None,
+    index: int | None = None,
+    parent_tab_id: str | None = None,
+    markdown_text: str | None = None,
     replace_existing: bool = True,
 ) -> ManageDocTabResponse:
     """
@@ -2631,7 +2627,7 @@ async def manage_doc_tab(
         )
 
         new_tab_id = None
-        if "replies" in result and result["replies"]:
+        if result.get("replies"):
             reply = result["replies"][0]
             # Google returns under "addDocumentTab"; accept "createDocumentTab"
             # as a defensive fallback.
@@ -2704,7 +2700,7 @@ async def manage_doc_tab(
             "'markdown_text' is required for the 'populate_from_markdown' action."
         )
 
-    all_requests: List[dict] = []
+    all_requests: list[dict] = []
 
     doc = await asyncio.to_thread(
         service.documents().get(documentId=document_id, includeTabsContent=True).execute

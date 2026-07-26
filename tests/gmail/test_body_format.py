@@ -5,8 +5,8 @@ from unittest.mock import Mock
 
 import pytest
 
-import gmail.gmail_tools as gmail_tools
 from core.utils import UserInputError
+from gmail import gmail_tools
 from gmail.gmail_tools import (
     _extract_message_bodies,
     _format_body_content,

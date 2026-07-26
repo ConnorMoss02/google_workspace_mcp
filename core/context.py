@@ -1,6 +1,5 @@
 # core/context.py
 import contextvars
-from typing import Optional
 
 # Context variable to hold injected credentials for the life of a single request.
 _injected_oauth_credentials = contextvars.ContextVar(
@@ -19,7 +18,7 @@ def get_injected_oauth_credentials():
     return _injected_oauth_credentials.get()
 
 
-def set_injected_oauth_credentials(credentials: Optional[dict]):
+def set_injected_oauth_credentials(credentials: dict | None):
     """
     Set or clear the injected OAuth credentials for the current request context.
     This is called by the service decorator.
@@ -27,7 +26,7 @@ def set_injected_oauth_credentials(credentials: Optional[dict]):
     _injected_oauth_credentials.set(credentials)
 
 
-def get_fastmcp_session_id() -> Optional[str]:
+def get_fastmcp_session_id() -> str | None:
     """
     Retrieve the FastMCP session ID for the current request context.
     This is called by authentication layer to get the current session.
@@ -35,7 +34,7 @@ def get_fastmcp_session_id() -> Optional[str]:
     return _fastmcp_session_id.get()
 
 
-def set_fastmcp_session_id(session_id: Optional[str]):
+def set_fastmcp_session_id(session_id: str | None):
     """
     Set or clear the FastMCP session ID for the current request context.
     This is called when a FastMCP request starts.

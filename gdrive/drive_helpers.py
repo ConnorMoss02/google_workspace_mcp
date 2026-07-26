@@ -9,9 +9,10 @@ import asyncio
 import io
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from tempfile import SpooledTemporaryFile
-from typing import List, Dict, Any, Awaitable, BinaryIO, Callable, Optional, Tuple
+from typing import Any, BinaryIO
 from urllib.parse import urlparse
 from urllib.request import url2pathname
 
@@ -20,6 +21,8 @@ from googleapiclient.http import MediaIoBaseUpload
 
 from core.http_utils import (
     redact_url as _redact_url,
+)
+from core.http_utils import (
     ssrf_safe_stream as _ssrf_safe_stream,
 )
 from core.utils import validate_file_path
@@ -30,7 +33,7 @@ VALID_SHARE_ROLES = {"reader", "commenter", "writer"}
 VALID_SHARE_TYPES = {"user", "group", "domain", "anyone"}
 
 
-def check_public_link_permission(permissions: List[Dict[str, Any]]) -> bool:
+def check_public_link_permission(permissions: list[dict[str, Any]]) -> bool:
     """
     Check if file has 'anyone with the link' permission.
 
@@ -131,7 +134,7 @@ def validate_expiration_time(expiration_time: str) -> None:
         )
 
 
-def format_permission_info(permission: Dict[str, Any]) -> str:
+def format_permission_info(permission: dict[str, Any]) -> str:
     """
     Format a permission object for display.
 
@@ -196,14 +199,14 @@ DRIVE_QUERY_PATTERNS = [
 def build_drive_list_params(
     query: str,
     page_size: int,
-    drive_id: Optional[str] = None,
+    drive_id: str | None = None,
     include_items_from_all_drives: bool = True,
-    corpora: Optional[str] = None,
-    page_token: Optional[str] = None,
+    corpora: str | None = None,
+    page_token: str | None = None,
     detailed: bool = True,
     include_permissions: bool = False,
-    order_by: Optional[str] = None,
-) -> Dict[str, Any]:
+    order_by: str | None = None,
+) -> dict[str, Any]:
     """
     Helper function to build common list parameters for Drive API calls.
 
@@ -274,7 +277,7 @@ MIME_TYPE_PATTERN = re.compile(r"^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$")
 
 # Mapping from friendly type names to Google Drive MIME types.
 # Raw MIME type strings (containing '/') are always accepted as-is.
-FILE_TYPE_MIME_MAP: Dict[str, str] = {
+FILE_TYPE_MIME_MAP: dict[str, str] = {
     "folder": "application/vnd.google-apps.folder",
     "folders": "application/vnd.google-apps.folder",
     "document": "application/vnd.google-apps.document",
@@ -354,9 +357,9 @@ async def resolve_drive_item(
     service,
     file_id: str,
     *,
-    extra_fields: Optional[str] = None,
+    extra_fields: str | None = None,
     max_depth: int = 5,
-) -> Tuple[str, Dict[str, Any]]:
+) -> tuple[str, dict[str, Any]]:
     """
     Resolve a Drive shortcut so downstream callers operate on the real item.
 
@@ -420,8 +423,8 @@ MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB safety limit for URL downloa
 
 
 async def _stream_url_with_validation(
-    url: str, write_chunk: Optional[Callable[[bytes], Awaitable[None]]] = None
-) -> Tuple[int, Optional[str]]:
+    url: str, write_chunk: Callable[[bytes], Awaitable[None]] | None = None
+) -> tuple[int, str | None]:
     """Stream a remote file with shared status and size validation."""
     total_bytes = 0
     redacted_url = _redact_url(url)
@@ -452,9 +455,11 @@ async def _stream_url_with_validation(
     return total_bytes, content_type
 
 
-async def _download_url_to_bytes(url: str) -> Tuple[BinaryIO, Optional[str]]:
+async def _download_url_to_bytes(url: str) -> tuple[BinaryIO, str | None]:
     """Download a remote file into a spooled temporary file with bounded streaming."""
-    spool = SpooledTemporaryFile(max_size=UPLOAD_CHUNK_SIZE_BYTES)
+    # Not a `with` block (SIM115): the handle is returned to the caller, which owns
+    # closing it. The try/except below closes it only if we fail before returning.
+    spool = SpooledTemporaryFile(max_size=UPLOAD_CHUNK_SIZE_BYTES)  # noqa: SIM115
     try:
 
         async def _collect(chunk: bytes) -> None:
@@ -517,8 +522,8 @@ TEXT_BASED_IMPORT_MIME_TYPES = {
 
 def _detect_source_format(
     file_name: str,
-    content: Optional[str] = None,
-    format_map: Optional[Dict[str, str]] = None,
+    content: str | None = None,
+    format_map: dict[str, str] | None = None,
 ) -> str:
     """
     Detect the source MIME type from a file extension.
@@ -543,12 +548,12 @@ async def _resolve_import_media(
     *,
     tool_name: str,
     file_name: str,
-    content: Optional[str],
-    file_path: Optional[str],
-    file_url: Optional[str],
-    source_format: Optional[str],
-    format_map: Dict[str, str],
-) -> Tuple[MediaIoBaseUpload, str, Optional[BinaryIO]]:
+    content: str | None,
+    file_path: str | None,
+    file_url: str | None,
+    source_format: str | None,
+    format_map: dict[str, str],
+) -> tuple[MediaIoBaseUpload, str, BinaryIO | None]:
     """
     Resolve a content source into an upload ``MediaIoBaseUpload`` and source MIME type.
 
@@ -574,7 +579,7 @@ async def _resolve_import_media(
         if format_key not in format_map:
             raise ValueError(
                 f"Unsupported source_format: '{source_format}'. "
-                f"Supported: {', '.join(ext.lstrip('.') for ext in format_map.keys())}"
+                f"Supported: {', '.join(ext.lstrip('.') for ext in format_map)}"
             )
         source_mime_type = format_map[format_key]
     else:
@@ -586,7 +591,7 @@ async def _resolve_import_media(
     logger.info(f"[{tool_name}] Detected source MIME type: {source_mime_type}")
 
     file_data: bytes
-    remote_file_data: Optional[BinaryIO] = None
+    remote_file_data: BinaryIO | None = None
 
     if content is not None:
         if source_mime_type not in TEXT_BASED_IMPORT_MIME_TYPES:

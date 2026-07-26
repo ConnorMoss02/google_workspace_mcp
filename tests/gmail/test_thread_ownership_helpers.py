@@ -9,8 +9,6 @@ the Gmail threads.get(format='full') response shape.
 
 from __future__ import annotations
 
-from typing import List
-
 from gmail.gmail_helpers import (
     _analyze_thread_ownership_impl,
     _normalize_email,
@@ -49,7 +47,7 @@ def _msg(
     return msg
 
 
-def _thread(thread_id: str, messages: List[dict]) -> dict:
+def _thread(thread_id: str, messages: list[dict]) -> dict:
     return {"id": thread_id, "messages": messages}
 
 

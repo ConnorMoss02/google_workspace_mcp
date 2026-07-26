@@ -6,7 +6,7 @@ to simplify the implementation of document editing tools.
 """
 
 import logging
-from typing import Dict, Any, Optional, List
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +90,7 @@ VALID_BULLET_PRESETS = (
 )
 
 
-def validate_suggestions_view_mode(suggestions_view_mode: str) -> Optional[str]:
+def validate_suggestions_view_mode(suggestions_view_mode: str) -> str | None:
     """Return an error message when suggestions_view_mode is invalid."""
     if suggestions_view_mode in VALID_SUGGESTIONS_VIEW_MODES:
         return None
@@ -101,26 +101,26 @@ def validate_suggestions_view_mode(suggestions_view_mode: str) -> Optional[str]:
     )
 
 
-def _build_dimension(value: float, unit: str = "PT") -> Dict[str, Any]:
+def _build_dimension(value: float, unit: str = "PT") -> dict[str, Any]:
     """Build a Google Docs Dimension object."""
     return {"magnitude": value, "unit": unit}
 
 
-def _build_optional_color(color: Optional[str], param_name: str) -> Dict[str, Any]:
+def _build_optional_color(color: str | None, param_name: str) -> dict[str, Any]:
     """Build a Google Docs OptionalColor object."""
     rgb = _normalize_color(color, param_name)
     return {"color": {"rgbColor": rgb}}
 
 
 def _build_location(
-    index: Optional[int] = None,
-    tab_id: Optional[str] = None,
-    segment_id: Optional[str] = None,
+    index: int | None = None,
+    tab_id: str | None = None,
+    segment_id: str | None = None,
     end_of_segment: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Build a location or endOfSegmentLocation object."""
     if end_of_segment:
-        location: Dict[str, Any] = {}
+        location: dict[str, Any] = {}
         if segment_id:
             location["segmentId"] = segment_id
         if tab_id:
@@ -141,9 +141,9 @@ def _build_location(
 def _build_range(
     start_index: int,
     end_index: int,
-    tab_id: Optional[str] = None,
-    segment_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    tab_id: str | None = None,
+    segment_id: str | None = None,
+) -> dict[str, Any]:
     """Build a Google Docs Range object."""
     range_obj = {"startIndex": start_index, "endIndex": end_index}
     if segment_id:
@@ -155,8 +155,8 @@ def _build_range(
 
 def _normalize_body_start_index(
     start_index: int,
-    tab_id: Optional[str] = None,
-    segment_id: Optional[str] = None,
+    tab_id: str | None = None,
+    segment_id: str | None = None,
 ) -> int:
     """
     Normalize a start index for the main document body.
@@ -170,16 +170,14 @@ def _normalize_body_start_index(
     return start_index
 
 
-def _build_tabs_criteria(tab_id: Optional[str]) -> Optional[Dict[str, Any]]:
+def _build_tabs_criteria(tab_id: str | None) -> dict[str, Any] | None:
     """Build Docs tabsCriteria for operations that support tab-scoped selection."""
     if not tab_id:
         return None
     return {"tabIds": [tab_id]}
 
 
-def _normalize_color(
-    color: Optional[str], param_name: str
-) -> Optional[Dict[str, float]]:
+def _normalize_color(color: str | None, param_name: str) -> dict[str, float] | None:
     """
     Normalize a user-supplied color into Docs API rgbColor format.
 
@@ -189,7 +187,7 @@ def _normalize_color(
         return None
 
     if not isinstance(color, str):
-        raise ValueError(f"{param_name} must be a hex string like '#RRGGBB'")
+        raise TypeError(f"{param_name} must be a hex string like '#RRGGBB'")
 
     if len(color) != 7 or not color.startswith("#"):
         raise ValueError(f"{param_name} must be a hex string like '#RRGGBB'")
@@ -205,20 +203,20 @@ def _normalize_color(
 
 
 def build_text_style(
-    bold: bool = None,
-    italic: bool = None,
-    underline: bool = None,
-    strikethrough: bool = None,
-    font_size: int = None,
-    font_family: str = None,
-    font_weight: int = None,
-    text_color: str = None,
-    background_color: str = None,
-    link_url: str = None,
-    clear_link: bool = None,
-    baseline_offset: str = None,
-    small_caps: bool = None,
-) -> tuple[Dict[str, Any], list[str]]:
+    bold: bool | None = None,
+    italic: bool | None = None,
+    underline: bool | None = None,
+    strikethrough: bool | None = None,
+    font_size: int | None = None,
+    font_family: str | None = None,
+    font_weight: int | None = None,
+    text_color: str | None = None,
+    background_color: str | None = None,
+    link_url: str | None = None,
+    clear_link: bool | None = None,
+    baseline_offset: str | None = None,
+    small_caps: bool | None = None,
+) -> tuple[dict[str, Any], list[str]]:
     """
     Build text style object for Google Docs API requests.
 
@@ -264,7 +262,7 @@ def build_text_style(
         fields.append("fontSize")
 
     if font_family is not None or font_weight is not None:
-        weighted_font_family: Dict[str, Any] = {}
+        weighted_font_family: dict[str, Any] = {}
         if font_family is not None:
             weighted_font_family["fontFamily"] = font_family
         if font_weight is not None:
@@ -308,23 +306,23 @@ def build_text_style(
 
 
 def build_paragraph_style(
-    heading_level: int = None,
-    alignment: str = None,
-    line_spacing: float = None,
-    indent_first_line: float = None,
-    indent_start: float = None,
-    indent_end: float = None,
-    space_above: float = None,
-    space_below: float = None,
-    named_style_type: Optional[str] = None,
-    direction: Optional[str] = None,
-    keep_lines_together: Optional[bool] = None,
-    keep_with_next: Optional[bool] = None,
-    avoid_widow_and_orphan: Optional[bool] = None,
-    page_break_before: Optional[bool] = None,
-    spacing_mode: Optional[str] = None,
-    shading_color: Optional[str] = None,
-) -> tuple[Dict[str, Any], list[str]]:
+    heading_level: int | None = None,
+    alignment: str | None = None,
+    line_spacing: float | None = None,
+    indent_first_line: float | None = None,
+    indent_start: float | None = None,
+    indent_end: float | None = None,
+    space_above: float | None = None,
+    space_below: float | None = None,
+    named_style_type: str | None = None,
+    direction: str | None = None,
+    keep_lines_together: bool | None = None,
+    keep_with_next: bool | None = None,
+    avoid_widow_and_orphan: bool | None = None,
+    page_break_before: bool | None = None,
+    spacing_mode: str | None = None,
+    shading_color: str | None = None,
+) -> tuple[dict[str, Any], list[str]]:
     """
     Build paragraph style object for Google Docs API requests.
 
@@ -453,24 +451,24 @@ def build_paragraph_style(
 
 
 def build_document_style(
-    background_color: Optional[str] = None,
-    margin_top: Optional[float] = None,
-    margin_bottom: Optional[float] = None,
-    margin_left: Optional[float] = None,
-    margin_right: Optional[float] = None,
-    margin_header: Optional[float] = None,
-    margin_footer: Optional[float] = None,
-    page_width: Optional[float] = None,
-    page_height: Optional[float] = None,
-    page_number_start: Optional[int] = None,
-    use_even_page_header_footer: Optional[bool] = None,
-    use_first_page_header_footer: Optional[bool] = None,
-    flip_page_orientation: Optional[bool] = None,
-    document_mode: Optional[str] = None,
-) -> tuple[Dict[str, Any], list[str]]:
+    background_color: str | None = None,
+    margin_top: float | None = None,
+    margin_bottom: float | None = None,
+    margin_left: float | None = None,
+    margin_right: float | None = None,
+    margin_header: float | None = None,
+    margin_footer: float | None = None,
+    page_width: float | None = None,
+    page_height: float | None = None,
+    page_number_start: int | None = None,
+    use_even_page_header_footer: bool | None = None,
+    use_first_page_header_footer: bool | None = None,
+    flip_page_orientation: bool | None = None,
+    document_mode: str | None = None,
+) -> tuple[dict[str, Any], list[str]]:
     """Build a documentStyle object and explicit field mask."""
-    document_style: Dict[str, Any] = {}
-    fields: List[str] = []
+    document_style: dict[str, Any] = {}
+    fields: list[str] = []
 
     if background_color is not None:
         document_style["background"] = _build_optional_color(
@@ -491,7 +489,7 @@ def build_document_style(
             fields.append(field_name)
 
     if page_width is not None or page_height is not None:
-        size: Dict[str, Any] = {}
+        size: dict[str, Any] = {}
         if page_width is not None:
             size["width"] = _build_dimension(page_width)
         if page_height is not None:
@@ -528,23 +526,23 @@ def build_document_style(
 
 
 def build_section_style(
-    margin_top: Optional[float] = None,
-    margin_bottom: Optional[float] = None,
-    margin_left: Optional[float] = None,
-    margin_right: Optional[float] = None,
-    margin_header: Optional[float] = None,
-    margin_footer: Optional[float] = None,
-    page_number_start: Optional[int] = None,
-    use_first_page_header_footer: Optional[bool] = None,
-    flip_page_orientation: Optional[bool] = None,
-    content_direction: Optional[str] = None,
-    column_count: Optional[int] = None,
-    column_spacing: Optional[float] = None,
-    column_separator_style: Optional[str] = None,
-) -> tuple[Dict[str, Any], list[str]]:
+    margin_top: float | None = None,
+    margin_bottom: float | None = None,
+    margin_left: float | None = None,
+    margin_right: float | None = None,
+    margin_header: float | None = None,
+    margin_footer: float | None = None,
+    page_number_start: int | None = None,
+    use_first_page_header_footer: bool | None = None,
+    flip_page_orientation: bool | None = None,
+    content_direction: str | None = None,
+    column_count: int | None = None,
+    column_spacing: float | None = None,
+    column_separator_style: str | None = None,
+) -> tuple[dict[str, Any], list[str]]:
     """Build a sectionStyle object and explicit field mask."""
-    section_style: Dict[str, Any] = {}
-    fields: List[str] = []
+    section_style: dict[str, Any] = {}
+    fields: list[str] = []
 
     for value, field_name in (
         (margin_top, "marginTop"),
@@ -598,7 +596,7 @@ def build_section_style(
 
         columns = []
         for _ in range(column_count):
-            column: Dict[str, Any] = {}
+            column: dict[str, Any] = {}
             if column_spacing is not None:
                 column["paddingEnd"] = _build_dimension(column_spacing)
             columns.append(column)
@@ -609,15 +607,15 @@ def build_section_style(
 
 
 def build_table_cell_style(
-    background_color: str = None,
-    border_color: str = None,
-    border_width: float = None,
-    padding_top: float = None,
-    padding_bottom: float = None,
-    padding_left: float = None,
-    padding_right: float = None,
-    content_alignment: str = None,
-) -> tuple[Dict[str, Any], list[str]]:
+    background_color: str | None = None,
+    border_color: str | None = None,
+    border_width: float | None = None,
+    padding_top: float | None = None,
+    padding_bottom: float | None = None,
+    padding_left: float | None = None,
+    padding_right: float | None = None,
+    content_alignment: str | None = None,
+) -> tuple[dict[str, Any], list[str]]:
     """
     Build a table cell style object for Google Docs API requests.
 
@@ -674,12 +672,12 @@ def build_table_cell_style(
 
 
 def create_insert_text_request(
-    index: Optional[int],
+    index: int | None,
     text: str,
-    tab_id: Optional[str] = None,
-    segment_id: Optional[str] = None,
+    tab_id: str | None = None,
+    segment_id: str | None = None,
     end_of_segment: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Create an insertText request for Google Docs API.
 
@@ -704,8 +702,8 @@ def create_insert_text_request(
 
 
 def create_insert_text_segment_request(
-    index: int, text: str, segment_id: str, tab_id: Optional[str] = None
-) -> Dict[str, Any]:
+    index: int, text: str, segment_id: str, tab_id: str | None = None
+) -> dict[str, Any]:
     """
     Create an insertText request for Google Docs API with segmentId (for headers/footers).
 
@@ -729,9 +727,9 @@ def create_insert_text_segment_request(
 def create_delete_range_request(
     start_index: int,
     end_index: int,
-    tab_id: Optional[str] = None,
-    segment_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    tab_id: str | None = None,
+    segment_id: str | None = None,
+) -> dict[str, Any]:
     """
     Create a deleteContentRange request for Google Docs API.
 
@@ -753,22 +751,22 @@ def create_delete_range_request(
 def create_format_text_request(
     start_index: int,
     end_index: int,
-    bold: bool = None,
-    italic: bool = None,
-    underline: bool = None,
-    strikethrough: bool = None,
-    font_size: int = None,
-    font_family: str = None,
-    font_weight: int = None,
-    text_color: str = None,
-    background_color: str = None,
-    link_url: str = None,
-    clear_link: bool = None,
-    baseline_offset: str = None,
-    small_caps: bool = None,
-    tab_id: Optional[str] = None,
-    segment_id: Optional[str] = None,
-) -> Optional[Dict[str, Any]]:
+    bold: bool | None = None,
+    italic: bool | None = None,
+    underline: bool | None = None,
+    strikethrough: bool | None = None,
+    font_size: int | None = None,
+    font_family: str | None = None,
+    font_weight: int | None = None,
+    text_color: str | None = None,
+    background_color: str | None = None,
+    link_url: str | None = None,
+    clear_link: bool | None = None,
+    baseline_offset: str | None = None,
+    small_caps: bool | None = None,
+    tab_id: str | None = None,
+    segment_id: str | None = None,
+) -> dict[str, Any] | None:
     """
     Create an updateTextStyle request for Google Docs API.
 
@@ -820,25 +818,25 @@ def create_format_text_request(
 def create_update_paragraph_style_request(
     start_index: int,
     end_index: int,
-    heading_level: int = None,
-    alignment: str = None,
-    line_spacing: float = None,
-    indent_first_line: float = None,
-    indent_start: float = None,
-    indent_end: float = None,
-    space_above: float = None,
-    space_below: float = None,
-    tab_id: Optional[str] = None,
-    named_style_type: Optional[str] = None,
-    segment_id: Optional[str] = None,
-    direction: Optional[str] = None,
-    keep_lines_together: Optional[bool] = None,
-    keep_with_next: Optional[bool] = None,
-    avoid_widow_and_orphan: Optional[bool] = None,
-    page_break_before: Optional[bool] = None,
-    spacing_mode: Optional[str] = None,
-    shading_color: Optional[str] = None,
-) -> Optional[Dict[str, Any]]:
+    heading_level: int | None = None,
+    alignment: str | None = None,
+    line_spacing: float | None = None,
+    indent_first_line: float | None = None,
+    indent_start: float | None = None,
+    indent_end: float | None = None,
+    space_above: float | None = None,
+    space_below: float | None = None,
+    tab_id: str | None = None,
+    named_style_type: str | None = None,
+    segment_id: str | None = None,
+    direction: str | None = None,
+    keep_lines_together: bool | None = None,
+    keep_with_next: bool | None = None,
+    avoid_widow_and_orphan: bool | None = None,
+    page_break_before: bool | None = None,
+    spacing_mode: str | None = None,
+    shading_color: str | None = None,
+) -> dict[str, Any] | None:
     """
     Create an updateParagraphStyle request for Google Docs API.
 
@@ -901,8 +899,8 @@ def create_find_replace_request(
     find_text: str,
     replace_text: str,
     match_case: bool = False,
-    tab_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    tab_id: str | None = None,
+) -> dict[str, Any]:
     """
     Create a replaceAllText request for Google Docs API.
 
@@ -928,13 +926,13 @@ def create_find_replace_request(
 
 
 def create_insert_table_request(
-    index: Optional[int],
+    index: int | None,
     rows: int,
     columns: int,
-    tab_id: Optional[str] = None,
-    segment_id: Optional[str] = None,
+    tab_id: str | None = None,
+    segment_id: str | None = None,
     end_of_segment: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Create an insertTable request for Google Docs API.
 
@@ -961,20 +959,20 @@ def create_insert_table_request(
 
 def create_update_table_cell_style_request(
     table_start_index: int,
-    background_color: str = None,
-    border_color: str = None,
-    border_width: float = None,
-    padding_top: float = None,
-    padding_bottom: float = None,
-    padding_left: float = None,
-    padding_right: float = None,
-    content_alignment: str = None,
-    row_index: int = None,
-    column_index: int = None,
-    row_span: int = None,
-    column_span: int = None,
-    tab_id: Optional[str] = None,
-) -> Optional[Dict[str, Any]]:
+    background_color: str | None = None,
+    border_color: str | None = None,
+    border_width: float | None = None,
+    padding_top: float | None = None,
+    padding_bottom: float | None = None,
+    padding_left: float | None = None,
+    padding_right: float | None = None,
+    content_alignment: str | None = None,
+    row_index: int | None = None,
+    column_index: int | None = None,
+    row_span: int | None = None,
+    column_span: int | None = None,
+    tab_id: str | None = None,
+) -> dict[str, Any] | None:
     """
     Create an updateTableCellStyle request for Google Docs API.
 
@@ -1015,7 +1013,7 @@ def create_update_table_cell_style_request(
     if tab_id:
         location["tabId"] = tab_id
 
-    request: Dict[str, Any] = {
+    request: dict[str, Any] = {
         "tableCellStyle": table_cell_style,
         "fields": ",".join(fields),
     }
@@ -1045,10 +1043,10 @@ def create_update_table_cell_style_request(
 
 
 def create_insert_page_break_request(
-    index: Optional[int],
-    tab_id: Optional[str] = None,
+    index: int | None,
+    tab_id: str | None = None,
     end_of_segment: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Create an insertPageBreak request for Google Docs API.
 
@@ -1067,8 +1065,8 @@ def create_insert_page_break_request(
 
 
 def create_insert_doc_tab_request(
-    title: str, index: int, parent_tab_id: Optional[str] = None
-) -> Dict[str, Any]:
+    title: str, index: int, parent_tab_id: str | None = None
+) -> dict[str, Any]:
     """
     Create an addDocumentTab request for Google Docs API.
 
@@ -1080,7 +1078,7 @@ def create_insert_doc_tab_request(
     Returns:
         Dictionary representing the addDocumentTab request
     """
-    tab_properties: Dict[str, Any] = {
+    tab_properties: dict[str, Any] = {
         "title": title,
         "index": index,
     }
@@ -1093,7 +1091,7 @@ def create_insert_doc_tab_request(
     }
 
 
-def create_delete_doc_tab_request(tab_id: str) -> Dict[str, Any]:
+def create_delete_doc_tab_request(tab_id: str) -> dict[str, Any]:
     """
     Create a deleteDocumentTab request for Google Docs API.
 
@@ -1106,7 +1104,7 @@ def create_delete_doc_tab_request(tab_id: str) -> Dict[str, Any]:
     return {"deleteTab": {"tabId": tab_id}}
 
 
-def create_update_doc_tab_request(tab_id: str, title: str) -> Dict[str, Any]:
+def create_update_doc_tab_request(tab_id: str, title: str) -> dict[str, Any]:
     """
     Create an updateDocumentTab request for Google Docs API.
 
@@ -1129,14 +1127,14 @@ def create_update_doc_tab_request(tab_id: str, title: str) -> Dict[str, Any]:
 
 
 def create_insert_image_request(
-    index: Optional[int],
+    index: int | None,
     image_uri: str,
-    width: int = None,
-    height: int = None,
-    tab_id: Optional[str] = None,
-    segment_id: Optional[str] = None,
+    width: int | None = None,
+    height: int | None = None,
+    tab_id: str | None = None,
+    segment_id: str | None = None,
     end_of_segment: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Create an insertInlineImage request for Google Docs API.
 
@@ -1177,12 +1175,12 @@ def create_bullet_list_request(
     start_index: int,
     end_index: int,
     list_type: str = "UNORDERED",
-    nesting_level: int = None,
-    paragraph_start_indices: Optional[list[int]] = None,
-    doc_tab_id: Optional[str] = None,
-    bullet_preset: Optional[str] = None,
-    segment_id: Optional[str] = None,
-) -> list[Dict[str, Any]]:
+    nesting_level: int | None = None,
+    paragraph_start_indices: list[int] | None = None,
+    doc_tab_id: str | None = None,
+    bullet_preset: str | None = None,
+    segment_id: str | None = None,
+) -> list[dict[str, Any]]:
     """
     Create requests to apply bullet list formatting with optional nesting.
 
@@ -1279,9 +1277,9 @@ def create_bullet_list_request(
 def create_delete_bullet_list_request(
     start_index: int,
     end_index: int,
-    doc_tab_id: Optional[str] = None,
-    segment_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    doc_tab_id: str | None = None,
+    segment_id: str | None = None,
+) -> dict[str, Any]:
     """
     Create a deleteParagraphBullets request to remove bullet/list formatting.
 
@@ -1306,9 +1304,9 @@ def create_named_range_request(
     name: str,
     start_index: int,
     end_index: int,
-    tab_id: Optional[str] = None,
-    segment_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    tab_id: str | None = None,
+    segment_id: str | None = None,
+) -> dict[str, Any]:
     """Create a createNamedRange request."""
     return {
         "createNamedRange": {
@@ -1319,12 +1317,12 @@ def create_named_range_request(
 
 
 def create_delete_named_range_request(
-    named_range_id: Optional[str] = None,
-    named_range_name: Optional[str] = None,
-    tab_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    named_range_id: str | None = None,
+    named_range_name: str | None = None,
+    tab_id: str | None = None,
+) -> dict[str, Any]:
     """Create a deleteNamedRange request."""
-    request: Dict[str, Any] = {}
+    request: dict[str, Any] = {}
     if named_range_id is not None:
         request["namedRangeId"] = named_range_id
     if named_range_name is not None:
@@ -1337,12 +1335,12 @@ def create_delete_named_range_request(
 
 def create_replace_named_range_content_request(
     text: str,
-    named_range_id: Optional[str] = None,
-    named_range_name: Optional[str] = None,
-    tab_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    named_range_id: str | None = None,
+    named_range_name: str | None = None,
+    tab_id: str | None = None,
+) -> dict[str, Any]:
     """Create a replaceNamedRangeContent request."""
-    request: Dict[str, Any] = {"text": text}
+    request: dict[str, Any] = {"text": text}
     if named_range_id is not None:
         request["namedRangeId"] = named_range_id
     if named_range_name is not None:
@@ -1354,10 +1352,10 @@ def create_replace_named_range_content_request(
 
 
 def create_insert_section_break_request(
-    index: Optional[int] = None,
+    index: int | None = None,
     section_type: str = "NEXT_PAGE",
     end_of_segment: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Create an insertSectionBreak request."""
     section_type_upper = section_type.upper()
     if section_type_upper not in VALID_SECTION_TYPES:
@@ -1373,22 +1371,22 @@ def create_insert_section_break_request(
 
 def create_update_document_style_request(
     *,
-    tab_id: Optional[str] = None,
-    background_color: Optional[str] = None,
-    margin_top: Optional[float] = None,
-    margin_bottom: Optional[float] = None,
-    margin_left: Optional[float] = None,
-    margin_right: Optional[float] = None,
-    margin_header: Optional[float] = None,
-    margin_footer: Optional[float] = None,
-    page_width: Optional[float] = None,
-    page_height: Optional[float] = None,
-    page_number_start: Optional[int] = None,
-    use_even_page_header_footer: Optional[bool] = None,
-    use_first_page_header_footer: Optional[bool] = None,
-    flip_page_orientation: Optional[bool] = None,
-    document_mode: Optional[str] = None,
-) -> Optional[Dict[str, Any]]:
+    tab_id: str | None = None,
+    background_color: str | None = None,
+    margin_top: float | None = None,
+    margin_bottom: float | None = None,
+    margin_left: float | None = None,
+    margin_right: float | None = None,
+    margin_header: float | None = None,
+    margin_footer: float | None = None,
+    page_width: float | None = None,
+    page_height: float | None = None,
+    page_number_start: int | None = None,
+    use_even_page_header_footer: bool | None = None,
+    use_first_page_header_footer: bool | None = None,
+    flip_page_orientation: bool | None = None,
+    document_mode: str | None = None,
+) -> dict[str, Any] | None:
     """Create an updateDocumentStyle request."""
     document_style, fields = build_document_style(
         background_color=background_color,
@@ -1409,7 +1407,7 @@ def create_update_document_style_request(
     if not document_style:
         return None
 
-    request: Dict[str, Any] = {
+    request: dict[str, Any] = {
         "updateDocumentStyle": {
             "documentStyle": document_style,
             "fields": ",".join(fields),
@@ -1424,20 +1422,20 @@ def create_update_section_style_request(
     start_index: int,
     end_index: int,
     *,
-    margin_top: Optional[float] = None,
-    margin_bottom: Optional[float] = None,
-    margin_left: Optional[float] = None,
-    margin_right: Optional[float] = None,
-    margin_header: Optional[float] = None,
-    margin_footer: Optional[float] = None,
-    page_number_start: Optional[int] = None,
-    use_first_page_header_footer: Optional[bool] = None,
-    flip_page_orientation: Optional[bool] = None,
-    content_direction: Optional[str] = None,
-    column_count: Optional[int] = None,
-    column_spacing: Optional[float] = None,
-    column_separator_style: Optional[str] = None,
-) -> Optional[Dict[str, Any]]:
+    margin_top: float | None = None,
+    margin_bottom: float | None = None,
+    margin_left: float | None = None,
+    margin_right: float | None = None,
+    margin_header: float | None = None,
+    margin_footer: float | None = None,
+    page_number_start: int | None = None,
+    use_first_page_header_footer: bool | None = None,
+    flip_page_orientation: bool | None = None,
+    content_direction: str | None = None,
+    column_count: int | None = None,
+    column_spacing: float | None = None,
+    column_separator_style: str | None = None,
+) -> dict[str, Any] | None:
     """Create an updateSectionStyle request."""
     section_style, fields = build_section_style(
         margin_top=margin_top,
@@ -1469,14 +1467,14 @@ def create_update_section_style_request(
 def create_create_header_footer_request(
     section_type: str,
     header_footer_type: str = "DEFAULT",
-    section_break_index: Optional[int] = None,
-) -> Dict[str, Any]:
+    section_break_index: int | None = None,
+) -> dict[str, Any]:
     """Create a createHeader/createFooter request."""
     header_footer_type_upper = header_footer_type.upper()
     if header_footer_type_upper == "FIRST_PAGE_ONLY":
         header_footer_type_upper = "DEFAULT"
 
-    request: Dict[str, Any] = {"type": header_footer_type_upper}
+    request: dict[str, Any] = {"type": header_footer_type_upper}
     if section_break_index is not None:
         request["sectionBreakLocation"] = {"index": section_break_index}
 
@@ -1491,10 +1489,10 @@ def create_insert_table_row_request(
     table_start_index: int,
     row_index: int,
     insert_below: bool = True,
-    tab_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    tab_id: str | None = None,
+) -> dict[str, Any]:
     """Build an insertTableRow request."""
-    location: Dict[str, Any] = {"index": table_start_index}
+    location: dict[str, Any] = {"index": table_start_index}
     if tab_id:
         location["tabId"] = tab_id
     return {
@@ -1512,10 +1510,10 @@ def create_insert_table_row_request(
 def create_delete_table_row_request(
     table_start_index: int,
     row_index: int,
-    tab_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    tab_id: str | None = None,
+) -> dict[str, Any]:
     """Build a deleteTableRow request."""
-    location: Dict[str, Any] = {"index": table_start_index}
+    location: dict[str, Any] = {"index": table_start_index}
     if tab_id:
         location["tabId"] = tab_id
     return {
@@ -1533,10 +1531,10 @@ def create_insert_table_column_request(
     table_start_index: int,
     column_index: int,
     insert_right: bool = True,
-    tab_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    tab_id: str | None = None,
+) -> dict[str, Any]:
     """Build an insertTableColumn request."""
-    location: Dict[str, Any] = {"index": table_start_index}
+    location: dict[str, Any] = {"index": table_start_index}
     if tab_id:
         location["tabId"] = tab_id
     return {
@@ -1554,10 +1552,10 @@ def create_insert_table_column_request(
 def create_delete_table_column_request(
     table_start_index: int,
     column_index: int,
-    tab_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    tab_id: str | None = None,
+) -> dict[str, Any]:
     """Build a deleteTableColumn request."""
-    location: Dict[str, Any] = {"index": table_start_index}
+    location: dict[str, Any] = {"index": table_start_index}
     if tab_id:
         location["tabId"] = tab_id
     return {
@@ -1577,10 +1575,10 @@ def _build_table_range(
     column_index: int,
     row_span: int,
     column_span: int,
-    tab_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    tab_id: str | None = None,
+) -> dict[str, Any]:
     """Build a tableRange object used by merge/unmerge requests."""
-    location: Dict[str, Any] = {"index": table_start_index}
+    location: dict[str, Any] = {"index": table_start_index}
     if tab_id:
         location["tabId"] = tab_id
     return {
@@ -1602,8 +1600,8 @@ def create_merge_table_cells_request(
     column_index: int,
     row_span: int,
     column_span: int,
-    tab_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    tab_id: str | None = None,
+) -> dict[str, Any]:
     """Build a mergeTableCells request."""
     return {
         "mergeTableCells": _build_table_range(
@@ -1618,8 +1616,8 @@ def create_unmerge_table_cells_request(
     column_index: int,
     row_span: int,
     column_span: int,
-    tab_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    tab_id: str | None = None,
+) -> dict[str, Any]:
     """Build an unmergeTableCells request."""
     return {
         "unmergeTableCells": _build_table_range(
@@ -1631,16 +1629,16 @@ def create_unmerge_table_cells_request(
 def create_update_table_column_properties_request(
     table_start_index: int,
     column_indices: list,
-    width: float = None,
-    width_type: str = None,
-    tab_id: Optional[str] = None,
-) -> Optional[Dict[str, Any]]:
+    width: float | None = None,
+    width_type: str | None = None,
+    tab_id: str | None = None,
+) -> dict[str, Any] | None:
     """Build an updateTableColumnProperties request. Returns None if no properties set."""
-    location: Dict[str, Any] = {"index": table_start_index}
+    location: dict[str, Any] = {"index": table_start_index}
     if tab_id:
         location["tabId"] = tab_id
 
-    properties: Dict[str, Any] = {}
+    properties: dict[str, Any] = {}
     fields = []
 
     if width is not None:
@@ -1667,9 +1665,9 @@ def create_update_table_column_properties_request(
 def create_update_table_row_style_request(
     table_start_index: int,
     row_indices: list,
-    min_row_height: float = None,
-    tab_id: Optional[str] = None,
-) -> Optional[Dict[str, Any]]:
+    min_row_height: float | None = None,
+    tab_id: str | None = None,
+) -> dict[str, Any] | None:
     """Build an updateTableRowStyle request. Returns None if no properties set.
 
     Args:
@@ -1687,11 +1685,11 @@ def create_update_table_row_style_request(
         https://developers.google.com/workspace/docs/api/reference/rest/v1/documents/request#UpdateTableRowStyleRequest
         https://developers.google.com/workspace/docs/api/reference/rest/v1/documents#TableRowStyle
     """
-    location: Dict[str, Any] = {"index": table_start_index}
+    location: dict[str, Any] = {"index": table_start_index}
     if tab_id:
         location["tabId"] = tab_id
 
-    row_style: Dict[str, Any] = {}
+    row_style: dict[str, Any] = {}
     fields = []
 
     if min_row_height is not None:
@@ -1714,8 +1712,8 @@ def create_update_table_row_style_request(
 def create_pin_table_header_rows_request(
     table_start_index: int,
     pinned_header_rows_count: int,
-    tab_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    tab_id: str | None = None,
+) -> dict[str, Any]:
     """Build a pinTableHeaderRows request to repeat the leading table rows on each page.
 
     This is a dedicated Docs API request distinct from updateTableRowStyle. Although
@@ -1733,7 +1731,7 @@ def create_pin_table_header_rows_request(
     if pinned_header_rows_count < 0:
         raise ValueError("pinned_header_rows_count must be non-negative")
 
-    location: Dict[str, Any] = {"index": table_start_index}
+    location: dict[str, Any] = {"index": table_start_index}
     if tab_id:
         location["tabId"] = tab_id
 
@@ -1745,7 +1743,7 @@ def create_pin_table_header_rows_request(
     }
 
 
-def validate_operation(operation: Dict[str, Any]) -> tuple[bool, str]:
+def validate_operation(operation: dict[str, Any]) -> tuple[bool, str]:
     """
     Validate a batch operation dictionary.
 

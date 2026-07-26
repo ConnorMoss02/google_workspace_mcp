@@ -6,7 +6,7 @@ improving code maintainability and type safety.
 """
 
 from dataclasses import dataclass
-from typing import Optional, List, Dict, Any
+from typing import Any
 
 from fastmcp.server.auth import AccessToken
 
@@ -14,9 +14,9 @@ from fastmcp.server.auth import AccessToken
 class WorkspaceAccessToken(AccessToken):
     """AccessToken extended with workspace-specific fields."""
 
-    session_id: Optional[str] = None
-    sub: Optional[str] = None
-    email: Optional[str] = None
+    session_id: str | None = None
+    sub: str | None = None
+    email: str | None = None
 
 
 @dataclass
@@ -32,11 +32,11 @@ class OAuth21ServiceRequest:
     version: str
     tool_name: str
     user_google_email: str
-    required_scopes: List[str]
-    session_id: Optional[str] = None
-    auth_token_email: Optional[str] = None
+    required_scopes: list[str]
+    session_id: str | None = None
+    auth_token_email: str | None = None
     allow_recent_auth: bool = False
-    context: Optional[Dict[str, Any]] = None
+    context: dict[str, Any] | None = None
 
     def to_legacy_params(self) -> dict:
         """Convert to legacy parameter format for backward compatibility."""
@@ -58,17 +58,17 @@ class OAuthVersionDetectionParams:
     whether a client supports OAuth 2.1 or needs OAuth 2.0.
     """
 
-    client_id: Optional[str] = None
-    client_secret: Optional[str] = None
-    code_challenge: Optional[str] = None
-    code_challenge_method: Optional[str] = None
-    code_verifier: Optional[str] = None
-    authenticated_user: Optional[str] = None
-    session_id: Optional[str] = None
+    client_id: str | None = None
+    client_secret: str | None = None
+    code_challenge: str | None = None
+    code_challenge_method: str | None = None
+    code_verifier: str | None = None
+    authenticated_user: str | None = None
+    session_id: str | None = None
 
     @classmethod
     def from_request(
-        cls, request_params: Dict[str, Any]
+        cls, request_params: dict[str, Any]
     ) -> "OAuthVersionDetectionParams":
         """Create from raw request parameters."""
         return cls(

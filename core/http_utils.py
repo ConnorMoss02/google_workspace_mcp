@@ -6,17 +6,21 @@ DNS rebinding, and redirect-based bypasses. Extracted from gdrive/drive_tools.py
 for reuse across modules (Drive uploads, Gmail URL attachments, etc.).
 """
 
-import ipaddress
 import asyncio
+import ipaddress
 import logging
 import socket
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Optional
 from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+# Shared default for streaming fetches. Defined at module scope rather than inline
+# as a parameter default so the object is constructed once at import time (B008).
+DEFAULT_STREAM_TIMEOUT = httpx.Timeout(30.0, connect=5.0)
 
 
 class SSRFFetchError(RuntimeError):
@@ -98,7 +102,7 @@ async def validate_url_not_internal(url: str) -> list[str]:
     return await resolve_and_validate_host(parsed.hostname)
 
 
-def format_host_header(hostname: str, scheme: str, port: Optional[int]) -> str:
+def format_host_header(hostname: str, scheme: str, port: int | None) -> str:
     """Format the Host header value for IPv4/IPv6 hostnames."""
     host_value = hostname
     if ":" in host_value and not host_value.startswith("["):
@@ -142,7 +146,7 @@ def build_pinned_url(parsed_url, ip_address_str: str) -> str:
 
 
 async def fetch_url_with_pinned_ip(
-    url: str, *, timeout: Optional[httpx.Timeout] = None
+    url: str, *, timeout: httpx.Timeout | None = None
 ) -> httpx.Response:
     """
     Fetch URL content by connecting to a validated, pre-resolved IP address.
@@ -161,7 +165,7 @@ async def fetch_url_with_pinned_ip(
         parsed_url.hostname, parsed_url.scheme, parsed_url.port
     )
 
-    last_error: Optional[Exception] = None
+    last_error: Exception | None = None
     for resolved_ip in resolved_ips:
         pinned_url = build_pinned_url(parsed_url, resolved_ip)
         try:
@@ -189,7 +193,7 @@ async def fetch_url_with_pinned_ip(
 
 
 async def ssrf_safe_fetch(
-    url: str, *, timeout: Optional[httpx.Timeout] = None
+    url: str, *, timeout: httpx.Timeout | None = None
 ) -> httpx.Response:
     """
     Fetch a URL with SSRF protection that covers redirects and DNS rebinding.
@@ -244,7 +248,7 @@ async def ssrf_safe_fetch(
 async def ssrf_safe_stream(
     url: str,
     *,
-    timeout: httpx.Timeout = httpx.Timeout(30.0, connect=5.0),
+    timeout: httpx.Timeout = DEFAULT_STREAM_TIMEOUT,
 ) -> AsyncIterator[httpx.Response]:
     """
     SSRF-safe streaming fetch: validates each redirect target against private
@@ -272,8 +276,8 @@ async def ssrf_safe_stream(
         resolved_ips = await validate_url_not_internal(current_url)
         host_header = format_host_header(parsed.hostname, parsed.scheme, parsed.port)
 
-        last_error: Optional[Exception] = None
-        resp: Optional[httpx.Response] = None
+        last_error: Exception | None = None
+        resp: httpx.Response | None = None
         for resolved_ip in resolved_ips:
             pinned_url = build_pinned_url(parsed, resolved_ip)
             client = httpx.AsyncClient(

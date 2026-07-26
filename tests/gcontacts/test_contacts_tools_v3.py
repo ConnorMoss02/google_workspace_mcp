@@ -21,18 +21,7 @@ from pydantic import ValidationError
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-from gcontacts.contacts_tools import (  # noqa: E402
-    NicknameInput,
-    RelationInput,
-    UrlInput,
-    UserDefinedInput,
-    _build_person_body,
-    _coerce_nickname_input,
-    _coerce_relation_input,
-    _coerce_url_input,
-    _coerce_user_defined_input,
-)
-from gcontacts.contacts_helpers import (  # noqa: E402
+from gcontacts.contacts_helpers import (
     _format_contact,
     _merge_nicknames,
     _merge_relations,
@@ -43,7 +32,17 @@ from gcontacts.contacts_helpers import (  # noqa: E402
     _normalize_url,
     _normalize_user_defined_key,
 )
-
+from gcontacts.contacts_tools import (
+    NicknameInput,
+    RelationInput,
+    UrlInput,
+    UserDefinedInput,
+    _build_person_body,
+    _coerce_nickname_input,
+    _coerce_relation_input,
+    _coerce_url_input,
+    _coerce_user_defined_input,
+)
 
 # =============================================================================
 # _coerce_*_input — accept Pydantic instance, plain string (where supported),

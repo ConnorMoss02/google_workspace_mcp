@@ -6,7 +6,7 @@ in Google Docs, including population with data and formatting.
 """
 
 import logging
-from typing import Dict, Any, List, Optional, Union, Tuple
+from typing import Any
 
 from gdocs.docs_helpers import create_update_table_cell_style_request
 
@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 
 
 def build_table_population_requests(
-    table_info: Dict[str, Any], data: List[List[str]], bold_headers: bool = True
-) -> List[Dict[str, Any]]:
+    table_info: dict[str, Any], data: list[list[str]], bold_headers: bool = True
+) -> list[dict[str, Any]]:
     """
     Build batch requests to populate a table with data.
 
@@ -121,8 +121,8 @@ def calculate_cell_positions(
     table_start_index: int,
     rows: int,
     cols: int,
-    existing_table_data: Optional[Dict[str, Any]] = None,
-) -> List[List[Dict[str, int]]]:
+    existing_table_data: dict[str, Any] | None = None,
+) -> list[list[dict[str, int]]]:
     """
     Calculate estimated positions for each cell in a table.
 
@@ -168,8 +168,8 @@ def calculate_cell_positions(
 
 
 def format_table_data(
-    raw_data: Union[List[List[str]], List[str], str],
-) -> List[List[str]]:
+    raw_data: list[list[str]] | list[str] | str,
+) -> list[list[str]]:
     """
     Normalize various data formats into a 2D array for table insertion.
 
@@ -211,10 +211,10 @@ def format_table_data(
 
 def create_table_with_data(
     index: int,
-    data: List[List[str]],
-    headers: Optional[List[str]] = None,
+    data: list[list[str]],
+    headers: list[str] | None = None,
     bold_headers: bool = True,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Create a table and populate it with data in one operation.
 
@@ -262,8 +262,8 @@ def create_table_with_data(
 
 
 def build_table_style_requests(
-    table_start_index: int, style_options: Dict[str, Any]
-) -> List[Dict[str, Any]]:
+    table_start_index: int, style_options: dict[str, Any]
+) -> list[dict[str, Any]]:
     """
     Build requests to style a table.
 
@@ -305,7 +305,7 @@ def build_table_style_requests(
     return requests
 
 
-def extract_table_as_data(table_info: Dict[str, Any]) -> List[List[str]]:
+def extract_table_as_data(table_info: dict[str, Any]) -> list[list[str]]:
     """
     Extract table content as a 2D array of strings.
 
@@ -328,8 +328,8 @@ def extract_table_as_data(table_info: Dict[str, Any]) -> List[List[str]]:
 
 
 def find_table_by_content(
-    tables: List[Dict[str, Any]], search_text: str, case_sensitive: bool = False
-) -> Optional[int]:
+    tables: list[dict[str, Any]], search_text: str, case_sensitive: bool = False
+) -> int | None:
     """
     Find a table index by searching for content within it.
 
@@ -356,7 +356,7 @@ def find_table_by_content(
     return None
 
 
-def validate_table_data(data: List[List[str]]) -> Tuple[bool, str]:
+def validate_table_data(data: list[list[str]]) -> tuple[bool, str]:
     """
     Validates table data format and provides specific error messages for LLMs.
 

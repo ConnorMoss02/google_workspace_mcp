@@ -4,16 +4,17 @@ Google Slides MCP Tools
 This module provides MCP tools for interacting with Google Slides API.
 """
 
-import logging
 import asyncio
-from typing import Any, Dict, Iterator, List, Optional
+import logging
+from collections.abc import Iterator
+from typing import Any
 
 from mcp.types import ToolAnnotations
 
 from auth.service_decorator import require_google_service
+from core.comments import create_comment_tools
 from core.server import server
 from core.utils import handle_http_errors
-from core.comments import create_comment_tools
 from gslides.slides_helpers import (
     validate_batch_update_requests,
     validate_insert_text_targets,
@@ -22,7 +23,7 @@ from gslides.slides_helpers import (
 logger = logging.getLogger(__name__)
 
 
-def _extract_shape_text(shape: Optional[Dict[str, Any]]) -> str:
+def _extract_shape_text(shape: dict[str, Any] | None) -> str:
     """Extract the full text content from a Slides shape, sorted by text-run start index.
 
     Returns an empty string if the shape has no text. The Slides API stores text
@@ -47,7 +48,7 @@ def _extract_shape_text(shape: Optional[Dict[str, Any]]) -> str:
 
 
 def _iter_text_bearing_elements(
-    elements: Optional[List[Dict[str, Any]]],
+    elements: list[dict[str, Any]] | None,
 ) -> Iterator[str]:
     """Yield full text strings from any shape with non-empty text, descending
     recursively into elementGroup.children so grouped shapes are not skipped.
@@ -63,8 +64,8 @@ def _iter_text_bearing_elements(
 
 
 def _describe_elements(
-    elements: Optional[List[Dict[str, Any]]], indent: str = "  "
-) -> List[str]:
+    elements: list[dict[str, Any]] | None, indent: str = "  "
+) -> list[str]:
     """Build descriptive lines for page elements, including text content for shapes.
 
     Recurses into elementGroup.children with deeper indentation so grouped shapes
@@ -77,7 +78,7 @@ def _describe_elements(
     refreshed via ``refreshSheetsChart``), and images/videos expose their source
     or rendered content URL when available.
     """
-    info: List[str] = []
+    info: list[str] = []
     for element in elements or []:
         element_id = element.get("objectId", "Unknown")
         if "shape" in element:
@@ -287,7 +288,7 @@ async def batch_update_presentation(
     service,
     user_google_email: str,
     presentation_id: str,
-    requests: List[Dict[str, Any]],
+    requests: list[dict[str, Any]],
 ) -> str:
     """
     Apply batch updates to a Google Slides presentation.

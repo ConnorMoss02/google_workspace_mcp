@@ -2,12 +2,13 @@
 Unit tests for forward_gmail_message
 """
 
-import pytest
-from unittest.mock import Mock
-from email import message_from_bytes
 import base64
-import sys
 import os
+import sys
+from email import message_from_bytes
+from unittest.mock import Mock
+
+import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 

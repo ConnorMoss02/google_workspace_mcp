@@ -15,14 +15,12 @@ Primary entry point - markdown_to_docs_requests(markdown_text, tab_id=None).
 
 from __future__ import annotations
 
-from typing import Optional
-
 from markdown_it import MarkdownIt
 
 
 def markdown_to_docs_requests(
     markdown_text: str,
-    tab_id: Optional[str] = None,
+    tab_id: str | None = None,
     start_index: int = 1,
 ) -> list[dict]:
     """Convert markdown to a list of Docs API batchUpdate request dicts.
@@ -99,18 +97,21 @@ def _emit_requests(tokens, requests, tab_id, start_index):
             k = i + 1
             while k < j:
                 item = tokens[k]
-                if item.type == "list_item_open":
-                    # Inner structure typically - list_item_open, paragraph_open, inline, paragraph_close, list_item_close
-                    # Find the inline token within this list_item
-                    if k + 2 < j and tokens[k + 2].type == "inline":
-                        inline_tok = tokens[k + 2]
-                        text, inline_styles = _render_inline_with_styles(
-                            inline_tok.children or [], cursor[0], tab_id
-                        )
-                        text += "\n"
-                        requests.append(_build_insert_text(cursor[0], text, tab_id))
-                        cursor[0] += len(text)
-                        requests.extend(inline_styles)
+                # Inner structure typically - list_item_open, paragraph_open, inline, paragraph_close, list_item_close
+                # Find the inline token within this list_item
+                if (
+                    item.type == "list_item_open"
+                    and k + 2 < j
+                    and tokens[k + 2].type == "inline"
+                ):
+                    inline_tok = tokens[k + 2]
+                    text, inline_styles = _render_inline_with_styles(
+                        inline_tok.children or [], cursor[0], tab_id
+                    )
+                    text += "\n"
+                    requests.append(_build_insert_text(cursor[0], text, tab_id))
+                    cursor[0] += len(text)
+                    requests.extend(inline_styles)
                 k += 1
             list_end = cursor[0]
             # One createParagraphBullets covering the full list range
@@ -242,7 +243,7 @@ def _emit_requests(tokens, requests, tab_id, start_index):
 def _render_inline_with_styles(
     children,
     base_index: int,
-    tab_id: Optional[str],
+    tab_id: str | None,
 ) -> tuple[str, list[dict]]:
     """Walk inline tokens, returning plain text and style requests.
 
@@ -350,7 +351,7 @@ def _append_text_style(
     end: int,
     style: dict,
     fields: str,
-    tab_id: Optional[str],
+    tab_id: str | None,
 ) -> None:
     """Append an updateTextStyle request when Google Docs will accept the range."""
     if end <= start:
@@ -358,7 +359,7 @@ def _append_text_style(
     requests.append(_build_text_style(start, end, style, fields, tab_id))
 
 
-def _token_attr(token, name: str) -> Optional[str]:
+def _token_attr(token, name: str) -> str | None:
     """Return a markdown-it token attr across supported markdown-it-py versions."""
     attrs = token.attrs
     if isinstance(attrs, dict):
@@ -371,7 +372,7 @@ def _build_text_style(
     end: int,
     style: dict,
     fields: str,
-    tab_id: Optional[str],
+    tab_id: str | None,
 ) -> dict:
     """Build an updateTextStyle request."""
     rng = {"startIndex": start, "endIndex": end}
@@ -386,7 +387,7 @@ def _build_text_style(
     }
 
 
-def _build_insert_text(index: int, text: str, tab_id: Optional[str]) -> dict:
+def _build_insert_text(index: int, text: str, tab_id: str | None) -> dict:
     """Build an insertText request dict, threading tab_id if provided."""
     location = {"index": index}
     if tab_id:
@@ -394,9 +395,7 @@ def _build_insert_text(index: int, text: str, tab_id: Optional[str]) -> dict:
     return {"insertText": {"location": location, "text": text}}
 
 
-def _build_heading_style(
-    start: int, end: int, level: int, tab_id: Optional[str]
-) -> dict:
+def _build_heading_style(start: int, end: int, level: int, tab_id: str | None) -> dict:
     """Build updateParagraphStyle request setting HEADING_N named style."""
     rng = {"startIndex": start, "endIndex": end}
     if tab_id:

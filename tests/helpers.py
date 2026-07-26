@@ -8,8 +8,8 @@ def _make_minimal_pdf(text: str = "Hello World") -> bytes:
     """Build a tiny valid PDF with one page containing *text* using pypdf."""
     from pypdf import PdfWriter
     from pypdf.generic import (
-        DictionaryObject,
         DecodedStreamObject,
+        DictionaryObject,
         NameObject,
     )
 

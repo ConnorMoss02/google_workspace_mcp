@@ -5,41 +5,41 @@ This module provides high-level batch operation management for Google Docs,
 extracting complex validation and request building logic.
 """
 
-import logging
 import asyncio
-from typing import Any, Union, Dict, List, Tuple
+import logging
+from typing import Any
 
 from gdocs.docs_helpers import (
-    create_insert_text_request,
+    create_bullet_list_request,
+    create_create_header_footer_request,
+    create_delete_bullet_list_request,
+    create_delete_doc_tab_request,
+    create_delete_named_range_request,
     create_delete_range_request,
-    create_format_text_request,
-    create_update_paragraph_style_request,
-    create_update_table_cell_style_request,
+    create_delete_table_column_request,
+    create_delete_table_row_request,
     create_find_replace_request,
-    create_insert_table_request,
+    create_format_text_request,
+    create_insert_doc_tab_request,
+    create_insert_image_request,
     create_insert_page_break_request,
     create_insert_section_break_request,
-    create_insert_image_request,
-    create_bullet_list_request,
-    create_delete_bullet_list_request,
-    create_named_range_request,
-    create_delete_named_range_request,
-    create_replace_named_range_content_request,
-    create_update_document_style_request,
-    create_update_section_style_request,
-    create_create_header_footer_request,
-    create_insert_doc_tab_request,
-    create_delete_doc_tab_request,
-    create_update_doc_tab_request,
-    create_insert_table_row_request,
-    create_delete_table_row_request,
     create_insert_table_column_request,
-    create_delete_table_column_request,
+    create_insert_table_request,
+    create_insert_table_row_request,
+    create_insert_text_request,
     create_merge_table_cells_request,
+    create_named_range_request,
+    create_pin_table_header_rows_request,
+    create_replace_named_range_content_request,
     create_unmerge_table_cells_request,
+    create_update_doc_tab_request,
+    create_update_document_style_request,
+    create_update_paragraph_style_request,
+    create_update_section_style_request,
+    create_update_table_cell_style_request,
     create_update_table_column_properties_request,
     create_update_table_row_style_request,
-    create_pin_table_header_rows_request,
     validate_operation,
 )
 from gdocs.managers.validation_manager import ValidationManager
@@ -256,8 +256,7 @@ class BatchOperationManager:
                 # Handle both single request and list of requests
                 if isinstance(result[0], list):
                     # Multiple requests (e.g., replace_text)
-                    for req in result[0]:
-                        requests.append(req)
+                    requests.extend(result[0])
                     operation_descriptions.append(result[1])
                 elif result[0]:
                     # Single request
@@ -270,14 +269,14 @@ class BatchOperationManager:
                 )
             except Exception as e:
                 raise ValueError(
-                    f"Operation {i + 1} ({op_type}) failed validation: {str(e)}"
+                    f"Operation {i + 1} ({op_type}) failed validation: {e!s}"
                 )
 
         return requests, operation_descriptions
 
     def _build_operation_request(
         self, op: dict[str, Any], op_type: str
-    ) -> Tuple[Union[Dict[str, Any], List[Dict[str, Any]]], str]:
+    ) -> tuple[dict[str, Any] | list[dict[str, Any]], str]:
         """
         Build a single operation request.
 

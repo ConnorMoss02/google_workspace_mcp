@@ -7,15 +7,14 @@ This module provides MCP tools for interacting with Google Tasks API.
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from googleapiclient.errors import HttpError  # type: ignore
 from mcp import Resource
-
-from auth.oauth_config import is_oauth21_enabled, is_external_oauth21_provider
-from auth.permissions import is_action_denied
 from mcp.types import ToolAnnotations
 
+from auth.oauth_config import is_external_oauth21_provider, is_oauth21_enabled
+from auth.permissions import is_action_denied
 from auth.service_decorator import require_google_service
 from core.server import server
 from core.utils import UserInputError, handle_http_errors
@@ -55,7 +54,7 @@ def _format_reauth_message(error: Exception, user_google_email: str) -> str:
 
 
 class StructuredTask:
-    def __init__(self, task: Dict[str, str], is_placeholder_parent: bool) -> None:
+    def __init__(self, task: dict[str, str], is_placeholder_parent: bool) -> None:
         self.id = task["id"]
         self.title = task.get("title", None)
         self.status = task.get("status", None)
@@ -64,7 +63,7 @@ class StructuredTask:
         self.updated = task.get("updated", None)
         self.completed = task.get("completed", None)
         self.is_placeholder_parent = is_placeholder_parent
-        self.subtasks: List["StructuredTask"] = []
+        self.subtasks: list[StructuredTask] = []
 
     def add_subtask(self, subtask: "StructuredTask") -> None:
         self.subtasks.append(subtask)
@@ -128,7 +127,7 @@ async def list_task_lists(
     service: Resource,
     user_google_email: str,
     max_results: int = 1000,
-    page_token: Optional[str] = None,
+    page_token: str | None = None,
 ) -> str:
     """
     List all task lists for the user.
@@ -144,7 +143,7 @@ async def list_task_lists(
     logger.info(f"[list_task_lists] Invoked. Email: '{user_google_email}'")
 
     try:
-        params: Dict[str, Any] = {}
+        params: dict[str, Any] = {}
         if max_results is not None:
             params["maxResults"] = max_results
         if page_token:
@@ -171,7 +170,7 @@ async def list_task_lists(
 
     except HttpError as error:
         message = _format_reauth_message(error, user_google_email)
-        logger.error(message, exc_info=True)
+        logger.exception(message)
         raise Exception(message)
     except Exception as e:
         message = f"Unexpected error: {e}."
@@ -225,7 +224,7 @@ async def get_task_list(
 
     except HttpError as error:
         message = _format_reauth_message(error, user_google_email)
-        logger.error(message, exc_info=True)
+        logger.exception(message)
         raise Exception(message)
     except Exception as e:
         message = f"Unexpected error: {e}."
@@ -337,8 +336,8 @@ async def manage_task_list(
     service: Resource,
     user_google_email: str,
     action: str,
-    task_list_id: Optional[str] = None,
-    title: Optional[str] = None,
+    task_list_id: str | None = None,
+    title: str | None = None,
 ) -> str:
     """
     Manage task lists: create, update, delete, or clear completed tasks.
@@ -413,16 +412,16 @@ async def list_tasks(
     user_google_email: str,
     task_list_id: str,
     max_results: int = LIST_TASKS_MAX_RESULTS_DEFAULT,
-    page_token: Optional[str] = None,
+    page_token: str | None = None,
     show_completed: bool = True,
     show_deleted: bool = False,
     show_hidden: bool = False,
     show_assigned: bool = False,
-    completed_max: Optional[str] = None,
-    completed_min: Optional[str] = None,
-    due_max: Optional[str] = None,
-    due_min: Optional[str] = None,
-    updated_min: Optional[str] = None,
+    completed_max: str | None = None,
+    completed_min: str | None = None,
+    due_max: str | None = None,
+    due_min: str | None = None,
+    updated_min: str | None = None,
 ) -> str:
     """
     List all tasks in a specific task list.
@@ -450,7 +449,7 @@ async def list_tasks(
     )
 
     try:
-        params: Dict[str, Any] = {"tasklist": task_list_id}
+        params: dict[str, Any] = {"tasklist": task_list_id}
         if max_results is not None:
             params["maxResults"] = max_results
         if page_token:
@@ -526,7 +525,7 @@ async def list_tasks(
 
     except HttpError as error:
         message = _format_reauth_message(error, user_google_email)
-        logger.error(message, exc_info=True)
+        logger.exception(message)
         raise Exception(message)
     except Exception as e:
         message = f"Unexpected error: {e}."
@@ -534,7 +533,7 @@ async def list_tasks(
         raise Exception(message)
 
 
-def get_structured_tasks(tasks: List[Dict[str, str]]) -> List[StructuredTask]:
+def get_structured_tasks(tasks: list[dict[str, str]]) -> list[StructuredTask]:
     """
     Convert a flat list of task dictionaries into StructuredTask objects based on parent-child relationships sorted by position.
 
@@ -582,7 +581,7 @@ def get_structured_tasks(tasks: List[Dict[str, str]]) -> List[StructuredTask]:
 
 
 def sort_structured_tasks(
-    root_task: StructuredTask, positions_by_id: Dict[str, int]
+    root_task: StructuredTask, positions_by_id: dict[str, int]
 ) -> None:
     """
     Recursively sort--in place--StructuredTask objects and their subtasks based on position.
@@ -602,7 +601,7 @@ def sort_structured_tasks(
         sort_structured_tasks(subtask, positions_by_id)
 
 
-def serialize_tasks(structured_tasks: List[StructuredTask], subtask_level: int) -> str:
+def serialize_tasks(structured_tasks: list[StructuredTask], subtask_level: int) -> str:
     """
     Serialize a list of StructuredTask objects into a formatted string with indentation for subtasks.
     Args:
@@ -711,7 +710,7 @@ async def get_task(
 
     except HttpError as error:
         message = _format_reauth_message(error, user_google_email)
-        logger.error(message, exc_info=True)
+        logger.exception(message)
         raise Exception(message)
     except Exception as e:
         message = f"Unexpected error: {e}."
@@ -727,10 +726,10 @@ async def _create_task_impl(
     user_google_email: str,
     task_list_id: str,
     title: str,
-    notes: Optional[str] = None,
-    due: Optional[str] = None,
-    parent: Optional[str] = None,
-    previous: Optional[str] = None,
+    notes: str | None = None,
+    due: str | None = None,
+    parent: str | None = None,
+    previous: str | None = None,
 ) -> str:
     """Implementation for creating a new task in a task list."""
     logger.info(
@@ -775,10 +774,10 @@ async def _update_task_impl(
     user_google_email: str,
     task_list_id: str,
     task_id: str,
-    title: Optional[str] = None,
-    notes: Optional[str] = None,
-    status: Optional[str] = None,
-    due: Optional[str] = None,
+    title: str | None = None,
+    notes: str | None = None,
+    status: str | None = None,
+    due: str | None = None,
 ) -> str:
     """Implementation for updating an existing task."""
     logger.info(
@@ -852,9 +851,9 @@ async def _move_task_impl(
     user_google_email: str,
     task_list_id: str,
     task_id: str,
-    parent: Optional[str] = None,
-    previous: Optional[str] = None,
-    destination_task_list: Optional[str] = None,
+    parent: str | None = None,
+    previous: str | None = None,
+    destination_task_list: str | None = None,
 ) -> str:
     """Implementation for moving a task to a different position, parent, or list."""
     logger.info(
@@ -916,14 +915,14 @@ async def manage_task(
     user_google_email: str,
     action: str,
     task_list_id: str,
-    task_id: Optional[str] = None,
-    title: Optional[str] = None,
-    notes: Optional[str] = None,
-    status: Optional[str] = None,
-    due: Optional[str] = None,
-    parent: Optional[str] = None,
-    previous: Optional[str] = None,
-    destination_task_list: Optional[str] = None,
+    task_id: str | None = None,
+    title: str | None = None,
+    notes: str | None = None,
+    status: str | None = None,
+    due: str | None = None,
+    parent: str | None = None,
+    previous: str | None = None,
+    destination_task_list: str | None = None,
 ) -> str:
     """
     Manage tasks: create, update, delete, or move tasks within task lists.

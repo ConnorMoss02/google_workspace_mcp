@@ -305,7 +305,7 @@ def get_scopes_for_tools(enabled_tools=None):
     # (SCOPES = get_scopes_for_tools() runs at import time before auth.permissions
     # is fully loaded, but permissions mode is never active at that point).
     try:
-        from auth.permissions import is_permissions_mode, get_all_permission_scopes
+        from auth.permissions import get_all_permission_scopes, is_permissions_mode
 
         if is_permissions_mode():
             scopes = BASE_SCOPES.copy()

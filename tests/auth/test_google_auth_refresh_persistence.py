@@ -13,7 +13,7 @@ class _RefreshableCredentials:
         self.valid = False
         self.expired = True
 
-    def refresh(self, request):  # noqa: ARG002
+    def refresh(self, request):
         self.token = "fresh-token"
         self.valid = True
         self.expired = False
@@ -25,10 +25,10 @@ class _OAuthSessionStore:
         self._session_user = session_user
         self.store_calls = []
 
-    def get_user_by_mcp_session(self, session_id):  # noqa: ARG002
+    def get_user_by_mcp_session(self, session_id):
         return self._session_user
 
-    def get_credentials_by_mcp_session(self, session_id):  # noqa: ARG002
+    def get_credentials_by_mcp_session(self, session_id):
         return self._session_credentials
 
     def store_session(self, **kwargs):
@@ -46,7 +46,7 @@ class _CredentialStore:
         self.get_calls.append(user_email)
         return self._existing_credentials
 
-    def store_credential(self, user_email, credentials):  # noqa: ARG002
+    def store_credential(self, user_email, credentials):
         self.store_calls.append((user_email, credentials.token))
         return self.store_result
 
@@ -126,7 +126,7 @@ def test_get_credentials_single_user_returns_none_for_missing_requested_user(
     fallback_creds = _RefreshableCredentials()
     fallback_calls = []
 
-    def _unexpected_fallback(credentials_base_dir):  # noqa: ARG001
+    def _unexpected_fallback(credentials_base_dir):
         fallback_calls.append(True)
         return fallback_creds, "other@example.com"
 

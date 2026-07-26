@@ -1,6 +1,6 @@
 import errno
 from types import SimpleNamespace, TracebackType
-from typing import Any, Optional, Tuple, Type
+from typing import Any
 
 import pytest
 from starlette.testclient import TestClient
@@ -84,7 +84,7 @@ def test_is_actually_running_returns_false_when_server_thread_is_dead(monkeypatc
     server.is_running = True
     server.server_thread = _DeadThread()
 
-    def fail_if_socket_used(*args, **kwargs):  # noqa: ARG001
+    def fail_if_socket_used(*args, **kwargs):
         raise AssertionError("dead server thread should short-circuit health check")
 
     monkeypatch.setattr(oauth_callback_server.socket, "socket", fail_if_socket_used)
@@ -98,22 +98,22 @@ def test_is_actually_running_treats_eaddrinuse_as_callback_port_in_use(monkeypat
     server.server_thread = _AliveThread()
 
     class _FakeSocket:
-        def __init__(self, *args, **kwargs):  # noqa: ARG002
+        def __init__(self, *args, **kwargs):
             self.bind_calls = 0
 
         def __enter__(self):
             return self
 
-        def __exit__(self, exc_type, exc, tb):  # noqa: ARG002
+        def __exit__(self, exc_type, exc, tb):
             return False
 
-        def settimeout(self, timeout):  # noqa: ARG002
+        def settimeout(self, timeout):
             return None
 
-        def connect_ex(self, address):  # noqa: ARG002
+        def connect_ex(self, address):
             return 111
 
-        def bind(self, address):  # noqa: ARG002
+        def bind(self, address):
             raise OSError(errno.EADDRINUSE, "Address already in use")
 
     monkeypatch.setattr(oauth_callback_server.socket, "socket", _FakeSocket)
@@ -151,21 +151,21 @@ def test_start_reuses_existing_workspace_callback_on_eaddrinuse(
     server = oauth_callback_server.MinimalOAuthServer(8000, "http://localhost")
 
     class _FakeSocket:
-        def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
             pass
 
         def __enter__(self) -> "_FakeSocket":
             return self
 
-        def __exit__(  # noqa: ARG002
+        def __exit__(
             self,
-            exc_type: Optional[Type[BaseException]],
-            exc: Optional[BaseException],
-            tb: Optional[TracebackType],
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            tb: TracebackType | None,
         ) -> bool:
             return False
 
-        def bind(self, address: Tuple[str, int]) -> None:  # noqa: ARG002
+        def bind(self, address: tuple[str, int]) -> None:
             raise OSError(errno.EADDRINUSE, "Address already in use")
 
     monkeypatch.setattr(oauth_callback_server.socket, "socket", _FakeSocket)
@@ -188,28 +188,28 @@ def test_start_rejects_eaddrinuse_when_callback_probe_does_not_match(
     server = oauth_callback_server.MinimalOAuthServer(8000, "http://localhost")
 
     class _FakeSocket:
-        def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
             pass
 
         def __enter__(self) -> "_FakeSocket":
             return self
 
-        def __exit__(  # noqa: ARG002
+        def __exit__(
             self,
-            exc_type: Optional[Type[BaseException]],
-            exc: Optional[BaseException],
-            tb: Optional[TracebackType],
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            tb: TracebackType | None,
         ) -> bool:
             return False
 
-        def bind(self, address: Tuple[str, int]) -> None:  # noqa: ARG002
+        def bind(self, address: tuple[str, int]) -> None:
             raise OSError(errno.EADDRINUSE, "Address already in use")
 
     monkeypatch.setattr(oauth_callback_server.socket, "socket", _FakeSocket)
     monkeypatch.setattr(
         server,
         "_callback_endpoint_looks_like_workspace",
-        lambda hostname: False,  # noqa: ARG005
+        lambda hostname: False,
     )
 
     success, error = server.start()
@@ -224,7 +224,7 @@ def test_ensure_stdio_callback_is_noop_outside_stdio(monkeypatch):
         oauth_callback_server, "get_transport_mode", lambda: "streamable-http"
     )
 
-    def fail_if_called(*args, **kwargs):  # noqa: ARG001
+    def fail_if_called(*args, **kwargs):
         raise AssertionError("callback server must not bind a port outside stdio")
 
     monkeypatch.setattr(

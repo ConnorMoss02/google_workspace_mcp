@@ -19,7 +19,7 @@ from __future__ import annotations
 import os
 import re
 import sys
-from typing import Any, Dict, Tuple
+from typing import Any
 
 import yaml
 
@@ -29,7 +29,7 @@ WORKFLOW_PATH: str = os.path.join(REPO_ROOT, ".github", "workflows", "ruff.yml")
 
 # Commands that resolve and execute the project's own build backend /
 # pyproject.toml hooks. These must NOT run on untrusted fork PR code.
-PROJECT_INSTALL_COMMANDS: Tuple[re.Pattern[str], ...] = (
+PROJECT_INSTALL_COMMANDS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?:^|[\s;&|])uv\s+sync(?:$|[\s;&|])"),
     re.compile(
         r"(?:^|[\s;&|])uv\s+pip\s+install\b[^\n;&|]*?"
@@ -43,15 +43,15 @@ PROJECT_INSTALL_COMMANDS: Tuple[re.Pattern[str], ...] = (
 )
 
 
-def load_workflow(path: str) -> Tuple[Dict[str, Any], str]:
+def load_workflow(path: str) -> tuple[dict[str, Any], str]:
     """Load a workflow file and return (parsed_yaml, raw_text)."""
     with open(path, "r") as f:
         raw: str = f.read()
-    parsed: Dict[str, Any] = yaml.safe_load(raw)
+    parsed: dict[str, Any] = yaml.safe_load(raw)
     return parsed, raw
 
 
-def _job_has_write_permission(job: Dict[str, Any]) -> bool:
+def _job_has_write_permission(job: dict[str, Any]) -> bool:
     """Return True if a job grants any write-scoped permission."""
     perms: Any = job.get("permissions", {})
     if isinstance(perms, str):
@@ -61,7 +61,7 @@ def _job_has_write_permission(job: Dict[str, Any]) -> bool:
     return False
 
 
-def _workflow_has_write_permission(wf: Dict[str, Any]) -> bool:
+def _workflow_has_write_permission(wf: dict[str, Any]) -> bool:
     """Return True if the top-level workflow grants any write-scoped permission."""
     perms: Any = wf.get("permissions", {})
     if isinstance(perms, str):
@@ -129,13 +129,13 @@ def test_no_fork_repo_checkout() -> None:
     as the repository parameter, which would check out attacker-controlled fork code."""
     wf, _raw = load_workflow(WORKFLOW_PATH)
 
-    jobs: Dict[str, Any] = wf.get("jobs", {})
+    jobs: dict[str, Any] = wf.get("jobs", {})
     for job_name, job in jobs.items():
         steps = job.get("steps", [])
         for step in steps:
             uses: str = step.get("uses", "")
             if "actions/checkout" in uses:
-                with_params: Dict[str, Any] = step.get("with", {})
+                with_params: dict[str, Any] = step.get("with", {})
                 repo_param: str = str(with_params.get("repository", ""))
 
                 # Must NOT reference the fork's repo
@@ -153,7 +153,7 @@ def test_uv_sync_not_on_fork_prs() -> None:
     safe."""
     wf, _raw = load_workflow(WORKFLOW_PATH)
 
-    jobs: Dict[str, Any] = wf.get("jobs", {})
+    jobs: dict[str, Any] = wf.get("jobs", {})
     for job_name, job in jobs.items():
         job_if: str = str(job.get("if", ""))
         job_is_fork_guarded: bool = _is_same_repo_guard(job_if)
@@ -182,7 +182,7 @@ def test_no_write_permissions_or_fork_guarded() -> None:
     wf, _raw = load_workflow(WORKFLOW_PATH)
 
     workflow_has_write: bool = _workflow_has_write_permission(wf)
-    jobs: Dict[str, Any] = wf.get("jobs", {})
+    jobs: dict[str, Any] = wf.get("jobs", {})
 
     for job_name, job in jobs.items():
         job_has_write: bool = _job_has_write_permission(job)
@@ -197,7 +197,7 @@ def test_no_write_permissions_or_fork_guarded() -> None:
         for step in steps:
             uses: str = step.get("uses", "")
             if "actions/checkout" in uses:
-                with_params: Dict[str, Any] = step.get("with", {})
+                with_params: dict[str, Any] = step.get("with", {})
                 repo_param: str = str(with_params.get("repository", ""))
                 assert "pull_request.head.repo" not in repo_param, (
                     f"Job '{job_name}' has write permissions AND checks out fork code. "
@@ -225,7 +225,7 @@ def test_push_trigger_runs_ruff_validation() -> None:
     )
     assert not push_branches or "main" in push_branches
 
-    ruff_job: Dict[str, Any] = wf.get("jobs", {}).get("ruff", {})
+    ruff_job: dict[str, Any] = wf.get("jobs", {}).get("ruff", {})
     ruff_if: str = " ".join(str(ruff_job.get("if", "")).split())
     assert "github.event_name == 'push'" in ruff_if
 

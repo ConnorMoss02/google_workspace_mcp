@@ -1,8 +1,6 @@
 import re
-from typing import Dict, Optional, Tuple
 
-
-API_ENABLEMENT_LINKS: Dict[str, str] = {
+API_ENABLEMENT_LINKS: dict[str, str] = {
     "calendar-json.googleapis.com": "https://console.cloud.google.com/flows/enableapi?apiid=calendar-json.googleapis.com",
     "drive.googleapis.com": "https://console.cloud.google.com/flows/enableapi?apiid=drive.googleapis.com",
     "gmail.googleapis.com": "https://console.cloud.google.com/flows/enableapi?apiid=gmail.googleapis.com",
@@ -16,7 +14,7 @@ API_ENABLEMENT_LINKS: Dict[str, str] = {
 }
 
 
-SERVICE_NAME_TO_API: Dict[str, str] = {
+SERVICE_NAME_TO_API: dict[str, str] = {
     "Google Calendar": "calendar-json.googleapis.com",
     "Google Drive": "drive.googleapis.com",
     "Gmail": "gmail.googleapis.com",
@@ -30,7 +28,7 @@ SERVICE_NAME_TO_API: Dict[str, str] = {
 }
 
 
-INTERNAL_SERVICE_TO_API: Dict[str, str] = {
+INTERNAL_SERVICE_TO_API: dict[str, str] = {
     "calendar": "calendar-json.googleapis.com",
     "drive": "drive.googleapis.com",
     "gmail": "gmail.googleapis.com",
@@ -47,7 +45,7 @@ INTERNAL_SERVICE_TO_API: Dict[str, str] = {
 
 def extract_api_info_from_error(
     error_details: str,
-) -> Tuple[Optional[str], Optional[str]]:
+) -> tuple[str | None, str | None]:
     """
     Extract API service and project ID from error details.
 
@@ -67,7 +65,7 @@ def extract_api_info_from_error(
 
 
 def get_api_enablement_message(
-    error_details: str, service_type: Optional[str] = None
+    error_details: str, service_type: str | None = None
 ) -> str:
     """
     Generate a helpful error message with direct API enablement link.

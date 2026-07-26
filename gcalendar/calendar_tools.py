@@ -4,20 +4,22 @@ Google Calendar MCP Tools
 This module provides MCP tools for interacting with Google Calendar API.
 """
 
-import datetime
-import logging
 import asyncio
+import datetime
+import json
+import logging
 import re
 import uuid
-import json
-from typing import List, Optional, Dict, Any, Union
+from typing import Any
 
 import pytz
-from googleapiclient.errors import HttpError
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+from mcp.types import ToolAnnotations
 
 from auth.service_decorator import require_google_service
-from core.utils import handle_http_errors, StringList
+from core.server import server
+from core.utils import StringList, handle_http_errors
 from gcalendar.calendar_helpers import (
     _format_attachment_details,
     _format_attendee_details,
@@ -25,18 +27,13 @@ from gcalendar.calendar_helpers import (
     _get_meeting_link,
 )
 
-from mcp.types import ToolAnnotations
-
-from core.server import server
-
-
 # Configure module logger
 logger = logging.getLogger(__name__)
 
 
 def _parse_reminders_json(
-    reminders_input: Optional[Union[str, List[Dict[str, Any]]]], function_name: str
-) -> List[Dict[str, Any]]:
+    reminders_input: str | list[dict[str, Any]] | None, function_name: str
+) -> list[dict[str, Any]]:
     """
     Parse reminders from JSON string or list object and validate them.
 
@@ -109,8 +106,8 @@ def _parse_reminders_json(
 
 
 def _apply_transparency_if_valid(
-    event_body: Dict[str, Any],
-    transparency: Optional[str],
+    event_body: dict[str, Any],
+    transparency: str | None,
     function_name: str,
 ) -> None:
     """
@@ -135,8 +132,8 @@ def _apply_transparency_if_valid(
 
 
 def _apply_visibility_if_valid(
-    event_body: Dict[str, Any],
-    visibility: Optional[str],
+    event_body: dict[str, Any],
+    visibility: str | None,
     function_name: str,
 ) -> None:
     """
@@ -172,7 +169,7 @@ _VALID_FOCUS_TIME_CHAT_STATUSES = {
 }
 
 
-def _validate_auto_decline_mode(mode: Optional[str], function_name: str) -> str:
+def _validate_auto_decline_mode(mode: str | None, function_name: str) -> str:
     """Validate and return auto decline mode, defaulting to declineAllConflictingInvitations.
 
     Args:
@@ -193,9 +190,9 @@ def _validate_auto_decline_mode(mode: Optional[str], function_name: str) -> str:
 
 
 def _preserve_existing_fields(
-    event_body: Dict[str, Any],
-    existing_event: Dict[str, Any],
-    field_mappings: Dict[str, Any],
+    event_body: dict[str, Any],
+    existing_event: dict[str, Any],
+    field_mappings: dict[str, Any],
 ) -> None:
     """
     Helper function to preserve existing event fields when not explicitly provided.
@@ -215,8 +212,8 @@ def _preserve_existing_fields(
 
 # Helper function to ensure time strings for API calls are correctly formatted
 def _correct_time_format_for_api(
-    time_str: Optional[str], param_name: str, timezone: Optional[str] = None
-) -> Optional[str]:
+    time_str: str | None, param_name: str, timezone: str | None = None
+) -> str | None:
     """Normalize a time string into RFC3339 format suitable for the Google Calendar API."""
     if not time_str:
         return None
@@ -234,14 +231,18 @@ def _correct_time_format_for_api(
     # Handle date-only format (YYYY-MM-DD)
     if len(time_str) == 10 and time_str.count("-") == 2:
         try:
-            # Validate it's a proper date
-            datetime.datetime.strptime(time_str, "%Y-%m-%d")
+            # Validate it's a proper date. Naive parse is intentional: the
+            # result is discarded, only the ValueError matters.
+            datetime.datetime.strptime(time_str, "%Y-%m-%d")  # noqa: DTZ007
             # For date-only, convert using the provided timezone, or UTC if not provided
             if timezone:
                 try:
                     tz = pytz.timezone(timezone)
                     # Parse the date and create a datetime at midnight in the specified timezone
-                    date_obj = datetime.datetime.strptime(time_str, "%Y-%m-%d")
+                    # Parsed naive on purpose, then localised below.
+                    date_obj = datetime.datetime.strptime(  # noqa: DTZ007
+                        time_str, "%Y-%m-%d"
+                    )
                     dt = tz.localize(date_obj)
                     # Convert to UTC and format as RFC3339
                     formatted = (
@@ -276,8 +277,11 @@ def _correct_time_format_for_api(
         )
     ):
         try:
-            # Validate the format before appending 'Z'
-            datetime.datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
+            # Validate the format before appending 'Z'. Naive parse is
+            # intentional: the value is discarded and 'Z' marks it as UTC.
+            datetime.datetime.strptime(  # noqa: DTZ007
+                time_str, "%Y-%m-%dT%H:%M:%S"
+            )
             logger.info(
                 f"Formatting {param_name} '{time_str}' by appending 'Z' for UTC."
             )
@@ -375,11 +379,11 @@ async def get_events(
     service,
     user_google_email: str,
     calendar_id: str = "primary",
-    event_id: Optional[str] = None,
-    time_min: Optional[str] = None,
-    time_max: Optional[str] = None,
+    event_id: str | None = None,
+    time_min: str | None = None,
+    time_max: str | None = None,
     max_results: int = 25,
-    query: Optional[str] = None,
+    query: str | None = None,
     detailed: bool = False,
     include_attachments: bool = False,
 ) -> str:
@@ -615,9 +619,9 @@ _CONFERENCE_SOLUTION_NAMES = {
 def _build_addon_conference_data(
     provider: str,
     uri: str,
-    passcode: Optional[str] = None,
-    conference_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    passcode: str | None = None,
+    conference_id: str | None = None,
+) -> dict[str, Any]:
     """Build a Google Calendar ``conferenceData`` block for a third-party add-on.
 
     Used for providers (Zoom, Webex, Teams, ...) attached via the
@@ -627,14 +631,14 @@ def _build_addon_conference_data(
     provider = provider.strip()
     uri = uri.strip()
     name = _CONFERENCE_SOLUTION_NAMES.get(provider.lower(), provider)
-    entry_point: Dict[str, Any] = {
+    entry_point: dict[str, Any] = {
         "entryPointType": "video",
         "uri": uri,
         "label": name,
     }
     if passcode:
         entry_point["passcode"] = passcode
-    conference_data: Dict[str, Any] = {
+    conference_data: dict[str, Any] = {
         "conferenceSolution": {"key": {"type": "addOn"}, "name": name},
         "entryPoints": [entry_point],
     }
@@ -644,13 +648,13 @@ def _build_addon_conference_data(
 
 
 def _resolve_conference_data(
-    conference_data: Optional[Dict[str, Any]],
-    conference_provider: Optional[str],
-    conference_uri: Optional[str],
-    conference_passcode: Optional[str],
-    conference_id: Optional[str],
-    add_google_meet: Optional[bool],
-) -> Optional[Dict[str, Any]]:
+    conference_data: dict[str, Any] | None,
+    conference_provider: str | None,
+    conference_uri: str | None,
+    conference_passcode: str | None,
+    conference_id: str | None,
+    add_google_meet: bool | None,
+) -> dict[str, Any] | None:
     """Resolve the conferencing inputs into a single ``conferenceData`` dict.
 
     Accepts either a raw ``conference_data`` pass-through payload or the
@@ -696,21 +700,21 @@ async def _create_event_impl(
     start_time: str,
     end_time: str,
     calendar_id: str = "primary",
-    description: Optional[str] = None,
-    location: Optional[str] = None,
-    attendees: Optional[List[str]] = None,
-    timezone: Optional[str] = None,
-    attachments: Optional[List[str]] = None,
+    description: str | None = None,
+    location: str | None = None,
+    attendees: list[str] | None = None,
+    timezone: str | None = None,
+    attachments: list[str] | None = None,
     add_google_meet: bool = False,
-    conference_data: Optional[Dict[str, Any]] = None,
-    reminders: Optional[Union[str, List[Dict[str, Any]]]] = None,
+    conference_data: dict[str, Any] | None = None,
+    reminders: str | list[dict[str, Any]] | None = None,
     use_default_reminders: bool = True,
-    transparency: Optional[str] = None,
-    visibility: Optional[str] = None,
-    recurrence: Optional[List[str]] = None,
-    guests_can_modify: Optional[bool] = None,
-    guests_can_invite_others: Optional[bool] = None,
-    guests_can_see_other_guests: Optional[bool] = None,
+    transparency: str | None = None,
+    visibility: str | None = None,
+    recurrence: list[str] | None = None,
+    guests_can_modify: bool | None = None,
+    guests_can_invite_others: bool | None = None,
+    guests_can_see_other_guests: bool | None = None,
     send_updates: str = "all",
 ) -> str:
     """Internal implementation for creating a calendar event."""
@@ -732,7 +736,7 @@ async def _create_event_impl(
         effective_start = _strip_utc_offset(start_time)
     if timezone and "T" in end_time:
         effective_end = _strip_utc_offset(end_time)
-    event_body: Dict[str, Any] = {
+    event_body: dict[str, Any] = {
         "summary": summary,
         "start": (
             {"date": start_time}
@@ -853,11 +857,13 @@ async def _create_event_impl(
                     # Try to get the actual MIME type and filename from Drive
                     if drive_service:
                         try:
+                            # `file_id` is bound as a default so the lambda reads
+                            # this iteration's value rather than the loop variable.
                             file_metadata = await asyncio.to_thread(
-                                lambda: (
+                                lambda fid=file_id: (
                                     drive_service.files()
                                     .get(
-                                        fileId=file_id,
+                                        fileId=fid,
                                         fields="mimeType,name",
                                         supportsAllDrives=True,
                                     )
@@ -932,8 +938,8 @@ async def _create_event_impl(
 
 
 def _normalize_attendees(
-    attendees: Optional[Union[List[str], List[Dict[str, Any]]]],
-) -> Optional[List[Dict[str, Any]]]:
+    attendees: list[str] | list[dict[str, Any]] | None,
+) -> list[dict[str, Any]] | None:
     """
     Normalize attendees input to list of attendee objects.
 
@@ -965,24 +971,24 @@ async def _modify_event_impl(
     user_google_email: str,
     event_id: str,
     calendar_id: str = "primary",
-    summary: Optional[str] = None,
-    start_time: Optional[str] = None,
-    end_time: Optional[str] = None,
-    description: Optional[str] = None,
-    location: Optional[str] = None,
-    attendees: Optional[Union[List[str], List[Dict[str, Any]]]] = None,
-    timezone: Optional[str] = None,
-    add_google_meet: Optional[bool] = None,
-    conference_data: Optional[Dict[str, Any]] = None,
-    reminders: Optional[Union[str, List[Dict[str, Any]]]] = None,
-    use_default_reminders: Optional[bool] = None,
-    transparency: Optional[str] = None,
-    visibility: Optional[str] = None,
-    color_id: Optional[str] = None,
-    recurrence: Optional[List[str]] = None,
-    guests_can_modify: Optional[bool] = None,
-    guests_can_invite_others: Optional[bool] = None,
-    guests_can_see_other_guests: Optional[bool] = None,
+    summary: str | None = None,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    description: str | None = None,
+    location: str | None = None,
+    attendees: list[str] | list[dict[str, Any]] | None = None,
+    timezone: str | None = None,
+    add_google_meet: bool | None = None,
+    conference_data: dict[str, Any] | None = None,
+    reminders: str | list[dict[str, Any]] | None = None,
+    use_default_reminders: bool | None = None,
+    transparency: str | None = None,
+    visibility: str | None = None,
+    color_id: str | None = None,
+    recurrence: list[str] | None = None,
+    guests_can_modify: bool | None = None,
+    guests_can_invite_others: bool | None = None,
+    guests_can_see_other_guests: bool | None = None,
     send_updates: str = "all",
 ) -> str:
     """Internal implementation for modifying a calendar event."""
@@ -991,7 +997,7 @@ async def _modify_event_impl(
     )
 
     # Build the event body with only the fields that are provided
-    event_body: Dict[str, Any] = {}
+    event_body: dict[str, Any] = {}
     if summary is not None:
         event_body["summary"] = summary
     if start_time is not None:
@@ -1275,7 +1281,7 @@ async def _rsvp_event_impl(
     event_id: str,
     response: str,
     calendar_id: str = "primary",
-    comment: Optional[str] = None,
+    comment: str | None = None,
     send_updates: str = "all",
 ) -> str:
     """Internal implementation for responding to a calendar event invitation."""
@@ -1349,34 +1355,34 @@ async def manage_event(
     service,
     user_google_email: str,
     action: str,
-    summary: Optional[str] = None,
-    start_time: Optional[str] = None,
-    end_time: Optional[str] = None,
-    event_id: Optional[str] = None,
+    summary: str | None = None,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    event_id: str | None = None,
     calendar_id: str = "primary",
-    description: Optional[str] = None,
-    location: Optional[str] = None,
-    attendees: Optional[Union[StringList, List[Dict[str, Any]]]] = None,
-    timezone: Optional[str] = None,
-    attachments: Optional[StringList] = None,
-    add_google_meet: Optional[bool] = None,
-    conference_data: Optional[Dict[str, Any]] = None,
-    conference_provider: Optional[str] = None,
-    conference_uri: Optional[str] = None,
-    conference_passcode: Optional[str] = None,
-    conference_id: Optional[str] = None,
-    reminders: Optional[Union[str, List[Dict[str, Any]]]] = None,
-    use_default_reminders: Optional[bool] = None,
-    transparency: Optional[str] = None,
-    visibility: Optional[str] = None,
-    color_id: Optional[str] = None,
-    recurrence: Optional[StringList] = None,
-    guests_can_modify: Optional[bool] = None,
-    guests_can_invite_others: Optional[bool] = None,
-    guests_can_see_other_guests: Optional[bool] = None,
-    response: Optional[str] = None,
-    rsvp_comment: Optional[str] = None,
-    send_updates: Optional[str] = None,
+    description: str | None = None,
+    location: str | None = None,
+    attendees: StringList | list[dict[str, Any]] | None = None,
+    timezone: str | None = None,
+    attachments: StringList | None = None,
+    add_google_meet: bool | None = None,
+    conference_data: dict[str, Any] | None = None,
+    conference_provider: str | None = None,
+    conference_uri: str | None = None,
+    conference_passcode: str | None = None,
+    conference_id: str | None = None,
+    reminders: str | list[dict[str, Any]] | None = None,
+    use_default_reminders: bool | None = None,
+    transparency: str | None = None,
+    visibility: str | None = None,
+    color_id: str | None = None,
+    recurrence: StringList | None = None,
+    guests_can_modify: bool | None = None,
+    guests_can_invite_others: bool | None = None,
+    guests_can_see_other_guests: bool | None = None,
+    response: str | None = None,
+    rsvp_comment: str | None = None,
+    send_updates: str | None = None,
 ) -> str:
     """
     Manages calendar events. Supports creating, updating, deleting, and RSVP.
@@ -1539,8 +1545,8 @@ async def manage_event(
 
 
 def _ooo_time_entry(
-    time_str: str, is_end: bool = False, timezone: Optional[str] = None
-) -> Dict[str, str]:
+    time_str: str, is_end: bool = False, timezone: str | None = None
+) -> dict[str, str]:
     """Build a start/end dict for an OOO event.
 
     Google Calendar API requires dateTime (not date) for outOfOffice events.
@@ -1563,7 +1569,7 @@ def _ooo_time_entry(
             "start/end timestamp with an explicit UTC offset."
         )
 
-    entry: Dict[str, str] = {"dateTime": time_str}
+    entry: dict[str, str] = {"dateTime": time_str}
     if timezone:
         entry["timeZone"] = timezone
     return entry
@@ -1575,11 +1581,11 @@ async def _create_ooo_event_impl(
     start_time: str,
     end_time: str,
     calendar_id: str = "primary",
-    summary: Optional[str] = None,
-    auto_decline_mode: Optional[str] = None,
-    decline_message: Optional[str] = None,
-    recurrence: Optional[List[str]] = None,
-    timezone: Optional[str] = None,
+    summary: str | None = None,
+    auto_decline_mode: str | None = None,
+    decline_message: str | None = None,
+    recurrence: list[str] | None = None,
+    timezone: str | None = None,
 ) -> str:
     """Internal implementation for creating an Out of Office calendar event."""
     logger.info(
@@ -1591,7 +1597,7 @@ async def _create_ooo_event_impl(
         auto_decline_mode, "create_ooo_event"
     )
 
-    event_body: Dict[str, Any] = {
+    event_body: dict[str, Any] = {
         "eventType": "outOfOffice",
         "summary": effective_summary,
         "start": _ooo_time_entry(start_time, is_end=False, timezone=timezone),
@@ -1642,10 +1648,10 @@ async def _list_ooo_events_impl(
     service,
     user_google_email: str,
     calendar_id: str = "primary",
-    time_min: Optional[str] = None,
-    time_max: Optional[str] = None,
+    time_min: str | None = None,
+    time_max: str | None = None,
     max_results: int = 10,
-    timezone: Optional[str] = None,
+    timezone: str | None = None,
 ) -> str:
     """Internal implementation for listing Out of Office calendar events."""
     logger.info(
@@ -1677,7 +1683,7 @@ async def _list_ooo_events_impl(
 
     effective_time_max = _correct_time_format_for_api(time_max, "time_max", timezone)
 
-    request_params: Dict[str, Any] = {
+    request_params: dict[str, Any] = {
         "calendarId": calendar_id,
         "timeMin": effective_time_min,
         "maxResults": max_results,
@@ -1725,13 +1731,13 @@ async def _update_ooo_event_impl(
     user_google_email: str,
     event_id: str,
     calendar_id: str = "primary",
-    start_time: Optional[str] = None,
-    end_time: Optional[str] = None,
-    summary: Optional[str] = None,
-    auto_decline_mode: Optional[str] = None,
-    decline_message: Optional[str] = None,
-    recurrence: Optional[List[str]] = None,
-    timezone: Optional[str] = None,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    summary: str | None = None,
+    auto_decline_mode: str | None = None,
+    decline_message: str | None = None,
+    recurrence: list[str] | None = None,
+    timezone: str | None = None,
 ) -> str:
     """Internal implementation for updating an Out of Office calendar event."""
     logger.info(
@@ -1748,7 +1754,7 @@ async def _update_ooo_event_impl(
             f"Use manage_event to update regular events."
         )
 
-    patch_body: Dict[str, Any] = {}
+    patch_body: dict[str, Any] = {}
 
     if summary is not None:
         patch_body["summary"] = summary
@@ -1867,17 +1873,17 @@ async def manage_out_of_office(
     service,
     user_google_email: str,
     action: str,
-    start_time: Optional[str] = None,
-    end_time: Optional[str] = None,
-    summary: Optional[str] = None,
-    auto_decline_mode: Optional[str] = None,
-    decline_message: Optional[str] = None,
-    recurrence: Optional[StringList] = None,
-    timezone: Optional[str] = None,
-    time_min: Optional[str] = None,
-    time_max: Optional[str] = None,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    summary: str | None = None,
+    auto_decline_mode: str | None = None,
+    decline_message: str | None = None,
+    recurrence: StringList | None = None,
+    timezone: str | None = None,
+    time_min: str | None = None,
+    time_max: str | None = None,
     max_results: int = 10,
-    event_id: Optional[str] = None,
+    event_id: str | None = None,
     calendar_id: str = "primary",
 ) -> str:
     """
@@ -1966,8 +1972,8 @@ async def manage_out_of_office(
 
 
 def _focus_time_time_entry(
-    time_str: str, is_end: bool = False, timezone: Optional[str] = None
-) -> Dict[str, str]:
+    time_str: str, is_end: bool = False, timezone: str | None = None
+) -> dict[str, str]:
     """Build a start/end dict for a Focus Time event.
 
     Google Calendar API requires dateTime (not date) for focusTime events.
@@ -1990,15 +1996,13 @@ def _focus_time_time_entry(
             "start/end timestamp with an explicit UTC offset."
         )
 
-    entry: Dict[str, str] = {"dateTime": time_str}
+    entry: dict[str, str] = {"dateTime": time_str}
     if timezone:
         entry["timeZone"] = timezone
     return entry
 
 
-def _validate_chat_status(
-    chat_status: Optional[str], function_name: str
-) -> Optional[str]:
+def _validate_chat_status(chat_status: str | None, function_name: str) -> str | None:
     """Validate chat status for Focus Time events."""
     if chat_status is None:
         return None
@@ -2016,13 +2020,13 @@ async def _create_focus_time_event_impl(
     start_time: str,
     end_time: str,
     calendar_id: str = "primary",
-    summary: Optional[str] = None,
-    description: Optional[str] = None,
-    auto_decline_mode: Optional[str] = None,
-    decline_message: Optional[str] = None,
-    chat_status: Optional[str] = None,
-    recurrence: Optional[List[str]] = None,
-    timezone: Optional[str] = None,
+    summary: str | None = None,
+    description: str | None = None,
+    auto_decline_mode: str | None = None,
+    decline_message: str | None = None,
+    chat_status: str | None = None,
+    recurrence: list[str] | None = None,
+    timezone: str | None = None,
 ) -> str:
     """Internal implementation for creating a Focus Time calendar event."""
     logger.info(
@@ -2037,14 +2041,14 @@ async def _create_focus_time_event_impl(
         chat_status or "doNotDisturb", "create_focus_time_event"
     )
 
-    focus_time_props: Dict[str, str] = {
+    focus_time_props: dict[str, str] = {
         "autoDeclineMode": effective_decline_mode,
         "declineMessage": decline_message or "",
     }
     if validated_chat_status:
         focus_time_props["chatStatus"] = validated_chat_status
 
-    event_body: Dict[str, Any] = {
+    event_body: dict[str, Any] = {
         "eventType": "focusTime",
         "summary": effective_summary,
         "start": _focus_time_time_entry(start_time, is_end=False, timezone=timezone),
@@ -2095,10 +2099,10 @@ async def _list_focus_time_events_impl(
     service,
     user_google_email: str,
     calendar_id: str = "primary",
-    time_min: Optional[str] = None,
-    time_max: Optional[str] = None,
+    time_min: str | None = None,
+    time_max: str | None = None,
     max_results: int = 10,
-    timezone: Optional[str] = None,
+    timezone: str | None = None,
 ) -> str:
     """Internal implementation for listing Focus Time calendar events."""
     logger.info(
@@ -2130,7 +2134,7 @@ async def _list_focus_time_events_impl(
 
     effective_time_max = _correct_time_format_for_api(time_max, "time_max", timezone)
 
-    request_params: Dict[str, Any] = {
+    request_params: dict[str, Any] = {
         "calendarId": calendar_id,
         "timeMin": effective_time_min,
         "maxResults": max_results,
@@ -2181,15 +2185,15 @@ async def _update_focus_time_event_impl(
     user_google_email: str,
     event_id: str,
     calendar_id: str = "primary",
-    start_time: Optional[str] = None,
-    end_time: Optional[str] = None,
-    summary: Optional[str] = None,
-    description: Optional[str] = None,
-    auto_decline_mode: Optional[str] = None,
-    decline_message: Optional[str] = None,
-    chat_status: Optional[str] = None,
-    recurrence: Optional[List[str]] = None,
-    timezone: Optional[str] = None,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    summary: str | None = None,
+    description: str | None = None,
+    auto_decline_mode: str | None = None,
+    decline_message: str | None = None,
+    chat_status: str | None = None,
+    recurrence: list[str] | None = None,
+    timezone: str | None = None,
 ) -> str:
     """Internal implementation for updating a Focus Time calendar event."""
     logger.info(
@@ -2206,7 +2210,7 @@ async def _update_focus_time_event_impl(
             f"Use manage_event to update regular events."
         )
 
-    patch_body: Dict[str, Any] = {}
+    patch_body: dict[str, Any] = {}
 
     if summary is not None:
         patch_body["summary"] = summary
@@ -2229,7 +2233,7 @@ async def _update_focus_time_event_impl(
         or chat_status is not None
     ):
         existing_ft_props = existing_event.get("focusTimeProperties", {})
-        updated_ft_props: Dict[str, str] = {
+        updated_ft_props: dict[str, str] = {
             "autoDeclineMode": _validate_auto_decline_mode(
                 auto_decline_mode, "update_focus_time_event"
             )
@@ -2339,19 +2343,19 @@ async def manage_focus_time(
     service,
     user_google_email: str,
     action: str,
-    start_time: Optional[str] = None,
-    end_time: Optional[str] = None,
-    summary: Optional[str] = None,
-    description: Optional[str] = None,
-    auto_decline_mode: Optional[str] = None,
-    decline_message: Optional[str] = None,
-    chat_status: Optional[str] = None,
-    recurrence: Optional[StringList] = None,
-    timezone: Optional[str] = None,
-    time_min: Optional[str] = None,
-    time_max: Optional[str] = None,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    summary: str | None = None,
+    description: str | None = None,
+    auto_decline_mode: str | None = None,
+    decline_message: str | None = None,
+    chat_status: str | None = None,
+    recurrence: StringList | None = None,
+    timezone: str | None = None,
+    time_min: str | None = None,
+    time_max: str | None = None,
     max_results: int = 10,
-    event_id: Optional[str] = None,
+    event_id: str | None = None,
     calendar_id: str = "primary",
 ) -> str:
     """
@@ -2462,9 +2466,9 @@ async def query_freebusy(
     user_google_email: str,
     time_min: str,
     time_max: str,
-    calendar_ids: Optional[StringList] = None,
-    group_expansion_max: Optional[int] = None,
-    calendar_expansion_max: Optional[int] = None,
+    calendar_ids: StringList | None = None,
+    group_expansion_max: int | None = None,
+    calendar_expansion_max: int | None = None,
 ) -> str:
     """
     Returns free/busy information for a set of calendars.
@@ -2493,7 +2497,7 @@ async def query_freebusy(
         calendar_ids = ["primary"]
 
     # Build the request body
-    request_body: Dict[str, Any] = {
+    request_body: dict[str, Any] = {
         "timeMin": formatted_time_min,
         "timeMax": formatted_time_max,
         "items": [{"id": cal_id} for cal_id in calendar_ids],
@@ -2577,8 +2581,8 @@ async def create_calendar(
     service,
     user_google_email: str,
     summary: str,
-    description: Optional[str] = None,
-    timezone: Optional[str] = None,
+    description: str | None = None,
+    timezone: str | None = None,
 ) -> str:
     """
     Creates a new secondary Google Calendar.
@@ -2596,7 +2600,7 @@ async def create_calendar(
         f"[create_calendar] Invoked. Email: '{user_google_email}', summary: '{summary}'"
     )
 
-    body: Dict[str, Any] = {"summary": summary}
+    body: dict[str, Any] = {"summary": summary}
     if description:
         body["description"] = description
     if timezone:

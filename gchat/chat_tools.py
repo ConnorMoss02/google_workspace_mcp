@@ -4,15 +4,13 @@ Google Chat MCP Tools
 This module provides MCP tools for interacting with Google Chat API.
 """
 
+import asyncio
 import base64
 import logging
-import asyncio
 import ssl
-from typing import Dict, List, Optional
 
 import httpx
 from googleapiclient.errors import HttpError
-
 from mcp.types import ToolAnnotations
 
 # Auth & server utilities
@@ -24,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 # In-memory cache for user ID → display name (bounded to avoid unbounded growth)
 _SENDER_CACHE_MAX_SIZE = 256
-_sender_name_cache: Dict[str, str] = {}
+_sender_name_cache: dict[str, str] = {}
 _SEARCH_MESSAGES_MAX_CONCURRENT_SPACE_FETCHES = 1
 _SEARCH_MESSAGES_SSL_RETRIES = 3
 _SEARCH_MESSAGES_RETRY_BASE_DELAY_SECONDS = 1
@@ -94,7 +92,7 @@ async def _execute_chat_request(
     *,
     request_label: str,
     retries: int = 1,
-    semaphore: Optional[asyncio.Semaphore] = None,
+    semaphore: asyncio.Semaphore | None = None,
 ):
     """Execute a Chat API request in a worker thread with optional SSL retries."""
     for attempt in range(retries):
@@ -118,7 +116,7 @@ async def _execute_chat_request(
             await asyncio.sleep(delay)
 
 
-def _extract_rich_links(msg: dict) -> List[str]:
+def _extract_rich_links(msg: dict) -> list[str]:
     """Extract URLs from RICH_LINK annotations (smart chips).
 
     When a user pastes a Google Workspace URL in Chat and it renders as a
@@ -214,7 +212,7 @@ async def get_messages(
     space_id: str,
     page_size: int = 50,
     order_by: str = "createTime desc",
-    message_filter: Optional[str] = None,
+    message_filter: str | None = None,
 ) -> str:
     """
     Retrieves messages from a Google Chat space.
@@ -327,8 +325,8 @@ async def send_message(
     user_google_email: str,
     space_id: str,
     message_text: str,
-    thread_key: Optional[str] = None,
-    thread_name: Optional[str] = None,
+    thread_key: str | None = None,
+    thread_name: str | None = None,
 ) -> str:
     """
     Sends a message to a Google Chat space.
@@ -392,10 +390,10 @@ async def search_messages(
     chat_service,
     people_service,
     user_google_email: str,
-    query: Optional[str] = None,
-    space_id: Optional[str] = None,
+    query: str | None = None,
+    space_id: str | None = None,
     page_size: int = 25,
-    time_filter: Optional[str] = None,
+    time_filter: str | None = None,
     max_spaces: int = 10,
 ) -> str:
     """
@@ -457,7 +455,7 @@ async def search_messages(
             _SEARCH_MESSAGES_MAX_CONCURRENT_SPACE_FETCHES
         )
 
-        async def fetch_space_messages(space: dict) -> tuple[List[dict], bool]:
+        async def fetch_space_messages(space: dict) -> tuple[list[dict], bool]:
             try:
                 list_params = {"parent": space.get("name"), "pageSize": page_size}
                 if filter_str:

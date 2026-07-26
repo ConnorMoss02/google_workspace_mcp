@@ -3,29 +3,29 @@
 import asyncio
 import hashlib
 import json
-import jwt
 import logging
 import os
 import webbrowser
-
-from typing import List, Optional, Tuple, Dict, Any
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+import google_auth_httplib2
+import httplib2
+import jwt
+from google.auth.exceptions import RefreshError
+from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
-from google.auth.transport.requests import Request
-from google.auth.exceptions import RefreshError
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-import httplib2
-import google_auth_httplib2
-from auth.scopes import SCOPES, get_current_scopes, has_required_scopes  # noqa
-from auth.oauth21_session_store import get_oauth21_session_store
+
 from auth.credential_store import get_credential_store
+from auth.oauth21_session_store import get_oauth21_session_store
 from auth.oauth_config import is_oauth21_enabled, is_stateless_mode
+from auth.scopes import SCOPES, get_current_scopes, has_required_scopes  # noqa
 from core.config import (
-    get_transport_mode,
     get_oauth_redirect_uri,
+    get_transport_mode,
 )
 from core.context import get_fastmcp_session_id
 
@@ -40,7 +40,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def _session_id_log_fingerprint(session_id: Optional[str]) -> str:
+def _session_id_log_fingerprint(session_id: str | None) -> str:
     """Return a stable, non-reversible session identifier for logs."""
     if not session_id:
         return "<none>"
@@ -113,7 +113,7 @@ else:
 
 def _find_any_credentials(
     base_dir: str = DEFAULT_CREDENTIALS_DIR,
-) -> tuple[Optional[Credentials], Optional[str]]:
+) -> tuple[Credentials | None, str | None]:
     """
     Find and load any valid credentials from the credentials directory.
     Used in single-user mode to bypass session-to-OAuth mapping.
@@ -188,7 +188,7 @@ def save_credentials_to_session(session_id: str, credentials: Credentials):
         )
 
 
-def load_credentials_from_session(session_id: str) -> Optional[Credentials]:
+def load_credentials_from_session(session_id: str) -> Credentials | None:
     """Loads user credentials from OAuth21SessionStore."""
     store = get_oauth21_session_store()
     credentials = store.get_credentials_by_mcp_session(session_id)
@@ -203,7 +203,7 @@ def load_credentials_from_session(session_id: str) -> Optional[Credentials]:
     return credentials
 
 
-def load_client_secrets_from_env() -> Optional[Dict[str, Any]]:
+def load_client_secrets_from_env() -> dict[str, Any] | None:
     """
     Loads the client secrets from environment variables.
 
@@ -248,7 +248,7 @@ def load_client_secrets_from_env() -> Optional[Dict[str, Any]]:
     return None
 
 
-def load_client_secrets(client_secrets_path: str) -> Dict[str, Any]:
+def load_client_secrets(client_secrets_path: str) -> dict[str, Any]:
     """
     Loads the client secrets from environment variables (preferred) or from the client secrets file.
 
@@ -298,12 +298,12 @@ def load_client_secrets(client_secrets_path: str) -> Dict[str, Any]:
                     f"Client secrets file {client_secrets_path} has unexpected format."
                 )
                 raise ValueError("Invalid client secrets file format")
-    except (IOError, json.JSONDecodeError) as e:
+    except (OSError, json.JSONDecodeError) as e:
         logger.error(f"Error loading client secrets file {client_secrets_path}: {e}")
         raise
 
 
-def check_client_secrets() -> Optional[str]:
+def check_client_secrets() -> str | None:
     """
     Checks for the presence of OAuth client secrets, either as environment
     variables or as a file.
@@ -321,10 +321,10 @@ def check_client_secrets() -> Optional[str]:
 
 
 def create_oauth_flow(
-    scopes: List[str],
+    scopes: list[str],
     redirect_uri: str,
-    state: Optional[str] = None,
-    code_verifier: Optional[str] = None,
+    state: str | None = None,
+    code_verifier: str | None = None,
     autogenerate_code_verifier: bool = True,
 ) -> Flow:
     """Creates an OAuth flow using environment variables or client secrets file."""
@@ -379,9 +379,9 @@ def _is_pkce_verifier_not_needed_error(error: Exception) -> bool:
 
 
 async def _determine_oauth_prompt(
-    user_google_email: Optional[str],
-    required_scopes: List[str],
-    session_id: Optional[str] = None,
+    user_google_email: str | None,
+    required_scopes: list[str],
+    session_id: str | None = None,
 ) -> str:
     """
     Determine which OAuth prompt to use for a new authorization URL.
@@ -414,7 +414,7 @@ async def _determine_oauth_prompt(
         )
         return "consent"
 
-    existing_credentials: Optional[Credentials] = None
+    existing_credentials: Credentials | None = None
 
     # Prefer credentials bound to the current session when available.
     if session_id:
@@ -479,7 +479,7 @@ async def _determine_oauth_prompt(
 
 
 async def start_auth_flow(
-    user_google_email: Optional[str],
+    user_google_email: str | None,
     service_name: str,  # e.g., "Google Calendar", "Gmail" for user messages
     redirect_uri: str,  # Added redirect_uri as a required parameter
 ) -> str:
@@ -617,29 +617,27 @@ async def start_auth_flow(
 
     except FileNotFoundError as e:
         error_text = f"OAuth client credentials not found: {e}. Please either:\n1. Set environment variables: GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET\n2. Ensure '{CONFIG_CLIENT_SECRETS_PATH}' file exists"
-        logger.error(error_text, exc_info=True)
+        logger.exception(error_text)
         raise Exception(error_text)
     except Exception as e:
-        error_text = f"Could not initiate authentication for {user_display_name} due to an unexpected error: {str(e)}"
-        logger.error(
-            f"Failed to start the OAuth flow for {user_display_name}: {e}",
-            exc_info=True,
+        error_text = f"Could not initiate authentication for {user_display_name} due to an unexpected error: {e!s}"
+        logger.exception(
+            f"Failed to start the OAuth flow for {user_display_name}",
         )
         raise Exception(error_text)
 
 
 async def handle_auth_callback(
-    scopes: List[str],
+    scopes: list[str],
     authorization_response: str,
     redirect_uri: str,
     credentials_base_dir: str = DEFAULT_CREDENTIALS_DIR,
-    session_id: Optional[str] = None,
+    session_id: str | None = None,
     *,
     allow_missing_state_fallback: bool = False,
-    client_secrets_path: Optional[
-        str
-    ] = None,  # Deprecated: kept for backward compatibility
-) -> Tuple[str, Credentials]:
+    client_secrets_path: str
+    | None = None,  # Deprecated: kept for backward compatibility
+) -> tuple[str, Credentials]:
     """
     Handles the callback from Google, exchanges the code for credentials,
     fetches user info, determines user_google_email, saves credentials (file & session),
@@ -882,12 +880,12 @@ async def handle_auth_callback(
 
 
 def get_credentials(
-    user_google_email: Optional[str],  # Can be None if relying on session_id
-    required_scopes: List[str],
-    client_secrets_path: Optional[str] = None,
+    user_google_email: str | None,  # Can be None if relying on session_id
+    required_scopes: list[str],
+    client_secrets_path: str | None = None,
     credentials_base_dir: str = DEFAULT_CREDENTIALS_DIR,
-    session_id: Optional[str] = None,
-) -> Optional[Credentials]:
+    session_id: str | None = None,
+) -> Credentials | None:
     """
     Retrieves stored credentials, prioritizing OAuth 2.1 store, then session, then file. Refreshes if necessary.
     If credentials are loaded from file and a session_id is present, they are cached in the session.
@@ -1036,7 +1034,7 @@ def get_credentials(
                 f"[get_credentials] Single-user mode: using email {user_google_email} from credential file"
             )
     else:
-        credentials: Optional[Credentials] = None
+        credentials: Credentials | None = None
 
         # Session ID should be provided by the caller
         if not session_id:
@@ -1164,10 +1162,9 @@ def get_credentials(
             )
             # For RefreshError, we should return None to trigger reauthentication
             return None
-        except Exception as e:
-            logger.error(
-                f"[get_credentials] Error refreshing credentials: {e}. User: '{user_google_email}', Session: '{session_id}'",
-                exc_info=True,
+        except Exception:
+            logger.exception(
+                f"[get_credentials] Error refreshing credentials. User: '{user_google_email}', Session: '{session_id}'",
             )
             return None  # Failed to refresh
     else:
@@ -1192,7 +1189,7 @@ def get_credentials(
 
 def get_user_info(
     credentials: Credentials, *, skip_valid_check: bool = False
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Fetches basic user profile information (requires userinfo.email scope)."""
     if not credentials:
         logger.error("Cannot get user info: Missing credentials.")
@@ -1226,7 +1223,7 @@ def get_user_info(
 class GoogleAuthenticationError(Exception):
     """Exception raised when Google authentication is required or fails."""
 
-    def __init__(self, message: str, auth_url: Optional[str] = None):
+    def __init__(self, message: str, auth_url: str | None = None):
         super().__init__(message)
         self.auth_url = auth_url
 
@@ -1236,8 +1233,8 @@ async def get_authenticated_google_service(
     version: str,  # "v1", "v3"
     tool_name: str,  # For logging/debugging
     user_google_email: str,  # Required - no more Optional
-    required_scopes: List[str],
-    session_id: Optional[str] = None,  # Session context for logging
+    required_scopes: list[str],
+    session_id: str | None = None,  # Session context for logging
 ) -> tuple[Any, str]:
     """
     Centralized Google service authentication for all MCP tools.
@@ -1373,6 +1370,6 @@ async def get_authenticated_google_service(
         return service, log_user_email
 
     except Exception as e:
-        error_msg = f"[{tool_name}] Failed to build {service_name} service: {str(e)}"
-        logger.error(error_msg, exc_info=True)
+        error_msg = f"[{tool_name}] Failed to build {service_name} service: {e!s}"
+        logger.exception(error_msg)
         raise GoogleAuthenticationError(error_msg)

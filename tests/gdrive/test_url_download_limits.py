@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 import pytest
 
-import gdrive.drive_helpers as drive_helpers
+from gdrive import drive_helpers
 
 
 class _FakeStreamResponse:

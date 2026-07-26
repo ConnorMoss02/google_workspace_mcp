@@ -5,7 +5,8 @@ localhost download URLs or local file paths.
 """
 
 import base64
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -63,8 +64,8 @@ def _build_mock_service(
 @pytest.fixture
 def isolated_attachment_env(tmp_path, monkeypatch):
     """Route attachment storage to a temp dir and force HTTP (not stateless) mode."""
-    import core.attachment_storage as storage_module
     import auth.oauth_config as oauth_config_module
+    import core.attachment_storage as storage_module
     import core.config as core_config_module
 
     monkeypatch.setattr(storage_module, "STORAGE_DIR", tmp_path)

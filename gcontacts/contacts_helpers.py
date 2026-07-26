@@ -10,12 +10,12 @@ tool definitions and Pydantic input models in contacts_tools.py.
 import datetime
 import logging
 import re
-from typing import Any, Dict, List
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-def _parse_birthday(s: str) -> Dict[str, Any]:
+def _parse_birthday(s: str) -> dict[str, Any]:
     """Parse 'YYYY-MM-DD' or 'MM-DD' into a People API birthday object."""
     parts = s.strip().split("-")
     try:
@@ -68,8 +68,7 @@ def _normalize_nickname(value: str) -> str:
 def _normalize_url(value: str) -> str:
     """Return a normalized URL string for deduplication. Lowercases scheme/host, strips trailing slash."""
     stripped = value.strip().lower()
-    if stripped.endswith("/"):
-        stripped = stripped[:-1]
+    stripped = stripped.removesuffix("/")
     return stripped
 
 
@@ -83,7 +82,7 @@ def _normalize_relation_person(value: str) -> str:
     return value.strip().lower()
 
 
-def _format_phone_line(phone: Dict[str, Any]) -> str:
+def _format_phone_line(phone: dict[str, Any]) -> str:
     """
     Format a single phone entry into a display line.
 
@@ -107,7 +106,7 @@ def _format_phone_line(phone: Dict[str, Any]) -> str:
     return value
 
 
-def _format_email_line(email: Dict[str, Any]) -> str:
+def _format_email_line(email: dict[str, Any]) -> str:
     """
     Format a single email entry into a display line.
 
@@ -123,7 +122,7 @@ def _format_email_line(email: Dict[str, Any]) -> str:
     return value
 
 
-def _format_contact(person: Dict[str, Any], detailed: bool = False) -> str:
+def _format_contact(person: dict[str, Any], detailed: bool = False) -> str:
     """
     Format a Person resource into a readable string.
 
@@ -261,10 +260,10 @@ def _format_contact(person: Dict[str, Any], detailed: bool = False) -> str:
 
 
 def _merge_phones(
-    existing: List[Dict[str, Any]],
-    new_phones: List[Dict[str, Any]],
+    existing: list[dict[str, Any]],
+    new_phones: list[dict[str, Any]],
     mode: str,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Merge phone lists according to mode.
 
@@ -277,7 +276,7 @@ def _merge_phones(
         Merged phone list.
     """
 
-    def phone_key(phone: Dict[str, Any]) -> str:
+    def phone_key(phone: dict[str, Any]) -> str:
         return _normalize_phone(phone.get("canonicalForm") or phone.get("value", ""))
 
     if mode == "replace":
@@ -305,10 +304,10 @@ def _merge_phones(
 
 
 def _merge_emails(
-    existing: List[Dict[str, Any]],
-    new_emails: List[Dict[str, Any]],
+    existing: list[dict[str, Any]],
+    new_emails: list[dict[str, Any]],
     mode: str,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Merge email lists according to mode.
 
@@ -343,10 +342,10 @@ def _merge_emails(
 
 
 def _merge_organizations(
-    existing: List[Dict[str, Any]],
-    new_orgs: List[Dict[str, Any]],
+    existing: list[dict[str, Any]],
+    new_orgs: list[dict[str, Any]],
     mode: str,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Merge organization lists according to mode.
 
@@ -359,7 +358,7 @@ def _merge_organizations(
         Merged org list.
     """
 
-    def organization_key(org: Dict[str, Any]) -> tuple[str, str, str, str, str]:
+    def organization_key(org: dict[str, Any]) -> tuple[str, str, str, str, str]:
         job_description = org.get("jobDescription") or org.get("description") or ""
         return (
             ((org.get("name") or "").strip().lower()),
@@ -386,10 +385,10 @@ def _merge_organizations(
 
 
 def _merge_nicknames(
-    existing: List[Dict[str, Any]],
-    new_nicknames: List[Dict[str, Any]],
+    existing: list[dict[str, Any]],
+    new_nicknames: list[dict[str, Any]],
     mode: str,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Merge nickname lists according to mode. Dedup by lowercased value.
     """
@@ -416,10 +415,10 @@ def _merge_nicknames(
 
 
 def _merge_urls(
-    existing: List[Dict[str, Any]],
-    new_urls: List[Dict[str, Any]],
+    existing: list[dict[str, Any]],
+    new_urls: list[dict[str, Any]],
     mode: str,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Merge URL lists according to mode. Dedup by normalized URL (lowercased, trailing slash stripped).
     """
@@ -446,10 +445,10 @@ def _merge_urls(
 
 
 def _merge_user_defined(
-    existing: List[Dict[str, Any]],
-    new_ud: List[Dict[str, Any]],
+    existing: list[dict[str, Any]],
+    new_ud: list[dict[str, Any]],
     mode: str,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Merge userDefined custom-field lists according to mode. Dedup by normalized key.
     On merge, new value overrides existing for the same key.
@@ -483,15 +482,15 @@ def _merge_user_defined(
 
 
 def _merge_relations(
-    existing: List[Dict[str, Any]],
-    new_relations: List[Dict[str, Any]],
+    existing: list[dict[str, Any]],
+    new_relations: list[dict[str, Any]],
     mode: str,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Merge relations lists according to mode. Dedup by (normalized person, normalized type) tuple.
     """
 
-    def relation_key(rel: Dict[str, Any]) -> tuple[str, str]:
+    def relation_key(rel: dict[str, Any]) -> tuple[str, str]:
         label = rel.get("formattedType") or rel.get("type") or ""
         return (
             _normalize_relation_person(rel.get("person", "")),

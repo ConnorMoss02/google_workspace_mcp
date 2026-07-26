@@ -3,69 +3,70 @@ import inspect
 import json
 import logging
 import os
-
 import re
-from functools import wraps
-from typing import Dict, List, Optional, Any, Callable, Union, Tuple
+from collections.abc import Callable
 from contextlib import ExitStack
+from functools import wraps
+from typing import Any
 
+from fastmcp.server.dependencies import get_access_token, get_context
 from google.auth.exceptions import RefreshError
 from google.oauth2 import service_account as google_service_account
 from googleapiclient.discovery import build
-from fastmcp.server.dependencies import get_access_token, get_context
-from auth.google_auth import get_authenticated_google_service, GoogleAuthenticationError
-from core.config import USER_GOOGLE_EMAIL as _ENV_USER_EMAIL
+
+from auth.google_auth import GoogleAuthenticationError, get_authenticated_google_service
 from auth.oauth21_session_store import (
+    ensure_session_from_access_token,
     get_auth_provider,
     get_oauth21_session_store,
-    ensure_session_from_access_token,
 )
 from auth.oauth_config import (
-    is_oauth21_enabled,
     get_oauth_config,
     is_external_oauth21_provider,
+    is_oauth21_enabled,
     is_service_account_enabled,
 )
-from core.context import set_fastmcp_session_id
 from auth.scopes import (
-    GMAIL_READONLY_SCOPE,
-    GMAIL_SEND_SCOPE,
-    GMAIL_COMPOSE_SCOPE,
-    GMAIL_MODIFY_SCOPE,
-    GMAIL_LABELS_SCOPE,
-    GMAIL_SETTINGS_BASIC_SCOPE,
-    DRIVE_SCOPE,
-    DRIVE_READONLY_SCOPE,
-    DRIVE_FILE_SCOPE,
+    CALENDAR_EVENTS_SCOPE,
+    CALENDAR_READONLY_SCOPE,
+    CALENDAR_SCOPE,
+    CHAT_READONLY_SCOPE,
+    CHAT_SPACES_READONLY_SCOPE,
+    CHAT_SPACES_SCOPE,
+    CHAT_WRITE_SCOPE,
+    CONTACTS_READONLY_SCOPE,
+    CONTACTS_SCOPE,
+    CUSTOM_SEARCH_SCOPE,
     DOCS_READONLY_SCOPE,
     DOCS_WRITE_SCOPE,
-    CALENDAR_SCOPE,
-    CALENDAR_READONLY_SCOPE,
-    CALENDAR_EVENTS_SCOPE,
+    DRIVE_FILE_SCOPE,
+    DRIVE_READONLY_SCOPE,
+    DRIVE_SCOPE,
+    FORMS_BODY_READONLY_SCOPE,
+    FORMS_BODY_SCOPE,
+    FORMS_RESPONSES_READONLY_SCOPE,
+    GMAIL_COMPOSE_SCOPE,
+    GMAIL_LABELS_SCOPE,
+    GMAIL_MODIFY_SCOPE,
+    GMAIL_READONLY_SCOPE,
+    GMAIL_SEND_SCOPE,
+    GMAIL_SETTINGS_BASIC_SCOPE,
+    SCRIPT_DEPLOYMENTS_READONLY_SCOPE,
+    SCRIPT_DEPLOYMENTS_SCOPE,
+    SCRIPT_EXTERNAL_REQUEST_SCOPE,
+    SCRIPT_PROJECTS_READONLY_SCOPE,
+    SCRIPT_PROJECTS_SCOPE,
+    SCRIPT_SCRIPTAPP_SCOPE,
     SHEETS_READONLY_SCOPE,
     SHEETS_WRITE_SCOPE,
-    CHAT_READONLY_SCOPE,
-    CHAT_WRITE_SCOPE,
-    CHAT_SPACES_SCOPE,
-    CHAT_SPACES_READONLY_SCOPE,
-    FORMS_BODY_SCOPE,
-    FORMS_BODY_READONLY_SCOPE,
-    FORMS_RESPONSES_READONLY_SCOPE,
-    SLIDES_SCOPE,
     SLIDES_READONLY_SCOPE,
-    TASKS_SCOPE,
+    SLIDES_SCOPE,
     TASKS_READONLY_SCOPE,
-    CONTACTS_SCOPE,
-    CONTACTS_READONLY_SCOPE,
-    CUSTOM_SEARCH_SCOPE,
-    SCRIPT_PROJECTS_SCOPE,
-    SCRIPT_PROJECTS_READONLY_SCOPE,
-    SCRIPT_DEPLOYMENTS_SCOPE,
-    SCRIPT_DEPLOYMENTS_READONLY_SCOPE,
-    SCRIPT_EXTERNAL_REQUEST_SCOPE,
-    SCRIPT_SCRIPTAPP_SCOPE,
+    TASKS_SCOPE,
     has_required_scopes,
 )
+from core.config import USER_GOOGLE_EMAIL as _ENV_USER_EMAIL
+from core.context import set_fastmcp_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +76,7 @@ def _release_google_service_cycles() -> None:
     gc.collect()
 
 
-def _get_configured_user_google_email() -> Optional[str]:
+def _get_configured_user_google_email() -> str | None:
     """Return the configured default user email, preferring the live environment."""
     return os.getenv("USER_GOOGLE_EMAIL") or _ENV_USER_EMAIL
 
@@ -83,7 +84,7 @@ def _get_configured_user_google_email() -> Optional[str]:
 # Authentication helper functions
 async def _get_auth_context(
     tool_name: str,
-) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+) -> tuple[str | None, str | None, str | None]:
     """
     Get authentication context from FastMCP.
 
@@ -114,7 +115,7 @@ async def _get_auth_context(
 
 
 def _detect_oauth_version(
-    authenticated_user: Optional[str], mcp_session_id: Optional[str], tool_name: str
+    authenticated_user: str | None, mcp_session_id: str | None, tool_name: str
 ) -> bool:
     """
     Detect whether to use OAuth 2.1 based on configuration and context.
@@ -168,14 +169,14 @@ def _update_email_in_args(args: tuple, index: int, new_email: str) -> tuple:
 
 def _override_oauth21_user_email(
     use_oauth21: bool,
-    authenticated_user: Optional[str],
+    authenticated_user: str | None,
     current_user_email: str,
     args: tuple,
     kwargs: dict,
-    param_names: List[str],
+    param_names: list[str],
     tool_name: str,
     service_type: str = "",
-) -> Tuple[str, tuple]:
+) -> tuple[str, tuple]:
     """
     Override user_google_email with authenticated user when using OAuth 2.1.
 
@@ -207,7 +208,7 @@ def _override_oauth21_user_email(
 
 
 def _get_service_account_credentials(
-    scopes: List[str], subject: str
+    scopes: list[str], subject: str
 ) -> google_service_account.Credentials:
     """
     Build service account credentials for domain-wide delegation.
@@ -272,10 +273,10 @@ async def _authenticate_service(
     service_version: str,
     tool_name: str,
     user_google_email: str,
-    resolved_scopes: List[str],
-    mcp_session_id: Optional[str],
-    authenticated_user: Optional[str],
-) -> Tuple[Any, str]:
+    resolved_scopes: list[str],
+    mcp_session_id: str | None,
+    authenticated_user: str | None,
+) -> tuple[Any, str]:
     """
     Authenticate and get Google service using appropriate OAuth version.
 
@@ -333,9 +334,9 @@ async def get_authenticated_google_service_oauth21(
     version: str,
     tool_name: str,
     user_google_email: str,
-    required_scopes: List[str],
-    session_id: Optional[str] = None,
-    auth_token_email: Optional[str] = None,
+    required_scopes: list[str],
+    session_id: str | None = None,
+    auth_token_email: str | None = None,
     allow_recent_auth: bool = False,
 ) -> tuple[Any, str]:
     """
@@ -424,9 +425,7 @@ async def get_authenticated_google_service_oauth21(
     return service, user_google_email
 
 
-def _extract_oauth21_user_email(
-    authenticated_user: Optional[str], func_name: str
-) -> str:
+def _extract_oauth21_user_email(authenticated_user: str | None, func_name: str) -> str:
     """
     Extract user email for OAuth 2.1 mode.
 
@@ -586,7 +585,7 @@ SCOPE_GROUPS = {
 }
 
 
-def _resolve_scopes(scopes: Union[str, List[str]]) -> List[str]:
+def _resolve_scopes(scopes: str | list[str]) -> list[str]:
     """Resolve scope names to actual scope URLs."""
     if isinstance(scopes, str):
         if scopes in SCOPE_GROUPS:
@@ -683,8 +682,8 @@ def _handle_token_refresh_error(
 
 def require_google_service(
     service_type: str,
-    scopes: Union[str, List[str]],
-    version: Optional[str] = None,
+    scopes: str | list[str],
+    version: str | None = None,
 ):
     """
     Decorator that automatically handles Google service authentication and injection.
@@ -839,7 +838,7 @@ def require_google_service(
     return decorator
 
 
-def require_multiple_services(service_configs: List[Dict[str, Any]]):
+def require_multiple_services(service_configs: list[dict[str, Any]]):
     """
     Decorator for functions that need multiple Google services.
 

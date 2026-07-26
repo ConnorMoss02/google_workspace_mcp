@@ -4,12 +4,12 @@ import os
 import sys
 from unittest.mock import patch
 
-
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-from auth.google_auth import create_oauth_flow  # noqa: E402
-from auth.google_auth import load_client_secrets_from_env  # noqa: E402
-
+from auth.google_auth import (
+    create_oauth_flow,
+    load_client_secrets_from_env,
+)
 
 DUMMY_CLIENT_CONFIG = {
     "web": {

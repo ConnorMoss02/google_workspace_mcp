@@ -1,12 +1,13 @@
-import io
 import argparse
+import io
 import json
 import logging
 import os
 import socket
 import sys
 from functools import partial
-from importlib import metadata, import_module
+from importlib import import_module, metadata
+
 from dotenv import load_dotenv
 
 # Prevent any stray startup output on macOS (e.g. platform identifiers) from
@@ -22,23 +23,25 @@ def _load_startup_dependencies():
     from auth.credential_store import get_credential_store, get_selected_backend
     from auth.oauth_config import (
         get_oauth_config,
-        reload_oauth_config,
-        is_stateless_mode,
         is_service_account_enabled,
+        is_stateless_mode,
+        reload_oauth_config,
     )
     from core.log_formatter import (
         EnhancedLogFormatter,
         configure_file_logging,
         install_noisy_log_filters,
     )
-    from core.utils import check_credentials_directory_permissions
-    from core.server import server, set_transport_mode, configure_server_for_http
-    from core.tool_tier_loader import resolve_tools_from_tier
+    from core.server import configure_server_for_http, server, set_transport_mode
+    from core.tool_registry import (
+        filter_server_tools,
+        wrap_server_tool_method,
+    )
     from core.tool_registry import (
         set_enabled_tools as set_enabled_tool_names,
-        wrap_server_tool_method,
-        filter_server_tools,
     )
+    from core.tool_tier_loader import resolve_tools_from_tier
+    from core.utils import check_credentials_directory_permissions
 
     return (
         get_selected_backend,
@@ -111,7 +114,7 @@ def resolve_stdio_callback_port() -> None:
     normal PORT/WORKSPACE_MCP_PORT semantics. The fallback range only exists for
     the standalone stdio callback listener.
     """
-    from auth.port_resolver import resolve_port, NoAvailablePortError, PortConfigError
+    from auth.port_resolver import NoAvailablePortError, PortConfigError, resolve_port
 
     try:
         resolve_port()
@@ -653,7 +656,7 @@ def main():
             tool_imports[tool]()
             loaded.append(tool)
         except ModuleNotFoundError as exc:
-            logger.error("Failed to import tool '%s': %s", tool, exc, exc_info=True)
+            logger.exception("Failed to import tool '%s'", tool)
             failed.append((tool, exc))
 
     tool_summary = " ".join(f"{tool_icons.get(t, '🔧')} {t.title()}" for t in loaded)
@@ -751,7 +754,7 @@ def main():
         except json.JSONDecodeError as e:
             safe_print(f"❌ Service account key contains invalid JSON: {e}")
             sys.exit(1)
-        except (IOError, OSError) as e:
+        except OSError as e:
             safe_print(f"❌ Failed to read service account key: {e}")
             sys.exit(1)
         safe_print("🔐 Service account mode enabled (domain-wide delegation)")
@@ -870,6 +873,7 @@ def main():
             if http_port is not None:
                 # Dual transport: stdio for MCP client + HTTP for workspace-cli
                 import asyncio
+
                 import uvicorn
 
                 # Bind sidecar to loopback only — auth provider is not initialized
@@ -933,7 +937,7 @@ def main():
         sys.exit(0)
     except Exception as e:
         safe_print(f"\n❌ Server error: {e}")
-        logger.error(f"Unexpected error running server: {e}", exc_info=True)
+        logger.exception("Unexpected error running server")
         # Clean up OAuth callback server if running
         from auth.oauth_callback_server import cleanup_oauth_callback_server
 

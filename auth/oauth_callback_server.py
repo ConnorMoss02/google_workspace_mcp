@@ -6,33 +6,33 @@ In stdio mode: Starts a minimal HTTP server just for OAuth callbacks
 """
 
 import asyncio
+import contextlib
 import errno
 import logging
 import os
+import socket
 import threading
 import time
-import socket
-import uvicorn
-
-from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse
-from typing import Optional
-from urllib.parse import urlparse
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
 from urllib.request import urlopen
 
-from auth.scopes import SCOPES, get_current_scopes  # noqa
-from auth.oauth_responses import (
-    create_error_response,
-    create_success_response,
-    create_server_error_response,
-)
-from auth.google_auth import handle_auth_callback, check_client_secrets
+import uvicorn
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse
+
+from auth.google_auth import check_client_secrets, handle_auth_callback
 from auth.oauth_config import (
-    get_oauth_redirect_uri,
     get_oauth_config,
+    get_oauth_redirect_uri,
     get_transport_mode,
 )
+from auth.oauth_responses import (
+    create_error_response,
+    create_server_error_response,
+    create_success_response,
+)
+from auth.scopes import SCOPES, get_current_scopes  # noqa
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +94,7 @@ class MinimalOAuthServer:
 
                 # Exchange code for credentials
                 redirect_uri = get_oauth_redirect_uri()
-                verified_user_id, credentials = await handle_auth_callback(
+                verified_user_id, _credentials = await handle_auth_callback(
                     scopes=get_current_scopes(),
                     authorization_response=str(request.url),
                     redirect_uri=redirect_uri,
@@ -111,8 +111,8 @@ class MinimalOAuthServer:
                 return create_success_response(verified_user_id)
 
             except Exception as e:
-                error_message_detail = f"Error processing OAuth callback: {str(e)}"
-                logger.error(error_message_detail, exc_info=True)
+                error_message_detail = f"Error processing OAuth callback: {e!s}"
+                logger.exception(error_message_detail)
                 return create_server_error_response(str(e))
 
     def _setup_attachment_route(self):
@@ -176,9 +176,7 @@ class MinimalOAuthServer:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.bind((hostname, self.port))
         except OSError as exc:
-            if exc.errno == errno.EADDRINUSE:
-                return True
-            return False
+            return exc.errno == errno.EADDRINUSE
         except Exception:
             return False
 
@@ -303,8 +301,8 @@ class MinimalOAuthServer:
                 self.server = uvicorn.Server(config)
                 asyncio.run(self.server.serve())
 
-            except Exception as e:
-                logger.error(f"Minimal OAuth server error: {e}", exc_info=True)
+            except Exception:
+                logger.exception("Minimal OAuth server error")
                 self.is_running = False
 
         # Start server in background thread
@@ -315,17 +313,19 @@ class MinimalOAuthServer:
         max_wait = 3.0
         start_time = time.time()
         while time.time() - start_time < max_wait:
-            try:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    result = s.connect_ex((hostname, self.port))
-                    if result == 0:
-                        self.is_running = True
-                        logger.info(
-                            f"Minimal OAuth server started on {hostname}:{self.port}"
-                        )
-                        return True, ""
-            except Exception:
-                pass
+            # The server may not be listening yet; any error here just means
+            # "not ready", so poll again until max_wait elapses.
+            with (
+                contextlib.suppress(Exception),
+                socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s,
+            ):
+                result = s.connect_ex((hostname, self.port))
+                if result == 0:
+                    self.is_running = True
+                    logger.info(
+                        f"Minimal OAuth server started on {hostname}:{self.port}"
+                    )
+                    return True, ""
             time.sleep(0.1)
 
         error_msg = f"Failed to start minimal OAuth server on {hostname}:{self.port} - server did not respond within {max_wait}s"
@@ -344,9 +344,8 @@ class MinimalOAuthServer:
             return
 
         try:
-            if self.server:
-                if hasattr(self.server, "should_exit"):
-                    self.server.should_exit = True
+            if self.server and hasattr(self.server, "should_exit"):
+                self.server.should_exit = True
 
             if self.server_thread and self.server_thread.is_alive():
                 self.server_thread.join(timeout=3.0)
@@ -355,12 +354,12 @@ class MinimalOAuthServer:
             self._reusing_external_listener = False
             logger.info("Minimal OAuth server stopped")
 
-        except Exception as e:
-            logger.error(f"Error stopping minimal OAuth server: {e}", exc_info=True)
+        except Exception:
+            logger.exception("Error stopping minimal OAuth server")
 
 
 # Global instance for stdio mode
-_minimal_oauth_server: Optional[MinimalOAuthServer] = None
+_minimal_oauth_server: MinimalOAuthServer | None = None
 _minimal_oauth_server_lock = threading.Lock()
 
 

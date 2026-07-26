@@ -6,7 +6,8 @@ for use by tool functions.
 """
 
 import logging
-from typing import Callable, Any
+from collections.abc import Callable
+from typing import Any
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -16,6 +17,7 @@ from auth.oauth21_session_store import (
     SessionContextManager,
     extract_session_from_headers,
 )
+
 # OAuth 2.1 is now handled by FastMCP auth
 
 logger = logging.getLogger(__name__)

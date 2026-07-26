@@ -2,11 +2,11 @@
 
 import base64
 import io
+
 import pytest
 
-from tests.helpers import _make_minimal_pdf
 from core.utils import IMAGE_MIME_TYPES, encode_image_content, extract_pdf_text
-
+from tests.helpers import _make_minimal_pdf
 
 # ---------------------------------------------------------------------------
 # extract_pdf_text

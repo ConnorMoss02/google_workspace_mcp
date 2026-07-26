@@ -12,12 +12,11 @@ import functools
 import logging
 import os
 import time
-from typing import Optional
 
-from starlette.routing import Route
-from fastmcp.server.auth.providers.google import GoogleProvider
 from fastmcp.server.auth import AccessToken
+from fastmcp.server.auth.providers.google import GoogleProvider
 from google.oauth2.credentials import Credentials
+from starlette.routing import Route
 
 from auth.oauth_types import WorkspaceAccessToken
 
@@ -74,8 +73,8 @@ class ExternalOAuthProvider(GoogleProvider):
     def __init__(
         self,
         client_id: str,
-        client_secret: Optional[str] = None,
-        resource_server_url: Optional[str] = None,
+        client_secret: str | None = None,
+        resource_server_url: str | None = None,
         **kwargs,
     ):
         """Initialize and store client credentials for token validation."""
@@ -87,7 +86,7 @@ class ExternalOAuthProvider(GoogleProvider):
         # Store as string - Pydantic validates it when passed to models
         self.resource_server_url = self._resource_server_url
 
-    async def verify_token(self, token: str) -> Optional[AccessToken]:
+    async def verify_token(self, token: str) -> AccessToken | None:
         """
         Verify a token - supports both JWT ID tokens and ya29.* access tokens.
 

@@ -5,10 +5,9 @@ This module provides reusable comment management functions for Google Workspace 
 All Google Workspace apps (Docs, Sheets, Slides) use the Drive API for comment operations.
 """
 
-import logging
 import asyncio
+import logging
 import os
-from typing import Optional
 
 from mcp.types import ToolAnnotations
 
@@ -39,8 +38,8 @@ async def _manage_comment_dispatch(
     app_name: str,
     file_id: str,
     action: str,
-    comment_content: Optional[str] = None,
-    comment_id: Optional[str] = None,
+    comment_content: str | None = None,
+    comment_id: str | None = None,
 ) -> str:
     """Route comment management actions to the appropriate implementation."""
     action_lower = action.lower().strip()
@@ -106,8 +105,8 @@ def create_comment_tools(app_name: str, file_id_param: str):
             user_google_email: str,
             document_id: str,
             action: str,
-            comment_content: Optional[str] = None,
-            comment_id: Optional[str] = None,
+            comment_content: str | None = None,
+            comment_id: str | None = None,
         ) -> str:
             """Manage comments on a Google Document.
 
@@ -145,8 +144,8 @@ def create_comment_tools(app_name: str, file_id_param: str):
             user_google_email: str,
             spreadsheet_id: str,
             action: str,
-            comment_content: Optional[str] = None,
-            comment_id: Optional[str] = None,
+            comment_content: str | None = None,
+            comment_id: str | None = None,
         ) -> str:
             """Manage comments on a Google Spreadsheet.
 
@@ -184,8 +183,8 @@ def create_comment_tools(app_name: str, file_id_param: str):
             user_google_email: str,
             presentation_id: str,
             action: str,
-            comment_content: Optional[str] = None,
-            comment_id: Optional[str] = None,
+            comment_content: str | None = None,
+            comment_id: str | None = None,
         ) -> str:
             """Manage comments on a Google Presentation.
 

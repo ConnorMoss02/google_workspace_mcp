@@ -10,7 +10,7 @@ class _DummyFlow:
     def __init__(self, credentials):
         self.credentials = credentials
 
-    def fetch_token(self, authorization_response):  # noqa: ARG002
+    def fetch_token(self, authorization_response):
         return None
 
 
@@ -32,7 +32,7 @@ class _DummyOAuthStore:
         self.store_calls = 0
         self.store_kwargs = []
 
-    def validate_and_consume_oauth_state(self, state, session_id=None):  # noqa: ARG002
+    def validate_and_consume_oauth_state(self, state, session_id=None):
         bound = (
             session_id
             if self._bound_state_session_id is _UNSET
@@ -48,7 +48,7 @@ class _DummyOAuthStore:
         self.latest_calls.append((initiating_session_id, allow_any_session))
         return self._latest_state_info
 
-    def get_credentials_by_mcp_session(self, mcp_session_id):  # noqa: ARG002
+    def get_credentials_by_mcp_session(self, mcp_session_id):
         return self._session_credentials
 
     def store_session(self, **kwargs):
@@ -63,10 +63,10 @@ class _DummyCredentialStore:
         self.saved_credentials = None
         self.store_result = store_result
 
-    def get_credential(self, user_email):  # noqa: ARG002
+    def get_credential(self, user_email):
         return self._existing_credentials
 
-    def store_credential(self, user_email, credentials):  # noqa: ARG002
+    def store_credential(self, user_email, credentials):
         self.saved_credentials = credentials
         return self.store_result
 
@@ -144,7 +144,7 @@ async def test_callback_missing_state_uses_explicit_single_user_stdio_fallback(
 
     monkeypatch.setattr(
         "auth.google_auth.create_oauth_flow",
-        lambda **kwargs: _DummyFlow(callback_credentials),  # noqa: ARG005
+        lambda **kwargs: _DummyFlow(callback_credentials),
     )
     monkeypatch.setattr(
         "auth.google_auth.get_oauth21_session_store", lambda: oauth_store
@@ -154,7 +154,7 @@ async def test_callback_missing_state_uses_explicit_single_user_stdio_fallback(
     )
     monkeypatch.setattr(
         "auth.google_auth.get_user_info",
-        lambda credentials: {"email": "user@gmail.com"},  # noqa: ARG005
+        lambda credentials: {"email": "user@gmail.com"},
     )
     monkeypatch.setattr(
         "auth.google_auth.save_credentials_to_session", lambda *args: None
@@ -183,7 +183,7 @@ async def test_callback_preserves_refresh_token_from_credential_store(monkeypatc
 
     monkeypatch.setattr(
         "auth.google_auth.create_oauth_flow",
-        lambda **kwargs: _DummyFlow(callback_credentials),  # noqa: ARG005
+        lambda **kwargs: _DummyFlow(callback_credentials),
     )
     monkeypatch.setattr(
         "auth.google_auth.get_oauth21_session_store", lambda: oauth_store
@@ -193,7 +193,7 @@ async def test_callback_preserves_refresh_token_from_credential_store(monkeypatc
     )
     monkeypatch.setattr(
         "auth.google_auth.get_user_info",
-        lambda credentials: {"email": "user@gmail.com"},  # noqa: ARG005
+        lambda credentials: {"email": "user@gmail.com"},
     )
     monkeypatch.setattr(
         "auth.google_auth.save_credentials_to_session", lambda *args: None
@@ -226,7 +226,7 @@ async def test_callback_prefers_session_refresh_token_over_credential_store(
 
     monkeypatch.setattr(
         "auth.google_auth.create_oauth_flow",
-        lambda **kwargs: _DummyFlow(callback_credentials),  # noqa: ARG005
+        lambda **kwargs: _DummyFlow(callback_credentials),
     )
     monkeypatch.setattr(
         "auth.google_auth.get_oauth21_session_store", lambda: oauth_store
@@ -236,7 +236,7 @@ async def test_callback_prefers_session_refresh_token_over_credential_store(
     )
     monkeypatch.setattr(
         "auth.google_auth.get_user_info",
-        lambda credentials: {"email": "user@gmail.com"},  # noqa: ARG005
+        lambda credentials: {"email": "user@gmail.com"},
     )
     monkeypatch.setattr(
         "auth.google_auth.save_credentials_to_session", lambda *args: None
@@ -266,10 +266,10 @@ async def test_callback_raises_when_google_rejects_pkce_verifier(monkeypatch):
     credential_store = _DummyCredentialStore(existing_credentials=None)
 
     class _FailingFlow:
-        def fetch_token(self, authorization_response):  # noqa: ARG002
+        def fetch_token(self, authorization_response):
             raise Exception("(invalid_grant) code_verifier or verifier is not needed.")
 
-    def _fake_create_oauth_flow(**kwargs):  # noqa: ARG001
+    def _fake_create_oauth_flow(**kwargs):
         return _FailingFlow()
 
     monkeypatch.setattr("auth.google_auth.create_oauth_flow", _fake_create_oauth_flow)
@@ -302,7 +302,7 @@ async def test_callback_aborts_session_persistence_when_store_write_fails(monkey
 
     monkeypatch.setattr(
         "auth.google_auth.create_oauth_flow",
-        lambda **kwargs: _DummyFlow(callback_credentials),  # noqa: ARG005
+        lambda **kwargs: _DummyFlow(callback_credentials),
     )
     monkeypatch.setattr(
         "auth.google_auth.get_oauth21_session_store", lambda: oauth_store
@@ -312,7 +312,7 @@ async def test_callback_aborts_session_persistence_when_store_write_fails(monkey
     )
     monkeypatch.setattr(
         "auth.google_auth.get_user_info",
-        lambda credentials: {"email": "user@gmail.com"},  # noqa: ARG005
+        lambda credentials: {"email": "user@gmail.com"},
     )
     monkeypatch.setattr(
         "auth.google_auth.save_credentials_to_session",
@@ -349,7 +349,7 @@ async def test_callback_binds_credentials_to_originating_session_when_session_mi
 
     monkeypatch.setattr(
         "auth.google_auth.create_oauth_flow",
-        lambda **kwargs: _DummyFlow(callback_credentials),  # noqa: ARG005
+        lambda **kwargs: _DummyFlow(callback_credentials),
     )
     monkeypatch.setattr(
         "auth.google_auth.get_oauth21_session_store", lambda: oauth_store
@@ -359,7 +359,7 @@ async def test_callback_binds_credentials_to_originating_session_when_session_mi
     )
     monkeypatch.setattr(
         "auth.google_auth.get_user_info",
-        lambda credentials: {"email": "user@gmail.com"},  # noqa: ARG005
+        lambda credentials: {"email": "user@gmail.com"},
     )
     monkeypatch.setattr(
         "auth.google_auth.save_credentials_to_session",

@@ -9,7 +9,6 @@ import asyncio
 import json
 import logging
 import re
-from typing import List, Optional, Union
 
 from core.utils import UserInputError
 
@@ -22,7 +21,7 @@ SHEET_TITLE_SAFE_RE = re.compile(r"^[A-Za-z0-9_]+$")
 COLUMN_LETTER_REGEX = re.compile(r"^[A-Za-z]+$")
 
 
-def _column_to_index(column: str) -> Optional[int]:
+def _column_to_index(column: str) -> int | None:
     """Convert column letters (A, B, AA) to zero-based index."""
     if not column or not COLUMN_LETTER_REGEX.fullmatch(column):
         return None
@@ -34,7 +33,7 @@ def _column_to_index(column: str) -> Optional[int]:
 
 def _parse_a1_part(
     part: str, pattern: re.Pattern[str] = A1_PART_REGEX
-) -> tuple[Optional[int], Optional[int]]:
+) -> tuple[int | None, int | None]:
     """
     Parse a single A1 part like 'B2' or 'C' into zero-based column/row indexes.
     Supports anchors like '$A$1' by stripping the dollar signs.
@@ -49,7 +48,7 @@ def _parse_a1_part(
     return col_idx, row_idx
 
 
-def _split_sheet_and_range(range_name: str) -> tuple[Optional[str], str]:
+def _split_sheet_and_range(range_name: str) -> tuple[str | None, str]:
     """
     Split an A1 notation into (sheet_name, range_part), handling quoted sheet names.
 
@@ -72,7 +71,7 @@ def _split_sheet_and_range(range_name: str) -> tuple[Optional[str], str]:
     return sheet_name.strip().strip("'"), a1_range
 
 
-def _parse_a1_range(range_name: str, sheets: List[dict]) -> dict:
+def _parse_a1_range(range_name: str, sheets: list[dict]) -> dict:
     """
     Convert an A1-style range (with optional sheet name) into a GridRange.
 
@@ -127,7 +126,7 @@ def _parse_a1_range(range_name: str, sheets: List[dict]) -> dict:
     return grid_range
 
 
-def _parse_hex_color(color: Optional[str]) -> Optional[dict]:
+def _parse_hex_color(color: str | None) -> dict | None:
     """
     Convert a hex color like '#RRGGBB' to Sheets API color (0-1 floats).
     """
@@ -135,8 +134,7 @@ def _parse_hex_color(color: Optional[str]) -> Optional[dict]:
         return None
 
     trimmed = color.strip()
-    if trimmed.startswith("#"):
-        trimmed = trimmed[1:]
+    trimmed = trimmed.removeprefix("#")
 
     if len(trimmed) != 6:
         raise UserInputError(f"Color '{color}' must be in format #RRGGBB or RRGGBB.")
@@ -228,7 +226,7 @@ def _is_sheets_error_token(value: object) -> bool:
     return upper_candidate.endswith(("!", "?"))
 
 
-def _values_contain_sheets_errors(values: List[List[object]]) -> bool:
+def _values_contain_sheets_errors(values: list[list[object]]) -> bool:
     """
     Check whether a 2D array of cell values contains any Google Sheets error tokens.
 
@@ -245,7 +243,7 @@ def _values_contain_sheets_errors(values: List[List[object]]) -> bool:
     return False
 
 
-def _a1_range_for_values(a1_range: str, values: List[List[object]]) -> Optional[str]:
+def _a1_range_for_values(a1_range: str, values: list[list[object]]) -> str | None:
     """
     Compute a tight A1 range for a returned values matrix.
 
@@ -280,7 +278,7 @@ def _a1_range_for_values(a1_range: str, values: List[List[object]]) -> Optional[
     return range_ref
 
 
-def _a1_range_cell_count(a1_range: str) -> Optional[int]:
+def _a1_range_cell_count(a1_range: str) -> int | None:
     """
     Return cell count for an explicit rectangular A1 range (e.g. A1:C10).
 
@@ -310,7 +308,7 @@ def _a1_range_cell_count(a1_range: str) -> Optional[int]:
     return (end_col - start_col + 1) * (end_row - start_row + 1)
 
 
-def _extract_cell_errors_from_grid(spreadsheet: dict) -> list[dict[str, Optional[str]]]:
+def _extract_cell_errors_from_grid(spreadsheet: dict) -> list[dict[str, str | None]]:
     """
     Extracts error information from spreadsheet grid data.
 
@@ -326,7 +324,7 @@ def _extract_cell_errors_from_grid(spreadsheet: dict) -> list[dict[str, Optional
     Returns:
         list[dict[str, Optional[str]]]: List of error details for each cell with an error.
     """
-    errors: list[dict[str, Optional[str]]] = []
+    errors: list[dict[str, str | None]] = []
     for sheet in spreadsheet.get("sheets", []) or []:
         sheet_title = sheet.get("properties", {}).get("title") or "Unknown"
         for grid in sheet.get("data", []) or []:
@@ -421,7 +419,7 @@ def _extract_cell_hyperlinks_from_grid(spreadsheet: dict) -> list[dict[str, str]
 
 async def _fetch_detailed_sheet_errors(
     service, spreadsheet_id: str, a1_range: str
-) -> list[dict[str, Optional[str]]]:
+) -> list[dict[str, str | None]]:
     response = await asyncio.to_thread(
         service.spreadsheets()
         .get(
@@ -452,7 +450,7 @@ async def _fetch_sheet_hyperlinks(
 
 
 def _format_sheet_error_section(
-    *, errors: list[dict[str, Optional[str]]], range_label: str, max_details: int = 25
+    *, errors: list[dict[str, str | None]], range_label: str, max_details: int = 25
 ) -> str:
     """
     Format a list of cell error information into a human-readable section.
@@ -522,17 +520,17 @@ def _format_sheet_hyperlink_section(
     return f"\n\nHyperlinks in range '{range_label}':\n" + "\n".join(lines) + suffix
 
 
-def _color_to_hex(color: Optional[dict]) -> Optional[str]:
+def _color_to_hex(color: dict | None) -> str | None:
     """
     Convert a Sheets color object back to #RRGGBB hex string for display.
     """
     if not color:
         return None
 
-    def _component(value: Optional[float]) -> int:
+    def _component(value: float | None) -> int:
         try:
             # Clamp and round to nearest integer in 0-255
-            return max(0, min(255, int(round(float(value or 0) * 255))))
+            return max(0, min(255, round(float(value or 0) * 255)))
         except (TypeError, ValueError):
             return 0
 
@@ -559,10 +557,10 @@ def _grid_range_to_a1(grid_range: dict, sheet_titles: dict[int, str]) -> str:
     if start_row is None and end_row is None and start_col is None and end_col is None:
         return sheet_title
 
-    def row_label(idx: Optional[int]) -> str:
+    def row_label(idx: int | None) -> str:
         return str(idx + 1) if idx is not None else ""
 
-    def col_label(idx: Optional[int]) -> str:
+    def col_label(idx: int | None) -> str:
         return _index_to_column(idx) if idx is not None else ""
 
     start_label = f"{col_label(start_col)}{row_label(start_row)}"
@@ -641,7 +639,7 @@ def _summarize_conditional_rule(
 
 def _format_conditional_rules_section(
     sheet_title: str,
-    rules: List[dict],
+    rules: list[dict],
     sheet_titles: dict[int, str],
     indent: str = "  ",
 ) -> str:
@@ -690,7 +688,7 @@ GRADIENT_POINT_TYPES = {"MIN", "MAX", "NUMBER", "PERCENT", "PERCENTILE"}
 
 async def _fetch_sheets_with_rules(
     service, spreadsheet_id: str
-) -> tuple[List[dict], dict[int, str]]:
+) -> tuple[list[dict], dict[int, str]]:
     """
     Fetch sheets with titles and conditional format rules in a single request.
     """
@@ -712,7 +710,7 @@ async def _fetch_sheets_with_rules(
     return sheets, sheet_titles
 
 
-def _select_sheet(sheets: List[dict], sheet_name: Optional[str]) -> dict:
+def _select_sheet(sheets: list[dict], sheet_name: str | None) -> dict:
     """
     Select a sheet by name, or default to the first sheet if name is not provided.
     """
@@ -735,8 +733,8 @@ def _select_sheet(sheets: List[dict], sheet_name: Optional[str]) -> dict:
 
 
 def _parse_condition_values(
-    condition_values: Optional[Union[str, List[Union[str, int, float]]]],
-) -> Optional[List[Union[str, int, float]]]:
+    condition_values: str | list[str | int | float] | None,
+) -> list[str | int | float] | None:
     """
     Normalize and validate condition_values into a list of strings/numbers.
     """
@@ -763,8 +761,8 @@ def _parse_condition_values(
 
 
 def _parse_gradient_points(
-    gradient_points: Optional[Union[str, List[dict]]],
-) -> Optional[List[dict]]:
+    gradient_points: str | list[dict] | None,
+) -> list[dict] | None:
     """
     Normalize gradient points into a list of dicts with type/value/color.
     Each point must have a 'type' (MIN, MAX, NUMBER, PERCENT, PERCENTILE) and a color.
@@ -788,7 +786,7 @@ def _parse_gradient_points(
     if len(parsed) < 2 or len(parsed) > 3:
         raise UserInputError("Provide 2 or 3 gradient points (min/max or min/mid/max).")
 
-    normalized_points: List[dict] = []
+    normalized_points: list[dict] = []
     for idx, point in enumerate(parsed):
         if not isinstance(point, dict):
             raise UserInputError(
@@ -818,11 +816,11 @@ def _parse_gradient_points(
 
 
 def _build_boolean_rule(
-    ranges: List[dict],
+    ranges: list[dict],
     condition_type: str,
-    condition_values: Optional[List[Union[str, int, float]]],
-    background_color: Optional[str],
-    text_color: Optional[str],
+    condition_values: list[str | int | float] | None,
+    background_color: str | None,
+    text_color: str | None,
 ) -> tuple[dict, str]:
     """
     Build a Sheets boolean conditional formatting rule payload.
@@ -867,8 +865,8 @@ def _build_boolean_rule(
 
 
 def _build_gradient_rule(
-    ranges: List[dict],
-    gradient_points: List[dict],
+    ranges: list[dict],
+    gradient_points: list[dict],
 ) -> dict:
     """
     Build a Sheets gradient conditional formatting rule payload.
@@ -966,7 +964,7 @@ async def _fetch_cell_formulas(
     service,
     spreadsheet_id: str,
     resolved_range: str,
-) -> tuple[str, List[List[object]]]:
+) -> tuple[str, list[list[object]]]:
     """Fetch formula strings for cells in the given range.
 
     Makes a second values().get() call with valueRenderOption="FORMULA" and
@@ -1044,7 +1042,7 @@ async def _fetch_grid_metadata(
     service,
     spreadsheet_id: str,
     resolved_range: str,
-    values: List[List[object]],
+    values: list[list[object]],
     include_hyperlinks: bool = False,
     include_notes: bool = False,
 ) -> tuple[str, str]:

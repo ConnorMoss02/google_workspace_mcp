@@ -7,11 +7,12 @@ and `file_type` filtering behaviors.
 """
 
 import base64
-import pytest
-from unittest.mock import Mock, AsyncMock, patch
 import io
-import sys
 import os
+import sys
+from unittest.mock import AsyncMock, Mock, patch
+
+import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 

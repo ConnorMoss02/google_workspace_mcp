@@ -14,45 +14,44 @@ Other services: readonly, full (extensible by adding entries to SERVICE_PERMISSI
 """
 
 import logging
-from typing import Dict, FrozenSet, List, Optional, Tuple
 
 from auth.scopes import (
-    GMAIL_READONLY_SCOPE,
-    GMAIL_LABELS_SCOPE,
-    GMAIL_MODIFY_SCOPE,
-    GMAIL_COMPOSE_SCOPE,
-    GMAIL_SEND_SCOPE,
-    GMAIL_SETTINGS_BASIC_SCOPE,
-    DRIVE_READONLY_SCOPE,
-    DRIVE_FILE_SCOPE,
-    DRIVE_SCOPE,
-    CALENDAR_READONLY_SCOPE,
     CALENDAR_EVENTS_SCOPE,
+    CALENDAR_READONLY_SCOPE,
     CALENDAR_SCOPE,
+    CHAT_READONLY_SCOPE,
+    CHAT_SPACES_READONLY_SCOPE,
+    CHAT_SPACES_SCOPE,
+    CHAT_WRITE_SCOPE,
+    CONTACTS_READONLY_SCOPE,
+    CONTACTS_SCOPE,
+    CUSTOM_SEARCH_SCOPE,
     DOCS_READONLY_SCOPE,
     DOCS_WRITE_SCOPE,
+    DRIVE_FILE_SCOPE,
+    DRIVE_READONLY_SCOPE,
+    DRIVE_SCOPE,
+    FORMS_BODY_READONLY_SCOPE,
+    FORMS_BODY_SCOPE,
+    FORMS_RESPONSES_READONLY_SCOPE,
+    GMAIL_COMPOSE_SCOPE,
+    GMAIL_LABELS_SCOPE,
+    GMAIL_MODIFY_SCOPE,
+    GMAIL_READONLY_SCOPE,
+    GMAIL_SEND_SCOPE,
+    GMAIL_SETTINGS_BASIC_SCOPE,
+    SCRIPT_DEPLOYMENTS_READONLY_SCOPE,
+    SCRIPT_DEPLOYMENTS_SCOPE,
+    SCRIPT_METRICS_SCOPE,
+    SCRIPT_PROCESSES_READONLY_SCOPE,
+    SCRIPT_PROJECTS_READONLY_SCOPE,
+    SCRIPT_PROJECTS_SCOPE,
     SHEETS_READONLY_SCOPE,
     SHEETS_WRITE_SCOPE,
-    CHAT_READONLY_SCOPE,
-    CHAT_WRITE_SCOPE,
-    CHAT_SPACES_SCOPE,
-    CHAT_SPACES_READONLY_SCOPE,
-    FORMS_BODY_SCOPE,
-    FORMS_BODY_READONLY_SCOPE,
-    FORMS_RESPONSES_READONLY_SCOPE,
-    SLIDES_SCOPE,
     SLIDES_READONLY_SCOPE,
-    TASKS_SCOPE,
+    SLIDES_SCOPE,
     TASKS_READONLY_SCOPE,
-    CONTACTS_SCOPE,
-    CONTACTS_READONLY_SCOPE,
-    CUSTOM_SEARCH_SCOPE,
-    SCRIPT_PROJECTS_SCOPE,
-    SCRIPT_PROJECTS_READONLY_SCOPE,
-    SCRIPT_DEPLOYMENTS_SCOPE,
-    SCRIPT_DEPLOYMENTS_READONLY_SCOPE,
-    SCRIPT_PROCESSES_READONLY_SCOPE,
-    SCRIPT_METRICS_SCOPE,
+    TASKS_SCOPE,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,7 +59,7 @@ logger = logging.getLogger(__name__)
 # Ordered permission levels per service.
 # Each entry is (level_name, [additional_scopes_at_this_level]).
 # Scopes are CUMULATIVE: level N includes all scopes from levels 0..N.
-SERVICE_PERMISSION_LEVELS: Dict[str, List[Tuple[str, List[str]]]] = {
+SERVICE_PERMISSION_LEVELS: dict[str, list[tuple[str, list[str]]]] = {
     "gmail": [
         ("readonly", [GMAIL_READONLY_SCOPE]),
         ("organize", [GMAIL_LABELS_SCOPE, GMAIL_MODIFY_SCOPE]),
@@ -136,7 +135,7 @@ SERVICE_PERMISSION_LEVELS: Dict[str, List[Tuple[str, List[str]]]] = {
 # Actions denied at specific permission levels.
 # Maps service -> level -> frozenset of denied action names.
 # Levels not listed here (or services without entries) deny nothing.
-SERVICE_DENIED_ACTIONS: Dict[str, Dict[str, FrozenSet[str]]] = {
+SERVICE_DENIED_ACTIONS: dict[str, dict[str, frozenset[str]]] = {
     "tasks": {
         "manage": frozenset({"delete", "clear_completed"}),
     },
@@ -161,10 +160,10 @@ def is_action_denied(service: str, action: str) -> bool:
 
 # Module-level state: parsed --permissions config
 # Dict mapping service_name -> level_name, e.g. {"gmail": "organize"}
-_PERMISSIONS: Optional[Dict[str, str]] = None
+_PERMISSIONS: dict[str, str] | None = None
 
 
-def set_permissions(permissions: Optional[Dict[str, str]]) -> None:
+def set_permissions(permissions: dict[str, str] | None) -> None:
     """Set granular permissions from parsed --permissions argument."""
     global _PERMISSIONS
     _PERMISSIONS = permissions
@@ -172,7 +171,7 @@ def set_permissions(permissions: Optional[Dict[str, str]]) -> None:
         logger.info("Granular permissions set: %s", permissions)
 
 
-def get_permissions() -> Optional[Dict[str, str]]:
+def get_permissions() -> dict[str, str] | None:
     """Return current permissions dict, or None if not using granular mode."""
     return _PERMISSIONS
 
@@ -182,7 +181,7 @@ def is_permissions_mode() -> bool:
     return _PERMISSIONS is not None
 
 
-def get_scopes_for_permission(service: str, level: str) -> List[str]:
+def get_scopes_for_permission(service: str, level: str) -> list[str]:
     """
     Get cumulative scopes for a service at a given permission level.
 
@@ -193,7 +192,7 @@ def get_scopes_for_permission(service: str, level: str) -> List[str]:
     if levels is None:
         raise ValueError(f"Unknown service: '{service}'")
 
-    cumulative: List[str] = []
+    cumulative: list[str] = []
     found = False
     for level_name, level_scopes in levels:
         cumulative.extend(level_scopes)
@@ -211,7 +210,7 @@ def get_scopes_for_permission(service: str, level: str) -> List[str]:
     return sorted(set(cumulative))
 
 
-def get_all_permission_scopes() -> List[str]:
+def get_all_permission_scopes() -> list[str]:
     """
     Get the combined scopes for all services at their configured permission levels.
 
@@ -226,7 +225,7 @@ def get_all_permission_scopes() -> List[str]:
     return list(all_scopes)
 
 
-def get_allowed_scopes_set() -> Optional[set]:
+def get_allowed_scopes_set() -> set | None:
     """
     Get the set of allowed scopes under permissions mode (for tool filtering).
 
@@ -237,7 +236,7 @@ def get_allowed_scopes_set() -> Optional[set]:
     return set(get_all_permission_scopes())
 
 
-def get_valid_levels(service: str) -> List[str]:
+def get_valid_levels(service: str) -> list[str]:
     """Get valid permission level names for a service."""
     levels = SERVICE_PERMISSION_LEVELS.get(service)
     if levels is None:
@@ -245,14 +244,14 @@ def get_valid_levels(service: str) -> List[str]:
     return [name for name, _ in levels]
 
 
-def parse_permissions_arg(permissions_list: List[str]) -> Dict[str, str]:
+def parse_permissions_arg(permissions_list: list[str]) -> dict[str, str]:
     """
     Parse --permissions arguments like ["gmail:organize", "drive:full"].
 
     Returns dict mapping service -> level.
     Raises ValueError on parse errors (unknown service, invalid level, bad format).
     """
-    result: Dict[str, str] = {}
+    result: dict[str, str] = {}
     for entry in permissions_list:
         if ":" not in entry:
             raise ValueError(

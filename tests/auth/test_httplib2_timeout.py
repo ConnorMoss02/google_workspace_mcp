@@ -5,8 +5,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from auth.google_auth import _build_authorized_http, get_authenticated_google_service
-from auth.google_auth import get_user_info
+from auth.google_auth import (
+    _build_authorized_http,
+    get_authenticated_google_service,
+    get_user_info,
+)
 
 
 def test_build_authorized_http_uses_explicit_timeout():

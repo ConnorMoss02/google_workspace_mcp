@@ -10,10 +10,10 @@ async def test_get_authenticated_google_service_skips_preflight_outside_stdio(
     async def fake_to_thread(fn, *args, **kwargs):
         return fn(*args, **kwargs)
 
-    async def fake_start_auth_flow(**kwargs):  # noqa: ARG001
+    async def fake_start_auth_flow(**kwargs):
         return "auth-url"
 
-    def fail_if_called(*args, **kwargs):  # noqa: ARG001
+    def fail_if_called(*args, **kwargs):
         raise AssertionError("callback preflight should not run outside stdio")
 
     monkeypatch.setattr("auth.google_auth.get_fastmcp_session_id", lambda: None)

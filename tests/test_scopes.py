@@ -6,11 +6,13 @@ they need for operations like search_docs, list_docs_in_folder,
 export_doc_to_pdf, and list_spreadsheets — without requiring --tools drive.
 """
 
-import sys
 import os
+import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+import auth.permissions as permissions_module
+from auth.permissions import get_scopes_for_permission, set_permissions
 from auth.scopes import (
     BASE_SCOPES,
     CALENDAR_READONLY_SCOPE,
@@ -32,8 +34,6 @@ from auth.scopes import (
     has_required_scopes,
     set_read_only,
 )
-from auth.permissions import get_scopes_for_permission, set_permissions
-import auth.permissions as permissions_module
 
 
 class TestDocsScopes:

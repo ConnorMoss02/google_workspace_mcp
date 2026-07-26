@@ -7,7 +7,7 @@ import logging
 from collections import Counter
 from datetime import datetime, timezone
 from email.utils import getaddresses, parseaddr, parsedate_to_datetime
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from fastmcp.exceptions import ToolError as ToolExecutionError
 from googleapiclient.errors import HttpError
@@ -56,7 +56,7 @@ def _normalize_email(address: str) -> str:
     return f"{local}@{domain}"
 
 
-def _http_error_status(error: HttpError) -> Optional[int]:
+def _http_error_status(error: HttpError) -> int | None:
     status = getattr(getattr(error, "resp", None), "status", None)
     try:
         return int(status)
@@ -85,7 +85,7 @@ def _signature_fetch_tool_error(error: Exception) -> ToolExecutionError:
 
 def _parse_date_header(
     date_str: str, internal_date_ms: str | int | None
-) -> tuple[Optional[str], Optional[datetime]]:
+) -> tuple[str | None, datetime | None]:
     """Parse Gmail internalDate or a Date header to a UTC-aware datetime.
 
     Prefer Gmail's internalDate because it reflects Gmail's message ordering;
@@ -201,9 +201,8 @@ def _analyze_thread_ownership_impl(
         _iso, dt = _parse_date_header(
             headers.get("Date", ""), message.get("internalDate")
         )
-        if dt is not None:
-            if last_non_draft is None or dt >= last_non_draft[0]:
-                last_non_draft = (dt, message, headers)
+        if dt is not None and (last_non_draft is None or dt >= last_non_draft[0]):
+            last_non_draft = (dt, message, headers)
 
     if last_non_draft is None:
         # All messages were drafts - no sent state to reason about
@@ -232,9 +231,12 @@ def _analyze_thread_ownership_impl(
         if normalized_user
         else non_draft_participants
     )
-    if not normalized_user or "@" not in normalized_user or "@" not in last_sender_norm:
-        ball_in_court_of = None
-    elif not external_participants:
+    if (
+        not normalized_user
+        or "@" not in normalized_user
+        or "@" not in last_sender_norm
+        or not external_participants
+    ):
         ball_in_court_of = None
     elif last_sender_norm == normalized_user:
         ball_in_court_of = "them"
@@ -257,9 +259,9 @@ def _analyze_thread_ownership_impl(
 def _build_forward_content(
     headers: dict[str, str],
     bodies: dict[str, str],
-    forward_message: Optional[str],
+    forward_message: str | None,
     forward_message_format: Literal["plain", "html"],
-    subject_override: Optional[str],
+    subject_override: str | None,
 ) -> tuple[str, str, Literal["plain", "html"]]:
     """Build the (subject, body, body_format) for a forwarded message.
 

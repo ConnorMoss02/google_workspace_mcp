@@ -6,7 +6,7 @@ of Google Docs documents, including finding tables, cells, and other elements.
 """
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ def parse_document_structure(doc_data: dict[str, Any]) -> dict[str, Any]:
     return structure
 
 
-def _parse_element(element: dict[str, Any]) -> Optional[dict[str, Any]]:
+def _parse_element(element: dict[str, Any]) -> dict[str, Any] | None:
     """
     Parse a single document element.
 
@@ -227,7 +227,7 @@ def find_tables(doc_data: dict[str, Any]) -> list[dict[str, Any]]:
 
 def get_table_cell_indices(
     doc_data: dict[str, Any], table_index: int = 0
-) -> Optional[list[list[tuple[int, int]]]]:
+) -> list[list[tuple[int, int]]] | None:
     """
     Get content indices for all cells in a specific table.
 
@@ -285,7 +285,7 @@ def get_table_cell_indices(
 
 def find_element_at_index(
     doc_data: dict[str, Any], index: int
-) -> Optional[dict[str, Any]]:
+) -> dict[str, Any] | None:
     """
     Find what element exists at a given index in the document.
 

@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from gdocs.docs_helpers import (
-    create_insert_table_column_request,
     create_delete_table_column_request,
+    create_insert_table_column_request,
     validate_operation,
 )
 

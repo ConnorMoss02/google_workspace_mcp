@@ -5,7 +5,7 @@ Shared utilities for Google Slides operations.
 """
 
 import asyncio
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any
 
 from core.utils import UserInputError
 
@@ -78,7 +78,7 @@ def _slides_batch_request_guidance() -> str:
     return f"exactly one Slides request type such as {examples}"
 
 
-def validate_batch_update_requests(requests: List[Dict[str, Any]]) -> None:
+def validate_batch_update_requests(requests: list[dict[str, Any]]) -> None:
     guidance = _slides_batch_request_guidance()
     if not requests:
         raise UserInputError(
@@ -119,14 +119,14 @@ def validate_batch_update_requests(requests: List[Dict[str, Any]]) -> None:
             )
 
 
-def _get_request_payload(request: Dict[str, Any], request_type: str) -> Dict[str, Any]:
+def _get_request_payload(request: dict[str, Any], request_type: str) -> dict[str, Any]:
     payload = request.get(request_type)
     return payload if isinstance(payload, dict) else {}
 
 
 def _find_insert_text_targets(
-    requests: List[Dict[str, Any]],
-) -> List[Tuple[int, str]]:
+    requests: list[dict[str, Any]],
+) -> list[tuple[int, str]]:
     targets = []
     for index, request in enumerate(requests):
         if not isinstance(request, dict):
@@ -137,7 +137,7 @@ def _find_insert_text_targets(
     return targets
 
 
-def _find_created_slide_ids(requests: List[Dict[str, Any]]) -> Set[str]:
+def _find_created_slide_ids(requests: list[dict[str, Any]]) -> set[str]:
     slide_ids = set()
     for request in requests:
         if not isinstance(request, dict):
@@ -148,7 +148,7 @@ def _find_created_slide_ids(requests: List[Dict[str, Any]]) -> Set[str]:
     return slide_ids
 
 
-async def _get_presentation_slide_ids(service, presentation_id: str) -> Set[str]:
+async def _get_presentation_slide_ids(service, presentation_id: str) -> set[str]:
     result = await asyncio.to_thread(
         service.presentations()
         .get(
@@ -174,7 +174,7 @@ async def _get_presentation_slide_ids(service, presentation_id: str) -> Set[str]
 
 
 async def validate_insert_text_targets(
-    service, presentation_id: str, requests: List[Dict[str, Any]]
+    service, presentation_id: str, requests: list[dict[str, Any]]
 ) -> None:
     insert_text_targets = _find_insert_text_targets(requests)
     if not insert_text_targets:

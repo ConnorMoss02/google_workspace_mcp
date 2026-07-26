@@ -8,9 +8,9 @@ LLMs receive a machine-readable contract instead of a free-form object array.
 from __future__ import annotations
 
 import json
-from typing import Annotated, Any, Literal, Optional, Union
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, BeforeValidator, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 
 
 def _coerce_json_str_to_list(v: Any) -> Any:
@@ -31,7 +31,7 @@ class StrictDocOperation(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    tab_id: Optional[str] = Field(
+    tab_id: str | None = Field(
         default=None,
         description="Optional document tab ID to target.",
     )
@@ -40,7 +40,7 @@ class StrictDocOperation(BaseModel):
 class SegmentTargetDocOperation(StrictDocOperation):
     """Base model for operations that can target document segments."""
 
-    segment_id: Optional[str] = Field(
+    segment_id: str | None = Field(
         default=None,
         description=(
             "Optional header/footer/footnote segment ID. Use a real ID returned by "
@@ -52,7 +52,7 @@ class SegmentTargetDocOperation(StrictDocOperation):
 class InsertTextOperation(SegmentTargetDocOperation):
     type: Literal["insert_text"]
     text: str = Field(description="Text to insert.")
-    index: Optional[int] = Field(
+    index: int | None = Field(
         default=None,
         description="Insertion index. Omit when end_of_segment=true.",
     )
@@ -62,7 +62,7 @@ class InsertTextOperation(SegmentTargetDocOperation):
     )
 
     @model_validator(mode="after")
-    def validate_location(self) -> "InsertTextOperation":
+    def validate_location(self) -> InsertTextOperation:
         if self.end_of_segment == (self.index is not None):
             raise ValueError("Provide exactly one of 'index' or 'end_of_segment=true'.")
         return self
@@ -85,65 +85,65 @@ class FormatTextOperation(SegmentTargetDocOperation):
     type: Literal["format_text"]
     start_index: int
     end_index: int
-    bold: Optional[bool] = None
-    italic: Optional[bool] = None
-    underline: Optional[bool] = None
-    strikethrough: Optional[bool] = None
-    font_size: Optional[int] = None
-    font_family: Optional[str] = None
-    font_weight: Optional[int] = None
-    text_color: Optional[str] = None
-    background_color: Optional[str] = None
-    link_url: Optional[str] = None
-    clear_link: Optional[bool] = None
-    baseline_offset: Optional[str] = None
-    small_caps: Optional[bool] = None
+    bold: bool | None = None
+    italic: bool | None = None
+    underline: bool | None = None
+    strikethrough: bool | None = None
+    font_size: int | None = None
+    font_family: str | None = None
+    font_weight: int | None = None
+    text_color: str | None = None
+    background_color: str | None = None
+    link_url: str | None = None
+    clear_link: bool | None = None
+    baseline_offset: str | None = None
+    small_caps: bool | None = None
 
 
 class UpdateParagraphStyleOperation(SegmentTargetDocOperation):
     type: Literal["update_paragraph_style"]
     start_index: int
     end_index: int
-    heading_level: Optional[int] = None
-    alignment: Optional[str] = None
-    line_spacing: Optional[float] = None
-    indent_first_line: Optional[float] = None
-    indent_start: Optional[float] = None
-    indent_end: Optional[float] = None
-    space_above: Optional[float] = None
-    space_below: Optional[float] = None
-    named_style_type: Optional[str] = None
-    direction: Optional[str] = None
-    keep_lines_together: Optional[bool] = None
-    keep_with_next: Optional[bool] = None
-    avoid_widow_and_orphan: Optional[bool] = None
-    page_break_before: Optional[bool] = None
-    spacing_mode: Optional[str] = None
-    shading_color: Optional[str] = None
+    heading_level: int | None = None
+    alignment: str | None = None
+    line_spacing: float | None = None
+    indent_first_line: float | None = None
+    indent_start: float | None = None
+    indent_end: float | None = None
+    space_above: float | None = None
+    space_below: float | None = None
+    named_style_type: str | None = None
+    direction: str | None = None
+    keep_lines_together: bool | None = None
+    keep_with_next: bool | None = None
+    avoid_widow_and_orphan: bool | None = None
+    page_break_before: bool | None = None
+    spacing_mode: str | None = None
+    shading_color: str | None = None
 
 
 class UpdateTableCellStyleOperation(StrictDocOperation):
     type: Literal["update_table_cell_style"]
     table_start_index: int
-    background_color: Optional[str] = None
-    border_color: Optional[str] = None
-    border_width: Optional[float] = None
-    padding_top: Optional[float] = None
-    padding_bottom: Optional[float] = None
-    padding_left: Optional[float] = None
-    padding_right: Optional[float] = None
-    content_alignment: Optional[str] = None
-    row_index: Optional[int] = None
-    column_index: Optional[int] = None
-    row_span: Optional[int] = None
-    column_span: Optional[int] = None
+    background_color: str | None = None
+    border_color: str | None = None
+    border_width: float | None = None
+    padding_top: float | None = None
+    padding_bottom: float | None = None
+    padding_left: float | None = None
+    padding_right: float | None = None
+    content_alignment: str | None = None
+    row_index: int | None = None
+    column_index: int | None = None
+    row_span: int | None = None
+    column_span: int | None = None
 
 
 class InsertTableOperation(SegmentTargetDocOperation):
     type: Literal["insert_table"]
     rows: int
     columns: int
-    index: Optional[int] = Field(
+    index: int | None = Field(
         default=None,
         description="Insertion index. Omit when end_of_segment=true.",
     )
@@ -153,7 +153,7 @@ class InsertTableOperation(SegmentTargetDocOperation):
     )
 
     @model_validator(mode="after")
-    def validate_location(self) -> "InsertTableOperation":
+    def validate_location(self) -> InsertTableOperation:
         if self.end_of_segment == (self.index is not None):
             raise ValueError("Provide exactly one of 'index' or 'end_of_segment=true'.")
         return self
@@ -207,8 +207,8 @@ class UpdateTableColumnPropertiesOperation(StrictDocOperation):
     type: Literal["update_table_column_properties"]
     table_start_index: int
     column_indices: list[int]
-    width: Optional[float] = None
-    width_type: Optional[str] = None
+    width: float | None = None
+    width_type: str | None = None
 
 
 class UpdateTableRowStyleOperation(StrictDocOperation):
@@ -217,7 +217,7 @@ class UpdateTableRowStyleOperation(StrictDocOperation):
     row_indices: list[int] = Field(
         description="Zero-based row indices to style, e.g. [0] for the header row."
     )
-    min_row_height: Optional[float] = Field(
+    min_row_height: float | None = Field(
         default=None,
         description="Minimum row height in points.",
     )
@@ -237,7 +237,7 @@ class PinTableHeaderRowsOperation(StrictDocOperation):
 
 class InsertPageBreakOperation(StrictDocOperation):
     type: Literal["insert_page_break"]
-    index: Optional[int] = Field(
+    index: int | None = Field(
         default=None,
         description="Insertion index. Omit when end_of_segment=true.",
     )
@@ -247,7 +247,7 @@ class InsertPageBreakOperation(StrictDocOperation):
     )
 
     @model_validator(mode="after")
-    def validate_location(self) -> "InsertPageBreakOperation":
+    def validate_location(self) -> InsertPageBreakOperation:
         if self.end_of_segment == (self.index is not None):
             raise ValueError("Provide exactly one of 'index' or 'end_of_segment=true'.")
         return self
@@ -255,7 +255,7 @@ class InsertPageBreakOperation(StrictDocOperation):
 
 class InsertSectionBreakOperation(StrictDocOperation):
     type: Literal["insert_section_break"]
-    index: Optional[int] = Field(
+    index: int | None = Field(
         default=None,
         description="Insertion index. Omit when end_of_segment=true.",
     )
@@ -266,7 +266,7 @@ class InsertSectionBreakOperation(StrictDocOperation):
     section_type: Literal["CONTINUOUS", "NEXT_PAGE"] = "NEXT_PAGE"
 
     @model_validator(mode="after")
-    def validate_location(self) -> "InsertSectionBreakOperation":
+    def validate_location(self) -> InsertSectionBreakOperation:
         if self.end_of_segment == (self.index is not None):
             raise ValueError("Provide exactly one of 'index' or 'end_of_segment=true'.")
         return self
@@ -284,9 +284,9 @@ class CreateBulletListOperation(SegmentTargetDocOperation):
     start_index: int
     end_index: int
     list_type: Literal["UNORDERED", "ORDERED", "CHECKBOX", "NONE"] = "UNORDERED"
-    nesting_level: Optional[int] = None
-    paragraph_start_indices: Optional[list[int]] = None
-    bullet_preset: Optional[str] = None
+    nesting_level: int | None = None
+    paragraph_start_indices: list[int] | None = None
+    bullet_preset: str | None = None
 
 
 class CreateNamedRangeOperation(SegmentTargetDocOperation):
@@ -299,11 +299,11 @@ class CreateNamedRangeOperation(SegmentTargetDocOperation):
 class ReplaceNamedRangeContentOperation(StrictDocOperation):
     type: Literal["replace_named_range_content"]
     text: str
-    named_range_id: Optional[str] = None
-    named_range_name: Optional[str] = None
+    named_range_id: str | None = None
+    named_range_name: str | None = None
 
     @model_validator(mode="after")
-    def validate_named_range_target(self) -> "ReplaceNamedRangeContentOperation":
+    def validate_named_range_target(self) -> ReplaceNamedRangeContentOperation:
         if bool(self.named_range_id) == bool(self.named_range_name):
             raise ValueError(
                 "Provide exactly one of 'named_range_id' or 'named_range_name'."
@@ -313,11 +313,11 @@ class ReplaceNamedRangeContentOperation(StrictDocOperation):
 
 class DeleteNamedRangeOperation(StrictDocOperation):
     type: Literal["delete_named_range"]
-    named_range_id: Optional[str] = None
-    named_range_name: Optional[str] = None
+    named_range_id: str | None = None
+    named_range_name: str | None = None
 
     @model_validator(mode="after")
-    def validate_named_range_target(self) -> "DeleteNamedRangeOperation":
+    def validate_named_range_target(self) -> DeleteNamedRangeOperation:
         if bool(self.named_range_id) == bool(self.named_range_name):
             raise ValueError(
                 "Provide exactly one of 'named_range_id' or 'named_range_name'."
@@ -327,39 +327,39 @@ class DeleteNamedRangeOperation(StrictDocOperation):
 
 class UpdateDocumentStyleOperation(StrictDocOperation):
     type: Literal["update_document_style"]
-    background_color: Optional[str] = None
-    margin_top: Optional[float] = None
-    margin_bottom: Optional[float] = None
-    margin_left: Optional[float] = None
-    margin_right: Optional[float] = None
-    margin_header: Optional[float] = None
-    margin_footer: Optional[float] = None
-    page_width: Optional[float] = None
-    page_height: Optional[float] = None
-    page_number_start: Optional[int] = None
-    use_even_page_header_footer: Optional[bool] = None
-    use_first_page_header_footer: Optional[bool] = None
-    flip_page_orientation: Optional[bool] = None
-    document_mode: Optional[Literal["PAGES", "PAGELESS"]] = None
+    background_color: str | None = None
+    margin_top: float | None = None
+    margin_bottom: float | None = None
+    margin_left: float | None = None
+    margin_right: float | None = None
+    margin_header: float | None = None
+    margin_footer: float | None = None
+    page_width: float | None = None
+    page_height: float | None = None
+    page_number_start: int | None = None
+    use_even_page_header_footer: bool | None = None
+    use_first_page_header_footer: bool | None = None
+    flip_page_orientation: bool | None = None
+    document_mode: Literal["PAGES", "PAGELESS"] | None = None
 
 
 class UpdateSectionStyleOperation(StrictDocOperation):
     type: Literal["update_section_style"]
     start_index: int
     end_index: int
-    margin_top: Optional[float] = None
-    margin_bottom: Optional[float] = None
-    margin_left: Optional[float] = None
-    margin_right: Optional[float] = None
-    margin_header: Optional[float] = None
-    margin_footer: Optional[float] = None
-    page_number_start: Optional[int] = None
-    use_first_page_header_footer: Optional[bool] = None
-    flip_page_orientation: Optional[bool] = None
-    content_direction: Optional[Literal["LEFT_TO_RIGHT", "RIGHT_TO_LEFT"]] = None
-    column_count: Optional[int] = None
-    column_spacing: Optional[float] = None
-    column_separator_style: Optional[Literal["NONE", "BETWEEN_EACH_COLUMN"]] = None
+    margin_top: float | None = None
+    margin_bottom: float | None = None
+    margin_left: float | None = None
+    margin_right: float | None = None
+    margin_header: float | None = None
+    margin_footer: float | None = None
+    page_number_start: int | None = None
+    use_first_page_header_footer: bool | None = None
+    flip_page_orientation: bool | None = None
+    content_direction: Literal["LEFT_TO_RIGHT", "RIGHT_TO_LEFT"] | None = None
+    column_count: int | None = None
+    column_spacing: float | None = None
+    column_separator_style: Literal["NONE", "BETWEEN_EACH_COLUMN"] | None = None
 
 
 class CreateHeaderFooterOperation(StrictDocOperation):
@@ -371,7 +371,7 @@ class CreateHeaderFooterOperation(StrictDocOperation):
         default="DEFAULT",
         description="Header/footer type to create.",
     )
-    section_break_index: Optional[int] = Field(
+    section_break_index: int | None = Field(
         default=None,
         description="Optional section break index for section-scoped layouts.",
     )
@@ -380,19 +380,19 @@ class CreateHeaderFooterOperation(StrictDocOperation):
 class InsertImageOperation(SegmentTargetDocOperation):
     type: Literal["insert_image"]
     image_uri: str = Field(description="Image URL or resolvable image URI.")
-    index: Optional[int] = Field(
+    index: int | None = Field(
         default=None,
         description="Insertion index. Omit when end_of_segment=true.",
     )
-    width: Optional[int] = None
-    height: Optional[int] = None
+    width: int | None = None
+    height: int | None = None
     end_of_segment: bool = Field(
         default=False,
         description="Append to the end of the targeted body/segment instead of using index.",
     )
 
     @model_validator(mode="after")
-    def validate_location(self) -> "InsertImageOperation":
+    def validate_location(self) -> InsertImageOperation:
         if self.end_of_segment == (self.index is not None):
             raise ValueError("Provide exactly one of 'index' or 'end_of_segment=true'.")
         return self
@@ -404,7 +404,7 @@ class InsertDocTabOperation(BaseModel):
     type: Literal["insert_doc_tab"]
     title: str
     index: int
-    parent_tab_id: Optional[str] = None
+    parent_tab_id: str | None = None
 
 
 class DeleteDocTabOperation(BaseModel):
@@ -423,38 +423,36 @@ class UpdateDocTabOperation(BaseModel):
 
 
 BatchDocOperation = Annotated[
-    Union[
-        InsertTextOperation,
-        DeleteTextOperation,
-        ReplaceTextOperation,
-        FormatTextOperation,
-        UpdateParagraphStyleOperation,
-        UpdateTableCellStyleOperation,
-        InsertTableOperation,
-        InsertTableRowOperation,
-        DeleteTableRowOperation,
-        InsertTableColumnOperation,
-        DeleteTableColumnOperation,
-        MergeTableCellsOperation,
-        UnmergeTableCellsOperation,
-        UpdateTableColumnPropertiesOperation,
-        UpdateTableRowStyleOperation,
-        PinTableHeaderRowsOperation,
-        InsertPageBreakOperation,
-        InsertSectionBreakOperation,
-        FindReplaceOperation,
-        CreateBulletListOperation,
-        CreateNamedRangeOperation,
-        ReplaceNamedRangeContentOperation,
-        DeleteNamedRangeOperation,
-        UpdateDocumentStyleOperation,
-        UpdateSectionStyleOperation,
-        CreateHeaderFooterOperation,
-        InsertImageOperation,
-        InsertDocTabOperation,
-        DeleteDocTabOperation,
-        UpdateDocTabOperation,
-    ],
+    InsertTextOperation
+    | DeleteTextOperation
+    | ReplaceTextOperation
+    | FormatTextOperation
+    | UpdateParagraphStyleOperation
+    | UpdateTableCellStyleOperation
+    | InsertTableOperation
+    | InsertTableRowOperation
+    | DeleteTableRowOperation
+    | InsertTableColumnOperation
+    | DeleteTableColumnOperation
+    | MergeTableCellsOperation
+    | UnmergeTableCellsOperation
+    | UpdateTableColumnPropertiesOperation
+    | UpdateTableRowStyleOperation
+    | PinTableHeaderRowsOperation
+    | InsertPageBreakOperation
+    | InsertSectionBreakOperation
+    | FindReplaceOperation
+    | CreateBulletListOperation
+    | CreateNamedRangeOperation
+    | ReplaceNamedRangeContentOperation
+    | DeleteNamedRangeOperation
+    | UpdateDocumentStyleOperation
+    | UpdateSectionStyleOperation
+    | CreateHeaderFooterOperation
+    | InsertImageOperation
+    | InsertDocTabOperation
+    | DeleteDocTabOperation
+    | UpdateDocTabOperation,
     Field(discriminator="type"),
 ]
 

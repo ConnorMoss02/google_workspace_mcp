@@ -1,7 +1,7 @@
 """Tests for the Google Docs to Markdown converter."""
 
-import sys
 import os
+import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
@@ -11,7 +11,6 @@ from gdocs.docs_markdown import (
     format_comments_inline,
     parse_drive_comments,
 )
-
 
 # --- Fixtures ---
 

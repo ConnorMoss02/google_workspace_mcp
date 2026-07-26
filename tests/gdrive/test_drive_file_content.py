@@ -6,8 +6,8 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from tests.helpers import _make_minimal_pdf
 from gdrive.drive_tools import get_drive_file_content
+from tests.helpers import _make_minimal_pdf
 
 
 def _unwrap(tool):

@@ -10,8 +10,8 @@ Supports both OAuth 2.0 and OAuth 2.1 with automatic client capability detection
 
 import os
 from threading import RLock
+from typing import Any
 from urllib.parse import urlparse
-from typing import List, Optional, Dict, Any
 
 
 class OAuthConfig:
@@ -94,7 +94,7 @@ class OAuthConfig:
 
         # Optional per-request impersonation domain allowlist for service accounts.
         _raw_domains = os.getenv("DWD_ALLOWED_DOMAINS", "")
-        self.dwd_allowed_domains: List[str] = (
+        self.dwd_allowed_domains: list[str] = (
             [d.strip().lower() for d in _raw_domains.split(",") if d.strip()]
             if self.service_account_enabled and _raw_domains
             else []
@@ -137,7 +137,7 @@ class OAuthConfig:
         if not self.client_id:
             return
 
-        def _set_if_absent(key: str, value: Optional[str]) -> None:
+        def _set_if_absent(key: str, value: str | None) -> None:
             if value and key not in os.environ:
                 os.environ[key] = value
 
@@ -163,7 +163,7 @@ class OAuthConfig:
         """Return True when only a client_id is configured (no client_secret)."""
         return bool(self.client_id and not self.client_secret)
 
-    def get_redirect_uris(self) -> List[str]:
+    def get_redirect_uris(self) -> list[str]:
         """
         Get all valid OAuth redirect URIs.
 
@@ -183,7 +183,7 @@ class OAuthConfig:
         # Remove duplicates while preserving order
         return list(dict.fromkeys(uris))
 
-    def get_allowed_origins(self) -> List[str]:
+    def get_allowed_origins(self) -> list[str]:
         """
         Get allowed CORS origins for OAuth endpoints.
 
@@ -320,7 +320,7 @@ class OAuthConfig:
         """
         return self.service_account_enabled
 
-    def detect_oauth_version(self, request_params: Dict[str, Any]) -> str:
+    def detect_oauth_version(self, request_params: dict[str, Any]) -> str:
         """
         Detect OAuth version based on request parameters.
 
@@ -369,8 +369,8 @@ class OAuthConfig:
         return "oauth20"
 
     def get_authorization_server_metadata(
-        self, scopes: Optional[List[str]] = None
-    ) -> Dict[str, Any]:
+        self, scopes: list[str] | None = None
+    ) -> dict[str, Any]:
         """
         Get OAuth authorization server metadata per RFC 8414.
 
@@ -455,12 +455,12 @@ def get_oauth_base_url() -> str:
     return get_oauth_config().get_oauth_base_url()
 
 
-def get_redirect_uris() -> List[str]:
+def get_redirect_uris() -> list[str]:
     """Get all valid OAuth redirect URIs."""
     return get_oauth_config().get_redirect_uris()
 
 
-def get_allowed_origins() -> List[str]:
+def get_allowed_origins() -> list[str]:
     """Get allowed CORS origins."""
     return get_oauth_config().get_allowed_origins()
 

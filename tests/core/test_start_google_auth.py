@@ -7,10 +7,10 @@ from core.server import start_google_auth
 
 @pytest.mark.asyncio
 async def test_start_google_auth_skips_preflight_outside_stdio(monkeypatch):
-    async def fake_start_auth_flow(**kwargs):  # noqa: ARG001
+    async def fake_start_auth_flow(**kwargs):
         return "auth-url"
 
-    def fail_if_called(*args, **kwargs):  # noqa: ARG001
+    def fail_if_called(*args, **kwargs):
         raise AssertionError("callback preflight should not run outside stdio")
 
     monkeypatch.setattr("core.server.is_oauth21_enabled", lambda: False)
@@ -41,7 +41,7 @@ async def test_start_google_auth_preflights_in_stdio(monkeypatch):
         calls.append((fn.__name__, args, kwargs))
         return fn(*args, **kwargs)
 
-    async def fake_start_auth_flow(**kwargs):  # noqa: ARG001
+    async def fake_start_auth_flow(**kwargs):
         return "auth-url"
 
     def fake_ensure(transport_mode, port, base_uri):

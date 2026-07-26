@@ -7,7 +7,7 @@ verifying the exact API payloads sent to Google Calendar.
 
 import os
 import sys
-from unittest.mock import Mock, MagicMock
+from unittest.mock import MagicMock, Mock
 
 import pytest
 

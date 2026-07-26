@@ -6,12 +6,12 @@ event data for display.
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-def _get_meeting_link(item: Dict[str, Any]) -> str:
+def _get_meeting_link(item: dict[str, Any]) -> str:
     """Extract video meeting link from event conference data or hangoutLink."""
     conference_data = item.get("conferenceData")
     if conference_data and "entryPoints" in conference_data:
@@ -27,7 +27,7 @@ def _get_meeting_link(item: Dict[str, Any]) -> str:
 
 
 def _format_attendee_details(
-    attendees: List[Dict[str, Any]], indent: str = "  "
+    attendees: list[dict[str, Any]], indent: str = "  "
 ) -> str:
     """
       Format attendee details including response status, organizer, and optional flags.
@@ -66,7 +66,7 @@ def _format_attendee_details(
 
 
 def _format_attachment_details(
-    attachments: List[Dict[str, Any]], indent: str = "  "
+    attachments: list[dict[str, Any]], indent: str = "  "
 ) -> str:
     """
     Format attachment details including file information.
@@ -100,7 +100,7 @@ def _format_attachment_details(
     return f"\n{indent}".join(attachment_details_list)
 
 
-def _format_person(person: Optional[Dict[str, Any]]) -> Optional[str]:
+def _format_person(person: dict[str, Any] | None) -> str | None:
     """Format a Google Calendar person dict (creator or organizer) for display."""
     if not person:
         return None

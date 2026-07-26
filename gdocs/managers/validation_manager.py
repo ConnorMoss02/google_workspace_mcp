@@ -6,20 +6,20 @@ extracting validation patterns from individual tool functions.
 """
 
 import logging
-from typing import Dict, Any, List, Tuple, Optional
+from typing import Any
 from urllib.parse import urlparse
 
 from gdocs.docs_helpers import (
-    validate_operation,
+    VALID_BULLET_PRESETS,
+    VALID_COLUMN_SEPARATOR_STYLES,
+    VALID_CONTENT_DIRECTIONS,
+    VALID_DOCUMENT_MODES,
     VALID_NAMED_STYLE_TYPES,
-    VALID_TEXT_BASELINE_OFFSETS,
     VALID_PARAGRAPH_DIRECTIONS,
     VALID_PARAGRAPH_SPACING_MODES,
     VALID_SECTION_TYPES,
-    VALID_CONTENT_DIRECTIONS,
-    VALID_COLUMN_SEPARATOR_STYLES,
-    VALID_DOCUMENT_MODES,
-    VALID_BULLET_PRESETS,
+    VALID_TEXT_BASELINE_OFFSETS,
+    validate_operation,
 )
 
 logger = logging.getLogger(__name__)
@@ -38,7 +38,7 @@ class ValidationManager:
         """Initialize the validation manager."""
         self.validation_rules = self._setup_validation_rules()
 
-    def _setup_validation_rules(self) -> Dict[str, Any]:
+    def _setup_validation_rules(self) -> dict[str, Any]:
         """Setup validation rules and constraints."""
         return {
             "table_max_rows": 1000,
@@ -55,7 +55,7 @@ class ValidationManager:
             "font_weight_range": (100, 900),
         }
 
-    def validate_document_id(self, document_id: str) -> Tuple[bool, str]:
+    def validate_document_id(self, document_id: str) -> tuple[bool, str]:
         """
         Validate Google Docs document ID format.
 
@@ -80,7 +80,7 @@ class ValidationManager:
 
         return True, ""
 
-    def validate_table_data(self, table_data: List[List[str]]) -> Tuple[bool, str]:
+    def validate_table_data(self, table_data: list[list[str]]) -> tuple[bool, str]:
         """
         Comprehensive validation for table data format.
 
@@ -158,27 +158,27 @@ class ValidationManager:
                 if not isinstance(cell, str):
                     return (
                         False,
-                        f"Cell ({row_idx},{col_idx}) is {type(cell).__name__}, not string. All cells must be strings. Value: {repr(cell)}",
+                        f"Cell ({row_idx},{col_idx}) is {type(cell).__name__}, not string. All cells must be strings. Value: {cell!r}",
                     )
 
         return True, f"Valid table data: {rows}×{cols} table format"
 
     def validate_text_formatting_params(
         self,
-        bold: Optional[bool] = None,
-        italic: Optional[bool] = None,
-        underline: Optional[bool] = None,
-        strikethrough: Optional[bool] = None,
-        font_size: Optional[int] = None,
-        font_family: Optional[str] = None,
-        font_weight: Optional[int] = None,
-        text_color: Optional[str] = None,
-        background_color: Optional[str] = None,
-        link_url: Optional[str] = None,
-        clear_link: Optional[bool] = None,
-        baseline_offset: Optional[str] = None,
-        small_caps: Optional[bool] = None,
-    ) -> Tuple[bool, str]:
+        bold: bool | None = None,
+        italic: bool | None = None,
+        underline: bool | None = None,
+        strikethrough: bool | None = None,
+        font_size: int | None = None,
+        font_family: str | None = None,
+        font_weight: int | None = None,
+        text_color: str | None = None,
+        background_color: str | None = None,
+        link_url: str | None = None,
+        clear_link: bool | None = None,
+        baseline_offset: str | None = None,
+        small_caps: bool | None = None,
+    ) -> tuple[bool, str]:
         """
         Validate text formatting parameters.
 
@@ -289,14 +289,18 @@ class ValidationManager:
             if not isinstance(baseline_offset, str):
                 return (
                     False,
-                    "baseline_offset must be a string "
-                    f"({', '.join(VALID_TEXT_BASELINE_OFFSETS)})",
+                    (
+                        "baseline_offset must be a string "
+                        f"({', '.join(VALID_TEXT_BASELINE_OFFSETS)})"
+                    ),
                 )
             if baseline_offset.upper() not in VALID_TEXT_BASELINE_OFFSETS:
                 return (
                     False,
-                    "baseline_offset must be one of: "
-                    f"{', '.join(VALID_TEXT_BASELINE_OFFSETS)}",
+                    (
+                        "baseline_offset must be one of: "
+                        f"{', '.join(VALID_TEXT_BASELINE_OFFSETS)}"
+                    ),
                 )
 
         # Validate colors
@@ -316,7 +320,7 @@ class ValidationManager:
 
         return True, ""
 
-    def validate_link_url(self, link_url: Optional[str]) -> Tuple[bool, str]:
+    def validate_link_url(self, link_url: str | None) -> tuple[bool, str]:
         """Validate hyperlink URL parameters."""
         if link_url is None:
             return True, ""
@@ -338,23 +342,23 @@ class ValidationManager:
 
     def validate_paragraph_style_params(
         self,
-        heading_level: Optional[int] = None,
-        alignment: Optional[str] = None,
-        line_spacing: Optional[float] = None,
-        indent_first_line: Optional[float] = None,
-        indent_start: Optional[float] = None,
-        indent_end: Optional[float] = None,
-        space_above: Optional[float] = None,
-        space_below: Optional[float] = None,
-        named_style_type: Optional[str] = None,
-        direction: Optional[str] = None,
-        keep_lines_together: Optional[bool] = None,
-        keep_with_next: Optional[bool] = None,
-        avoid_widow_and_orphan: Optional[bool] = None,
-        page_break_before: Optional[bool] = None,
-        spacing_mode: Optional[str] = None,
-        shading_color: Optional[str] = None,
-    ) -> Tuple[bool, str]:
+        heading_level: int | None = None,
+        alignment: str | None = None,
+        line_spacing: float | None = None,
+        indent_first_line: float | None = None,
+        indent_start: float | None = None,
+        indent_end: float | None = None,
+        space_above: float | None = None,
+        space_below: float | None = None,
+        named_style_type: str | None = None,
+        direction: str | None = None,
+        keep_lines_together: bool | None = None,
+        keep_with_next: bool | None = None,
+        avoid_widow_and_orphan: bool | None = None,
+        page_break_before: bool | None = None,
+        spacing_mode: str | None = None,
+        shading_color: str | None = None,
+    ) -> tuple[bool, str]:
         """
         Validate paragraph style parameters.
 
@@ -402,12 +406,14 @@ class ValidationManager:
                 "heading_level and named_style_type are mutually exclusive; provide only one",
             )
 
-        if named_style_type is not None:
-            if named_style_type not in VALID_NAMED_STYLE_TYPES:
-                return (
-                    False,
-                    f"Invalid named_style_type '{named_style_type}'. Must be one of: {', '.join(VALID_NAMED_STYLE_TYPES)}",
-                )
+        if (
+            named_style_type is not None
+            and named_style_type not in VALID_NAMED_STYLE_TYPES
+        ):
+            return (
+                False,
+                f"Invalid named_style_type '{named_style_type}'. Must be one of: {', '.join(VALID_NAMED_STYLE_TYPES)}",
+            )
 
         if heading_level is not None and named_style_type is None:
             if not isinstance(heading_level, int):
@@ -470,8 +476,10 @@ class ValidationManager:
             if direction.upper() not in VALID_PARAGRAPH_DIRECTIONS:
                 return (
                     False,
-                    "direction must be one of: "
-                    f"{', '.join(VALID_PARAGRAPH_DIRECTIONS)}, got '{direction}'",
+                    (
+                        "direction must be one of: "
+                        f"{', '.join(VALID_PARAGRAPH_DIRECTIONS)}, got '{direction}'"
+                    ),
                 )
 
         for param, name in [
@@ -495,8 +503,10 @@ class ValidationManager:
             if spacing_mode.upper() not in VALID_PARAGRAPH_SPACING_MODES:
                 return (
                     False,
-                    "spacing_mode must be one of: "
-                    f"{', '.join(VALID_PARAGRAPH_SPACING_MODES)}, got '{spacing_mode}'",
+                    (
+                        "spacing_mode must be one of: "
+                        f"{', '.join(VALID_PARAGRAPH_SPACING_MODES)}, got '{spacing_mode}'"
+                    ),
                 )
 
         is_valid, error_msg = self.validate_color_param(shading_color, "shading_color")
@@ -507,12 +517,12 @@ class ValidationManager:
 
     def validate_named_range_operation(
         self,
-        name: Optional[str] = None,
-        start_index: Optional[int] = None,
-        end_index: Optional[int] = None,
-        named_range_id: Optional[str] = None,
-        named_range_name: Optional[str] = None,
-    ) -> Tuple[bool, str]:
+        name: str | None = None,
+        start_index: int | None = None,
+        end_index: int | None = None,
+        named_range_id: str | None = None,
+        named_range_name: str | None = None,
+    ) -> tuple[bool, str]:
         """Validate named range create/delete/replace inputs."""
         if name is not None:
             if not isinstance(name, str):
@@ -543,21 +553,21 @@ class ValidationManager:
 
     def validate_document_style_params(
         self,
-        background_color: Optional[str] = None,
-        margin_top: Optional[float] = None,
-        margin_bottom: Optional[float] = None,
-        margin_left: Optional[float] = None,
-        margin_right: Optional[float] = None,
-        margin_header: Optional[float] = None,
-        margin_footer: Optional[float] = None,
-        page_width: Optional[float] = None,
-        page_height: Optional[float] = None,
-        page_number_start: Optional[int] = None,
-        use_even_page_header_footer: Optional[bool] = None,
-        use_first_page_header_footer: Optional[bool] = None,
-        flip_page_orientation: Optional[bool] = None,
-        document_mode: Optional[str] = None,
-    ) -> Tuple[bool, str]:
+        background_color: str | None = None,
+        margin_top: float | None = None,
+        margin_bottom: float | None = None,
+        margin_left: float | None = None,
+        margin_right: float | None = None,
+        margin_header: float | None = None,
+        margin_footer: float | None = None,
+        page_width: float | None = None,
+        page_height: float | None = None,
+        page_number_start: int | None = None,
+        use_even_page_header_footer: bool | None = None,
+        use_first_page_header_footer: bool | None = None,
+        flip_page_orientation: bool | None = None,
+        document_mode: str | None = None,
+    ) -> tuple[bool, str]:
         """Validate updateDocumentStyle parameters."""
         params = [
             background_color,
@@ -636,20 +646,20 @@ class ValidationManager:
 
     def validate_section_style_params(
         self,
-        margin_top: Optional[float] = None,
-        margin_bottom: Optional[float] = None,
-        margin_left: Optional[float] = None,
-        margin_right: Optional[float] = None,
-        margin_header: Optional[float] = None,
-        margin_footer: Optional[float] = None,
-        page_number_start: Optional[int] = None,
-        use_first_page_header_footer: Optional[bool] = None,
-        flip_page_orientation: Optional[bool] = None,
-        content_direction: Optional[str] = None,
-        column_count: Optional[int] = None,
-        column_spacing: Optional[float] = None,
-        column_separator_style: Optional[str] = None,
-    ) -> Tuple[bool, str]:
+        margin_top: float | None = None,
+        margin_bottom: float | None = None,
+        margin_left: float | None = None,
+        margin_right: float | None = None,
+        margin_header: float | None = None,
+        margin_footer: float | None = None,
+        page_number_start: int | None = None,
+        use_first_page_header_footer: bool | None = None,
+        flip_page_orientation: bool | None = None,
+        content_direction: str | None = None,
+        column_count: int | None = None,
+        column_spacing: float | None = None,
+        column_separator_style: str | None = None,
+    ) -> tuple[bool, str]:
         """Validate updateSectionStyle parameters."""
         params = [
             margin_top,
@@ -699,8 +709,10 @@ class ValidationManager:
             if content_direction.upper() not in VALID_CONTENT_DIRECTIONS:
                 return (
                     False,
-                    "content_direction must be one of: "
-                    f"{', '.join(VALID_CONTENT_DIRECTIONS)}",
+                    (
+                        "content_direction must be one of: "
+                        f"{', '.join(VALID_CONTENT_DIRECTIONS)}"
+                    ),
                 )
 
         if column_count is not None:
@@ -727,14 +739,18 @@ class ValidationManager:
             if not isinstance(column_separator_style, str):
                 return (
                     False,
-                    "column_separator_style must be a string, "
-                    f"got {type(column_separator_style).__name__}",
+                    (
+                        "column_separator_style must be a string, "
+                        f"got {type(column_separator_style).__name__}"
+                    ),
                 )
             if column_separator_style.upper() not in VALID_COLUMN_SEPARATOR_STYLES:
                 return (
                     False,
-                    "column_separator_style must be one of: "
-                    f"{', '.join(VALID_COLUMN_SEPARATOR_STYLES)}",
+                    (
+                        "column_separator_style must be one of: "
+                        f"{', '.join(VALID_COLUMN_SEPARATOR_STYLES)}"
+                    ),
                 )
 
         return True, ""
@@ -743,19 +759,19 @@ class ValidationManager:
 
     def validate_table_cell_style_params(
         self,
-        background_color: Optional[str] = None,
-        border_color: Optional[str] = None,
-        border_width: Optional[float] = None,
-        padding_top: Optional[float] = None,
-        padding_bottom: Optional[float] = None,
-        padding_left: Optional[float] = None,
-        padding_right: Optional[float] = None,
-        content_alignment: Optional[str] = None,
-        row_index: Optional[int] = None,
-        column_index: Optional[int] = None,
-        row_span: Optional[int] = None,
-        column_span: Optional[int] = None,
-    ) -> Tuple[bool, str]:
+        background_color: str | None = None,
+        border_color: str | None = None,
+        border_width: float | None = None,
+        padding_top: float | None = None,
+        padding_bottom: float | None = None,
+        padding_left: float | None = None,
+        padding_right: float | None = None,
+        content_alignment: str | None = None,
+        row_index: int | None = None,
+        column_index: int | None = None,
+        row_span: int | None = None,
+        column_span: int | None = None,
+    ) -> tuple[bool, str]:
         """
         Validate table cell style parameters for updateTableCellStyle requests.
 
@@ -791,9 +807,11 @@ class ValidationManager:
         ):
             return (
                 False,
-                "At least one table cell style parameter must be provided "
-                "(background_color, border_color, border_width, padding_top, "
-                "padding_bottom, padding_left, padding_right, or content_alignment)",
+                (
+                    "At least one table cell style parameter must be provided "
+                    "(background_color, border_color, border_width, padding_top, "
+                    "padding_bottom, padding_left, padding_right, or content_alignment)"
+                ),
             )
 
         is_valid, error_msg = self.validate_color_param(
@@ -884,8 +902,8 @@ class ValidationManager:
         return True, ""
 
     def validate_color_param(
-        self, color: Optional[str], param_name: str
-    ) -> Tuple[bool, str]:
+        self, color: str | None, param_name: str
+    ) -> tuple[bool, str]:
         """Validate color parameters (hex string "#RRGGBB")."""
         if color is None:
             return True, ""
@@ -902,7 +920,7 @@ class ValidationManager:
 
         return True, ""
 
-    def validate_index(self, index: int, context: str = "Index") -> Tuple[bool, str]:
+    def validate_index(self, index: int, context: str = "Index") -> tuple[bool, str]:
         """
         Validate a single document index.
 
@@ -927,9 +945,9 @@ class ValidationManager:
     def validate_index_range(
         self,
         start_index: int,
-        end_index: Optional[int] = None,
-        document_length: Optional[int] = None,
-    ) -> Tuple[bool, str]:
+        end_index: int | None = None,
+        document_length: int | None = None,
+    ) -> tuple[bool, str]:
         """
         Validate document index ranges.
 
@@ -983,7 +1001,7 @@ class ValidationManager:
 
     def validate_element_insertion_params(
         self, element_type: str, index: int, **kwargs
-    ) -> Tuple[bool, str]:
+    ) -> tuple[bool, str]:
         """
         Validate parameters for element insertion.
 
@@ -1050,7 +1068,7 @@ class ValidationManager:
 
     def validate_header_footer_params(
         self, section_type: str, header_footer_type: str = "DEFAULT"
-    ) -> Tuple[bool, str]:
+    ) -> tuple[bool, str]:
         """
         Validate header/footer operation parameters.
 
@@ -1078,8 +1096,8 @@ class ValidationManager:
         return True, ""
 
     def validate_batch_operations(
-        self, operations: List[Dict[str, Any]]
-    ) -> Tuple[bool, str]:
+        self, operations: list[dict[str, Any]]
+    ) -> tuple[bool, str]:
         """
         Validate a list of batch operations.
 
@@ -1333,8 +1351,8 @@ class ValidationManager:
         return True, ""
 
     def validate_text_content(
-        self, text: str, max_length: Optional[int] = None
-    ) -> Tuple[bool, str]:
+        self, text: str, max_length: int | None = None
+    ) -> tuple[bool, str]:
         """
         Validate text content for insertion.
 
@@ -1354,7 +1372,7 @@ class ValidationManager:
 
         return True, ""
 
-    def get_validation_summary(self) -> Dict[str, Any]:
+    def get_validation_summary(self) -> dict[str, Any]:
         """
         Get a summary of all validation rules and constraints.
 

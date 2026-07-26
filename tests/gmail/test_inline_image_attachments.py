@@ -5,16 +5,15 @@ must use multipart/related so the HTML body can reference the image via
 `cid:` URLs (RFC 2392).
 """
 
-import base64
 import asyncio
+import base64
 import logging
 from email import message_from_bytes
 from email.policy import SMTP
 from types import SimpleNamespace
 
-import gmail.gmail_tools as gmail_tools
+from gmail import gmail_tools
 from gmail.gmail_tools import _prepare_gmail_message, _resolve_url_attachments
-
 
 # Minimal 1x1 PNG (89 bytes). Used as fake image payload.
 _TINY_PNG_B64 = (
@@ -340,7 +339,7 @@ def test_duplicate_content_id_logs_warning(caplog):
     """Two attachments with the same content_id should both attach but
     produce a warning about the duplicate."""
     with caplog.at_level(logging.WARNING, logger="gmail.gmail_tools"):
-        raw_b64, _, attached, errors = _prepare_gmail_message(
+        _raw_b64, _, attached, errors = _prepare_gmail_message(
             subject="dup-cid-test",
             body=('<html><body><img src="cid:same"><img src="cid:same"></body></html>'),
             body_format="html",

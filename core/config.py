@@ -13,9 +13,9 @@ from typing import TYPE_CHECKING
 from auth.oauth_config import (
     get_oauth_base_url,
     get_oauth_redirect_uri,
-    set_transport_mode,
     get_transport_mode,
     is_oauth21_enabled,
+    set_transport_mode,
 )
 
 # Server configuration. WORKSPACE_MCP_PORT is resolved lazily via PEP 562
@@ -46,12 +46,12 @@ USER_GOOGLE_EMAIL = (
 
 # Re-export OAuth functions for backward compatibility
 __all__ = [
-    "WORKSPACE_MCP_PORT",
-    "WORKSPACE_MCP_BASE_URI",
-    "WORKSPACE_EXTERNAL_URL",
     "USER_GOOGLE_EMAIL",
+    "WORKSPACE_EXTERNAL_URL",
+    "WORKSPACE_MCP_BASE_URI",
+    "WORKSPACE_MCP_PORT",
     "get_oauth_base_url",
     "get_oauth_redirect_uri",
-    "set_transport_mode",
     "get_transport_mode",
+    "set_transport_mode",
 ]

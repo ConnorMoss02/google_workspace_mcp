@@ -4,10 +4,11 @@ Unit tests for Google Sheets resize_sheet_dimensions tool.
 Tests column/row resizing, auto-resize, freeze, and hide/unhide operations.
 """
 
-import pytest
-from unittest.mock import Mock
-import sys
 import os
+import sys
+from unittest.mock import Mock
+
+import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 

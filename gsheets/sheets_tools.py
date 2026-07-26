@@ -4,24 +4,23 @@ Google Sheets MCP Tools
 This module provides MCP tools for interacting with Google Sheets API.
 """
 
-import logging
 import asyncio
-import json
 import copy
-from typing import List, Optional, Union
+import json
+import logging
 
 from mcp.types import ToolAnnotations
 
 from auth.service_decorator import require_google_service
-from core.server import server
-from core.utils import handle_http_errors, UserInputError, StringList
 from core.comments import create_comment_tools
+from core.server import server
+from core.utils import StringList, UserInputError, handle_http_errors
 from gsheets.sheets_helpers import (
     CONDITION_TYPES,
     _a1_range_for_values,
-    _column_to_index,
     _build_boolean_rule,
     _build_gradient_rule,
+    _column_to_index,
     _fetch_cell_formulas,
     _fetch_detailed_sheet_errors,
     _fetch_grid_metadata,
@@ -325,7 +324,7 @@ async def modify_sheet_values(
     user_google_email: str,
     spreadsheet_id: str,
     range_name: str,
-    values: Optional[Union[str, List[List[str]]]] = None,
+    values: str | list[list[str]] | None = None,
     value_input_option: str = "USER_ENTERED",
     clear_values: bool = False,
 ) -> str:
@@ -352,14 +351,17 @@ async def modify_sheet_values(
     if values is not None and isinstance(values, str):
         try:
             parsed_values = json.loads(values)
+            # These stay ValueError (not TypeError, as TRY004 suggests) because the
+            # `except ValueError` below is what converts them into the UserInputError
+            # the LLM sees. A TypeError would escape this handler entirely.
             if not isinstance(parsed_values, list):
-                raise ValueError(
+                raise ValueError(  # noqa: TRY004
                     f"Values must be a list, got {type(parsed_values).__name__}"
                 )
             # Validate it's a list of lists
             for i, row in enumerate(parsed_values):
                 if not isinstance(row, list):
-                    raise ValueError(
+                    raise ValueError(  # noqa: TRY004
                         f"Row {i} must be a list, got {type(row).__name__}"
                     )
             values = parsed_values
@@ -451,16 +453,16 @@ async def _format_sheet_range_impl(
     service,
     spreadsheet_id: str,
     range_name: str,
-    background_color: Optional[str] = None,
-    text_color: Optional[str] = None,
-    number_format_type: Optional[str] = None,
-    number_format_pattern: Optional[str] = None,
-    wrap_strategy: Optional[str] = None,
-    horizontal_alignment: Optional[str] = None,
-    vertical_alignment: Optional[str] = None,
-    bold: Optional[bool] = None,
-    italic: Optional[bool] = None,
-    font_size: Optional[int] = None,
+    background_color: str | None = None,
+    text_color: str | None = None,
+    number_format_type: str | None = None,
+    number_format_pattern: str | None = None,
+    wrap_strategy: str | None = None,
+    horizontal_alignment: str | None = None,
+    vertical_alignment: str | None = None,
+    bold: bool | None = None,
+    italic: bool | None = None,
+    font_size: int | None = None,
 ) -> str:
     """Internal implementation for format_sheet_range.
 
@@ -702,16 +704,16 @@ async def format_sheet_range(
     user_google_email: str,
     spreadsheet_id: str,
     range_name: str,
-    background_color: Optional[str] = None,
-    text_color: Optional[str] = None,
-    number_format_type: Optional[str] = None,
-    number_format_pattern: Optional[str] = None,
-    wrap_strategy: Optional[str] = None,
-    horizontal_alignment: Optional[str] = None,
-    vertical_alignment: Optional[str] = None,
-    bold: Optional[bool] = None,
-    italic: Optional[bool] = None,
-    font_size: Optional[int] = None,
+    background_color: str | None = None,
+    text_color: str | None = None,
+    number_format_type: str | None = None,
+    number_format_pattern: str | None = None,
+    wrap_strategy: str | None = None,
+    horizontal_alignment: str | None = None,
+    vertical_alignment: str | None = None,
+    bold: bool | None = None,
+    italic: bool | None = None,
+    font_size: int | None = None,
 ) -> str:
     """
     Applies formatting to a range: colors, number formats, text wrapping,
@@ -789,14 +791,14 @@ async def manage_conditional_formatting(
     user_google_email: str,
     spreadsheet_id: str,
     action: str,
-    range_name: Optional[str] = None,
-    condition_type: Optional[str] = None,
-    condition_values: Optional[Union[str, List[Union[str, int, float]]]] = None,
-    background_color: Optional[str] = None,
-    text_color: Optional[str] = None,
-    rule_index: Optional[int] = None,
-    gradient_points: Optional[Union[str, List[dict]]] = None,
-    sheet_name: Optional[str] = None,
+    range_name: str | None = None,
+    condition_type: str | None = None,
+    condition_values: str | list[str | int | float] | None = None,
+    background_color: str | None = None,
+    text_color: str | None = None,
+    rule_index: int | None = None,
+    gradient_points: str | list[dict] | None = None,
+    sheet_name: str | None = None,
 ) -> str:
     """
     Manages conditional formatting rules on a Google Sheet. Supports adding,
@@ -936,9 +938,11 @@ async def manage_conditional_formatting(
 
         return "\n".join(
             [
-                f"Added conditional format on '{range_name}' in spreadsheet "
-                f"{spreadsheet_id} for {user_google_email}: "
-                f"{rule_desc}{values_desc}; format: {format_desc}.",
+                (
+                    f"Added conditional format on '{range_name}' in spreadsheet "
+                    f"{spreadsheet_id} for {user_google_email}: "
+                    f"{rule_desc}{values_desc}; format: {format_desc}."
+                ),
                 state_text,
             ]
         )
@@ -1118,10 +1122,12 @@ async def manage_conditional_formatting(
 
         return "\n".join(
             [
-                f"Updated conditional format at index {rule_index} on sheet "
-                f"'{sheet_title}' in spreadsheet {spreadsheet_id} "
-                f"for {user_google_email}: "
-                f"{rule_desc}{values_desc}; format: {format_desc}.",
+                (
+                    f"Updated conditional format at index {rule_index} on sheet "
+                    f"'{sheet_title}' in spreadsheet {spreadsheet_id} "
+                    f"for {user_google_email}: "
+                    f"{rule_desc}{values_desc}; format: {format_desc}."
+                ),
                 state_text,
             ]
         )
@@ -1171,9 +1177,11 @@ async def manage_conditional_formatting(
 
         return "\n".join(
             [
-                f"Deleted conditional format at index {rule_index} on sheet "
-                f"'{target_sheet_name}' in spreadsheet {spreadsheet_id} "
-                f"for {user_google_email}.",
+                (
+                    f"Deleted conditional format at index {rule_index} on sheet "
+                    f"'{target_sheet_name}' in spreadsheet {spreadsheet_id} "
+                    f"for {user_google_email}."
+                ),
                 state_text,
             ]
         )
@@ -1194,7 +1202,7 @@ async def create_spreadsheet(
     service,
     user_google_email: str,
     title: str,
-    sheet_names: Optional[StringList] = None,
+    sheet_names: StringList | None = None,
 ) -> str:
     """
     Creates a new Google Spreadsheet.
@@ -1258,9 +1266,9 @@ async def create_sheet(
     service,
     user_google_email: str,
     spreadsheet_id: str,
-    sheet_name: Optional[str] = None,
-    source_sheet_name: Optional[str] = None,
-    insert_sheet_index: Optional[int] = None,
+    sheet_name: str | None = None,
+    source_sheet_name: str | None = None,
+    insert_sheet_index: int | None = None,
 ) -> str:
     """Creates a new sheet or duplicates an existing sheet (user_google_email: str, spreadsheet_id: str, sheet_name: Optional[str] = None, source_sheet_name: Optional[str] = None, insert_sheet_index: Optional[int] = None)."""
     if insert_sheet_index is not None and (
@@ -1461,7 +1469,7 @@ async def append_table_rows(
     user_google_email: str,
     spreadsheet_id: str,
     table_id: str,
-    values: Union[str, List[List]],
+    values: str | list[list],
 ) -> str:
     """
     Appends rows to a structured table in a Google Sheet. The rows are added
@@ -1621,24 +1629,24 @@ def _build_row_visibility_requests(sheet_id, row_nums, hidden, label):
 async def _resize_sheet_dimensions_impl(
     service,
     spreadsheet_id: str,
-    sheet_name: Optional[str] = None,
-    column_sizes: Optional[Union[str, dict]] = None,
-    row_sizes: Optional[Union[str, dict]] = None,
-    auto_resize_columns: Optional[Union[str, List[str]]] = None,
-    auto_resize_rows: Optional[Union[str, List[int]]] = None,
-    frozen_row_count: Optional[int] = None,
-    frozen_column_count: Optional[int] = None,
-    hide_columns: Optional[Union[str, List[str]]] = None,
-    unhide_columns: Optional[Union[str, List[str]]] = None,
-    hide_rows: Optional[Union[str, List[int]]] = None,
-    unhide_rows: Optional[Union[str, List[int]]] = None,
-    insert_rows: Optional[int] = None,
-    insert_rows_at: Optional[int] = None,
-    insert_columns: Optional[int] = None,
-    insert_columns_at: Optional[str] = None,
-    delete_rows: Optional[Union[str, List[int]]] = None,
-    delete_row_range: Optional[str] = None,
-    delete_columns: Optional[Union[str, List[str]]] = None,
+    sheet_name: str | None = None,
+    column_sizes: str | dict | None = None,
+    row_sizes: str | dict | None = None,
+    auto_resize_columns: str | list[str] | None = None,
+    auto_resize_rows: str | list[int] | None = None,
+    frozen_row_count: int | None = None,
+    frozen_column_count: int | None = None,
+    hide_columns: str | list[str] | None = None,
+    unhide_columns: str | list[str] | None = None,
+    hide_rows: str | list[int] | None = None,
+    unhide_rows: str | list[int] | None = None,
+    insert_rows: int | None = None,
+    insert_rows_at: int | None = None,
+    insert_columns: int | None = None,
+    insert_columns_at: str | None = None,
+    delete_rows: str | list[int] | None = None,
+    delete_row_range: str | None = None,
+    delete_columns: str | list[str] | None = None,
 ) -> dict:
     """Internal implementation for resize_sheet_dimensions.
 
@@ -2163,24 +2171,24 @@ async def resize_sheet_dimensions(
     service,
     user_google_email: str,
     spreadsheet_id: str,
-    sheet_name: Optional[str] = None,
-    column_sizes: Optional[Union[str, dict]] = None,
-    row_sizes: Optional[Union[str, dict]] = None,
-    auto_resize_columns: Optional[Union[str, List[str]]] = None,
-    auto_resize_rows: Optional[Union[str, List[int]]] = None,
-    frozen_row_count: Optional[int] = None,
-    frozen_column_count: Optional[int] = None,
-    hide_columns: Optional[Union[str, List[str]]] = None,
-    unhide_columns: Optional[Union[str, List[str]]] = None,
-    hide_rows: Optional[Union[str, List[int]]] = None,
-    unhide_rows: Optional[Union[str, List[int]]] = None,
-    insert_rows: Optional[int] = None,
-    insert_rows_at: Optional[int] = None,
-    insert_columns: Optional[int] = None,
-    insert_columns_at: Optional[str] = None,
-    delete_rows: Optional[Union[str, List[int]]] = None,
-    delete_row_range: Optional[str] = None,
-    delete_columns: Optional[Union[str, List[str]]] = None,
+    sheet_name: str | None = None,
+    column_sizes: str | dict | None = None,
+    row_sizes: str | dict | None = None,
+    auto_resize_columns: str | list[str] | None = None,
+    auto_resize_rows: str | list[int] | None = None,
+    frozen_row_count: int | None = None,
+    frozen_column_count: int | None = None,
+    hide_columns: str | list[str] | None = None,
+    unhide_columns: str | list[str] | None = None,
+    hide_rows: str | list[int] | None = None,
+    unhide_rows: str | list[int] | None = None,
+    insert_rows: int | None = None,
+    insert_rows_at: int | None = None,
+    insert_columns: int | None = None,
+    insert_columns_at: str | None = None,
+    delete_rows: str | list[int] | None = None,
+    delete_row_range: str | None = None,
+    delete_columns: str | list[str] | None = None,
 ) -> str:
     """
     Manages sheet-level dimension properties: resize columns/rows, auto-resize

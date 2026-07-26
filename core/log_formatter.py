@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import sys
+from typing import ClassVar
 
 
 class SuppressStatelessTransportTerminationFilter(logging.Filter):
@@ -36,7 +37,7 @@ class EnhancedLogFormatter(logging.Formatter):
     """Custom log formatter that adds ASCII prefixes and visual enhancements to log messages."""
 
     # Color codes for terminals that support ANSI colors
-    COLORS = {
+    COLORS: ClassVar[dict[str, str]] = {
         "DEBUG": "\033[36m",  # Cyan
         "INFO": "\033[32m",  # Green
         "WARNING": "\033[33m",  # Yellow

@@ -6,25 +6,25 @@ based on tier configuration, replacing direct @server.tool() decorators.
 """
 
 import logging
-from typing import Set, Optional, Callable
+from collections.abc import Callable
 
 from auth.oauth_config import is_oauth21_enabled
-from auth.permissions import is_permissions_mode, get_allowed_scopes_set
-from auth.scopes import is_read_only_mode, get_all_read_only_scopes
+from auth.permissions import get_allowed_scopes_set, is_permissions_mode
+from auth.scopes import get_all_read_only_scopes, is_read_only_mode
 
 logger = logging.getLogger(__name__)
 
 # Global registry of enabled tools
-_enabled_tools: Optional[Set[str]] = None
+_enabled_tools: set[str] | None = None
 
 
-def set_enabled_tools(tool_names: Optional[Set[str]]):
+def set_enabled_tools(tool_names: set[str] | None):
     """Set the globally enabled tools."""
     global _enabled_tools
     _enabled_tools = tool_names
 
 
-def get_enabled_tools() -> Optional[Set[str]]:
+def get_enabled_tools() -> set[str] | None:
     """Get the set of enabled tools, or None if all tools are enabled."""
     return _enabled_tools
 
@@ -146,13 +146,14 @@ def filter_server_tools(server):
 
             required_scopes = getattr(func_to_check, "_required_google_scopes", [])
 
-            if required_scopes:
-                # If ANY required scope is not in the allowed read-only scopes, disable the tool
-                if not all(scope in allowed_scopes for scope in required_scopes):
-                    logger.info(
-                        f"Read-only mode: Disabling tool '{tool_name}' (requires write scopes: {required_scopes})"
-                    )
-                    tools_to_remove.add(tool_name)
+            # If ANY required scope is not in the allowed read-only scopes, disable the tool
+            if required_scopes and not all(
+                scope in allowed_scopes for scope in required_scopes
+            ):
+                logger.info(
+                    f"Read-only mode: Disabling tool '{tool_name}' (requires write scopes: {required_scopes})"
+                )
+                tools_to_remove.add(tool_name)
 
     # 4. Granular permissions filtering
     # No scope hierarchy expansion here — permission levels are already cumulative
@@ -171,14 +172,15 @@ def filter_server_tools(server):
                 func_to_check = tool_obj.fn
 
             required_scopes = getattr(func_to_check, "_required_google_scopes", [])
-            if required_scopes:
-                if not all(scope in perm_allowed for scope in required_scopes):
-                    logger.info(
-                        "Permissions mode: Disabling tool '%s' (requires: %s)",
-                        tool_name,
-                        required_scopes,
-                    )
-                    tools_to_remove.add(tool_name)
+            if required_scopes and not all(
+                scope in perm_allowed for scope in required_scopes
+            ):
+                logger.info(
+                    "Permissions mode: Disabling tool '%s' (requires: %s)",
+                    tool_name,
+                    required_scopes,
+                )
+                tools_to_remove.add(tool_name)
 
     for tool_name in tools_to_remove:
         try:

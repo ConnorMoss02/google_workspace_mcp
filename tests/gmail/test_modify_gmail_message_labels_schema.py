@@ -1,6 +1,6 @@
+import gmail.gmail_tools  # noqa: F401
 from core.server import server
 from core.tool_registry import get_tool_components
-import gmail.gmail_tools  # noqa: F401
 
 
 def test_modify_gmail_message_labels_optional_arrays_publish_array_type():

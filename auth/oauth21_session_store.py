@@ -10,10 +10,11 @@ import contextvars
 import json
 import logging
 import os
-from typing import Dict, Optional, Any, Tuple, Callable, IO
-from threading import RLock
-from datetime import datetime, timedelta, timezone
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from threading import RLock
+from typing import IO, Any, Optional
 
 try:
     import fcntl
@@ -23,6 +24,7 @@ except ImportError:  # pragma: no cover - Windows
 from fastmcp.server.auth import AccessToken
 from fastmcp.server.dependencies import get_http_headers
 from google.oauth2.credentials import Credentials
+
 from auth.oauth_config import is_external_oauth21_provider
 
 logger = logging.getLogger(__name__)
@@ -63,7 +65,7 @@ def _get_default_oauth_state_file() -> str:
     return os.path.join(base_dir, "oauth_states.json")
 
 
-def _normalize_expiry_to_naive_utc(expiry: Optional[Any]) -> Optional[datetime]:
+def _normalize_expiry_to_naive_utc(expiry: Any | None) -> datetime | None:
     """
     Convert expiry values to timezone-naive UTC datetimes for google-auth compatibility.
 
@@ -106,19 +108,19 @@ _current_session_context: contextvars.ContextVar[Optional["SessionContext"]] = (
 class SessionContext:
     """Container for session-related information."""
 
-    session_id: Optional[str] = None
-    user_id: Optional[str] = None
-    auth_context: Optional[Any] = None
-    request: Optional[Any] = None
-    metadata: Dict[str, Any] = None
-    issuer: Optional[str] = None
+    session_id: str | None = None
+    user_id: str | None = None
+    auth_context: Any | None = None
+    request: Any | None = None
+    metadata: dict[str, Any] = None
+    issuer: str | None = None
 
     def __post_init__(self):
         if self.metadata is None:
             self.metadata = {}
 
 
-def set_session_context(context: Optional[SessionContext]):
+def set_session_context(context: SessionContext | None):
     """
     Set the current session context.
 
@@ -134,7 +136,7 @@ def set_session_context(context: Optional[SessionContext]):
         logger.debug("Cleared session context")
 
 
-def get_session_context() -> Optional[SessionContext]:
+def get_session_context() -> SessionContext | None:
     """
     Get the current session context.
 
@@ -159,7 +161,7 @@ class SessionContextManager:
             pass
     """
 
-    def __init__(self, context: Optional[SessionContext]):
+    def __init__(self, context: SessionContext | None):
         self.context = context
         self.token = None
 
@@ -174,7 +176,7 @@ class SessionContextManager:
             _current_session_context.reset(self.token)
 
 
-def extract_session_from_headers(headers: Dict[str, str]) -> Optional[str]:
+def extract_session_from_headers(headers: dict[str, str]) -> str | None:
     """
     Extract session ID from request headers.
 
@@ -233,15 +235,15 @@ class OAuth21SessionStore:
     their own credentials.
     """
 
-    def __init__(self, oauth_state_file: Optional[str] = None):
-        self._sessions: Dict[str, Dict[str, Any]] = {}
-        self._mcp_session_mapping: Dict[
+    def __init__(self, oauth_state_file: str | None = None):
+        self._sessions: dict[str, dict[str, Any]] = {}
+        self._mcp_session_mapping: dict[
             str, str
         ] = {}  # Maps FastMCP session ID -> user email
-        self._session_auth_binding: Dict[
+        self._session_auth_binding: dict[
             str, str
         ] = {}  # Maps session ID -> authenticated user email (immutable)
-        self._oauth_states: Dict[str, Dict[str, Any]] = {}
+        self._oauth_states: dict[str, dict[str, Any]] = {}
         self._oauth_state_file = oauth_state_file or _get_default_oauth_state_file()
         self._lock = RLock()
 
@@ -260,8 +262,8 @@ class OAuth21SessionStore:
                 logger.debug("Failed to update OAuth state file permissions")
 
     def _serialize_oauth_state_entry(
-        self, state_info: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, state_info: dict[str, Any]
+    ) -> dict[str, Any]:
         return {
             "session_id": state_info.get("session_id"),
             "code_verifier": state_info.get("code_verifier"),
@@ -278,8 +280,8 @@ class OAuth21SessionStore:
         }
 
     def _deserialize_oauth_state_entry(
-        self, state_info: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, state_info: dict[str, Any]
+    ) -> dict[str, Any]:
         deserialized = dict(state_info)
         for field_name in ("created_at", "expires_at"):
             raw_value = deserialized.get(field_name)
@@ -295,7 +297,7 @@ class OAuth21SessionStore:
         return deserialized
 
     def _remove_expired_oauth_states_from_dict(
-        self, oauth_states: Dict[str, Dict[str, Any]]
+        self, oauth_states: dict[str, dict[str, Any]]
     ) -> bool:
         now = datetime.now(timezone.utc)
         expired_states = [
@@ -309,7 +311,7 @@ class OAuth21SessionStore:
 
     def _load_oauth_states_from_file_handle(
         self, file_handle: IO[str]
-    ) -> Tuple[Dict[str, Dict[str, Any]], bool]:
+    ) -> tuple[dict[str, dict[str, Any]], bool]:
         file_handle.seek(0)
         raw = file_handle.read()
         if not raw.strip():
@@ -341,7 +343,7 @@ class OAuth21SessionStore:
     def _write_oauth_states_to_file_handle(
         self,
         file_handle: IO[str],
-        oauth_states: Dict[str, Dict[str, Any]],
+        oauth_states: dict[str, dict[str, Any]],
     ) -> None:
         serialized = {
             state: self._serialize_oauth_state_entry(state_info)
@@ -359,8 +361,8 @@ class OAuth21SessionStore:
 
     def _update_shared_oauth_states(
         self,
-        mutator: Callable[[Dict[str, Dict[str, Any]]], Tuple[Any, bool]],
-    ) -> Tuple[Any, Dict[str, Dict[str, Any]]]:
+        mutator: Callable[[dict[str, dict[str, Any]]], tuple[Any, bool]],
+    ) -> tuple[Any, dict[str, dict[str, Any]]]:
         self._ensure_oauth_state_directory()
         fd = os.open(self._oauth_state_file, os.O_RDWR | os.O_CREAT, 0o600)
         with os.fdopen(fd, "r+", encoding="utf-8") as file_handle:
@@ -381,22 +383,20 @@ class OAuth21SessionStore:
                 _unlock_file(file_handle)
 
     def _persist_oauth_state_to_shared_store(
-        self, state: str, state_info: Dict[str, Any]
+        self, state: str, state_info: dict[str, Any]
     ) -> None:
         def mutator(
-            oauth_states: Dict[str, Dict[str, Any]],
-        ) -> Tuple[Optional[Dict[str, Any]], bool]:
+            oauth_states: dict[str, dict[str, Any]],
+        ) -> tuple[dict[str, Any] | None, bool]:
             oauth_states[state] = state_info
             return None, True
 
         self._update_shared_oauth_states(mutator)
 
-    def _pop_oauth_state_from_shared_store(
-        self, state: str
-    ) -> Optional[Dict[str, Any]]:
+    def _pop_oauth_state_from_shared_store(self, state: str) -> dict[str, Any] | None:
         def mutator(
-            oauth_states: Dict[str, Dict[str, Any]],
-        ) -> Tuple[Optional[Dict[str, Any]], bool]:
+            oauth_states: dict[str, dict[str, Any]],
+        ) -> tuple[dict[str, Any] | None, bool]:
             state_info = oauth_states.pop(state, None)
             return state_info, state_info is not None
 
@@ -405,12 +405,12 @@ class OAuth21SessionStore:
 
     def _consume_latest_oauth_state_from_shared_store(
         self,
-        session_id: Optional[str] = None,
+        session_id: str | None = None,
         allow_any_session: bool = False,
-    ) -> Optional[Tuple[str, Dict[str, Any]]]:
+    ) -> tuple[str, dict[str, Any]] | None:
         def mutator(
-            oauth_states: Dict[str, Dict[str, Any]],
-        ) -> Tuple[Optional[Tuple[str, Dict[str, Any]]], bool]:
+            oauth_states: dict[str, dict[str, Any]],
+        ) -> tuple[tuple[str, dict[str, Any]] | None, bool]:
             matching_states = [
                 state
                 for state, state_info in oauth_states.items()
@@ -452,9 +452,9 @@ class OAuth21SessionStore:
     def store_oauth_state(
         self,
         state: str,
-        session_id: Optional[str] = None,
+        session_id: str | None = None,
         expires_in_seconds: int = 600,
-        code_verifier: Optional[str] = None,
+        code_verifier: str | None = None,
     ) -> None:
         """Persist an OAuth state value for later validation."""
         if not state:
@@ -483,8 +483,8 @@ class OAuth21SessionStore:
     def validate_and_consume_oauth_state(
         self,
         state: str,
-        session_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
         """
         Validate that a state value exists and consume it.
 
@@ -530,9 +530,9 @@ class OAuth21SessionStore:
 
     def consume_latest_oauth_state(
         self,
-        initiating_session_id: Optional[str] = None,
+        initiating_session_id: str | None = None,
         allow_any_session: bool = False,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """
         Consume and return the most recently created OAuth state.
 
@@ -572,15 +572,15 @@ class OAuth21SessionStore:
         self,
         user_email: str,
         access_token: str,
-        refresh_token: Optional[str] = None,
+        refresh_token: str | None = None,
         token_uri: str = "https://oauth2.googleapis.com/token",
-        client_id: Optional[str] = None,
-        client_secret: Optional[str] = None,
-        scopes: Optional[list] = None,
-        expiry: Optional[Any] = None,
-        session_id: Optional[str] = None,
-        mcp_session_id: Optional[str] = None,
-        issuer: Optional[str] = None,
+        client_id: str | None = None,
+        client_secret: str | None = None,
+        scopes: list | None = None,
+        expiry: Any | None = None,
+        session_id: str | None = None,
+        mcp_session_id: str | None = None,
+        issuer: str | None = None,
     ):
         """
         Store OAuth 2.1 session information.
@@ -626,12 +626,15 @@ class OAuth21SessionStore:
                             f"Removed stale auth binding: {old_mcp_session_id}"
                         )
                 # Remove old OAuth session binding if it differs from new one
-                if old_session_id and old_session_id != session_id:
-                    if old_session_id in self._session_auth_binding:
-                        del self._session_auth_binding[old_session_id]
-                        logger.debug(
-                            f"Removed stale OAuth session binding: {old_session_id}"
-                        )
+                if (
+                    old_session_id
+                    and old_session_id != session_id
+                    and old_session_id in self._session_auth_binding
+                ):
+                    del self._session_auth_binding[old_session_id]
+                    logger.debug(
+                        f"Removed stale OAuth session binding: {old_session_id}"
+                    )
 
             session_info = {
                 "access_token": access_token,
@@ -678,7 +681,7 @@ class OAuth21SessionStore:
             if session_id and session_id not in self._session_auth_binding:
                 self._session_auth_binding[session_id] = user_email
 
-    def get_credentials(self, user_email: str) -> Optional[Credentials]:
+    def get_credentials(self, user_email: str) -> Credentials | None:
         """
         Get Google credentials for a user from OAuth 2.1 session.
 
@@ -713,9 +716,7 @@ class OAuth21SessionStore:
                 logger.error(f"Failed to create credentials for {user_email}: {e}")
                 return None
 
-    def get_credentials_by_mcp_session(
-        self, mcp_session_id: str
-    ) -> Optional[Credentials]:
+    def get_credentials_by_mcp_session(self, mcp_session_id: str) -> Credentials | None:
         """
         Get Google credentials using FastMCP session ID.
 
@@ -738,10 +739,10 @@ class OAuth21SessionStore:
     def get_credentials_with_validation(
         self,
         requested_user_email: str,
-        session_id: Optional[str] = None,
-        auth_token_email: Optional[str] = None,
+        session_id: str | None = None,
+        auth_token_email: str | None = None,
         allow_recent_auth: bool = False,
-    ) -> Optional[Credentials]:
+    ) -> Credentials | None:
         """
         Get Google credentials with session validation.
 
@@ -823,7 +824,7 @@ class OAuth21SessionStore:
             )
             return None
 
-    def get_user_by_mcp_session(self, mcp_session_id: str) -> Optional[str]:
+    def get_user_by_mcp_session(self, mcp_session_id: str) -> str | None:
         """
         Get user email by FastMCP session ID.
 
@@ -836,7 +837,7 @@ class OAuth21SessionStore:
         with self._lock:
             return self._mcp_session_mapping.get(mcp_session_id)
 
-    def get_session_info(self, user_email: str) -> Optional[Dict[str, Any]]:
+    def get_session_info(self, user_email: str) -> dict[str, Any] | None:
         """
         Get complete session information including issuer.
 
@@ -891,14 +892,14 @@ class OAuth21SessionStore:
         with self._lock:
             return mcp_session_id in self._mcp_session_mapping
 
-    def get_single_user_email(self) -> Optional[str]:
+    def get_single_user_email(self) -> str | None:
         """Return the sole authenticated user email when exactly one session exists."""
         with self._lock:
             if len(self._sessions) == 1:
                 return next(iter(self._sessions))
             return None
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get store statistics."""
         with self._lock:
             return {
@@ -908,7 +909,7 @@ class OAuth21SessionStore:
                 "mcp_sessions": list(self._mcp_session_mapping.keys()),
             }
 
-    def find_session_id_for_access_token(self, token: str) -> Optional[str]:
+    def find_session_id_for_access_token(self, token: str) -> str | None:
         """
         Thread-safe lookup of session ID by access token.
 
@@ -1001,10 +1002,10 @@ def get_auth_provider():
     return _auth_provider
 
 
-def _resolve_client_credentials() -> Tuple[Optional[str], Optional[str]]:
+def _resolve_client_credentials() -> tuple[str | None, str | None]:
     """Resolve OAuth client credentials from the active provider or configuration."""
-    client_id: Optional[str] = None
-    client_secret: Optional[str] = None
+    client_id: str | None = None
+    client_secret: str | None = None
 
     if _auth_provider:
         client_id = getattr(_auth_provider, "_upstream_client_id", None)
@@ -1033,7 +1034,7 @@ def _resolve_client_credentials() -> Tuple[Optional[str], Optional[str]]:
     return client_id, client_secret
 
 
-def _inbound_bearer_token() -> Optional[str]:
+def _inbound_bearer_token() -> str | None:
     """Return the raw bearer token from the active HTTP request, if present.
 
     In OAuth proxy mode this is the FastMCP-issued reference JWT whose ``jti``
@@ -1052,7 +1053,7 @@ def _inbound_bearer_token() -> Optional[str]:
     return None
 
 
-async def _build_credentials_from_provider() -> Optional[Credentials]:
+async def _build_credentials_from_provider() -> Credentials | None:
     """Rebuild refreshable Google credentials from the FastMCP OAuth proxy stores.
 
     FastMCP hands the client an opaque reference JWT and keeps the real Google
@@ -1116,9 +1117,9 @@ async def _build_credentials_from_provider() -> Optional[Credentials]:
 
 async def ensure_session_from_access_token(
     access_token: AccessToken,
-    user_email: Optional[str],
-    mcp_session_id: Optional[str] = None,
-) -> Optional[Credentials]:
+    user_email: str | None,
+    mcp_session_id: str | None = None,
+) -> Credentials | None:
     """Ensure credentials derived from an access token are cached and returned."""
 
     if not access_token:
@@ -1129,7 +1130,7 @@ async def ensure_session_from_access_token(
         email = access_token.claims.get("email")
 
     credentials = await _build_credentials_from_provider()
-    store_expiry: Optional[datetime] = None
+    store_expiry: datetime | None = None
 
     if credentials is None:
         client_id, client_secret = _resolve_client_credentials()
@@ -1179,8 +1180,8 @@ async def ensure_session_from_access_token(
 
 
 def get_credentials_from_token(
-    access_token: str, user_email: Optional[str] = None
-) -> Optional[Credentials]:
+    access_token: str, user_email: str | None = None
+) -> Credentials | None:
     """
     Convert a bearer token to Google credentials.
 
@@ -1233,7 +1234,7 @@ def get_credentials_from_token(
 
 
 def store_token_session(
-    token_response: dict, user_email: str, mcp_session_id: Optional[str] = None
+    token_response: dict, user_email: str, mcp_session_id: str | None = None
 ) -> str:
     """
     Store a token response in the session store.

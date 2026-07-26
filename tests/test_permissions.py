@@ -5,30 +5,30 @@ Covers parse_permissions_arg() validation (format, duplicates, unknown
 service/level) and cumulative scope expansion in get_scopes_for_permission().
 """
 
-import sys
 import os
+import sys
 
 import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from auth.permissions import (
+    SERVICE_PERMISSION_LEVELS,
     get_scopes_for_permission,
     is_action_denied,
     parse_permissions_arg,
     set_permissions,
-    SERVICE_PERMISSION_LEVELS,
 )
 from auth.scopes import (
-    GMAIL_READONLY_SCOPE,
-    GMAIL_LABELS_SCOPE,
-    GMAIL_MODIFY_SCOPE,
-    GMAIL_COMPOSE_SCOPE,
+    DRIVE_FILE_SCOPE,
     DRIVE_READONLY_SCOPE,
     DRIVE_SCOPE,
+    GMAIL_COMPOSE_SCOPE,
+    GMAIL_LABELS_SCOPE,
+    GMAIL_MODIFY_SCOPE,
+    GMAIL_READONLY_SCOPE,
     TASKS_READONLY_SCOPE,
     TASKS_SCOPE,
-    DRIVE_FILE_SCOPE,
 )
 
 

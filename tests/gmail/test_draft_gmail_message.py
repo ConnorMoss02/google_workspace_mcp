@@ -1,25 +1,25 @@
 import base64
-from email import policy
-from email.parser import BytesParser
 import os
 import sys
+from contextlib import asynccontextmanager
+from email import policy
+from email.parser import BytesParser
 from types import SimpleNamespace
 from unittest.mock import Mock
-from contextlib import asynccontextmanager
 
+import pytest
 from fastmcp.exceptions import ToolError
 from googleapiclient.errors import HttpError
-import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-import gmail.gmail_tools as gmail_tools
 from core.utils import UserInputError
+from gmail import gmail_tools
 from gmail.gmail_tools import (
-    draft_gmail_message,
-    send_gmail_message,
     _resolve_url_attachments,
     _try_read_local_attachment,
+    draft_gmail_message,
+    send_gmail_message,
 )
 
 
@@ -709,15 +709,18 @@ def test_try_read_local_attachment_reads_from_storage(tmp_path, monkeypatch):
     monkeypatch.setattr(storage_mod, "_attachment_storage", storage)
 
     # Manually register metadata so get_attachment_path works.
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
 
+    # Must match AttachmentStorage's tz-aware clock, or the expiry comparison in
+    # get_attachment_path raises on naive-vs-aware.
+    now = datetime.now(timezone.utc)
     storage._metadata[file_id] = {
         "file_path": str(tmp_path / f"report_{file_id[:8]}.pdf"),
         "filename": "report.pdf",
         "mime_type": "application/pdf",
         "size": 9,
-        "created_at": datetime.now(),
-        "expires_at": datetime.now() + timedelta(hours=1),
+        "created_at": now,
+        "expires_at": now + timedelta(hours=1),
     }
 
     result = _try_read_local_attachment(f"/attachments/{file_id}")

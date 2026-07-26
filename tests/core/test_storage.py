@@ -8,7 +8,6 @@ import pytest
 
 from core.storage import SAFE_FILENAME_CHARS, make_sanitized_file_store
 
-
 # ---------------------------------------------------------------------------
 # SAFE_FILENAME_CHARS constant
 # ---------------------------------------------------------------------------

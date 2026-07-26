@@ -3,8 +3,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import auth.service_decorator as service_decorator
 import core.server as server_module
+from auth import service_decorator
 from core.server import SecureFastMCP
 
 
@@ -272,9 +272,9 @@ async def test_dwd_request_impersonation_uses_caller_email(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_dwd_request_impersonation_falls_back_to_canonical(monkeypatch):
-    captured, fake_service = _patch_service_account(monkeypatch)
+    captured, _fake_service = _patch_service_account(monkeypatch)
 
-    service, actual_user = await service_decorator._authenticate_service(
+    _service, actual_user = await service_decorator._authenticate_service(
         use_oauth21=False,
         service_name="gmail",
         service_version="v1",

@@ -5,20 +5,21 @@ Tests the manage_out_of_office tool with mocked API responses,
 verifying the exact API payloads sent to Google Calendar.
 """
 
-import pytest
-from unittest.mock import Mock, MagicMock
-import sys
 import os
+import sys
+from unittest.mock import MagicMock, Mock
+
+import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from gcalendar.calendar_tools import (
     _create_ooo_event_impl,
-    _list_ooo_events_impl,
-    _update_ooo_event_impl,
     _delete_ooo_event_impl,
-    _validate_auto_decline_mode,
+    _list_ooo_events_impl,
     _ooo_time_entry,
+    _update_ooo_event_impl,
+    _validate_auto_decline_mode,
 )
 
 

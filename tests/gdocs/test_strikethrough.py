@@ -7,8 +7,9 @@ Covers the helpers, validation, and batch manager integration.
 import json
 from difflib import unified_diff
 from pathlib import Path
-import pytest
 from unittest.mock import AsyncMock, Mock
+
+import pytest
 
 from core.server import server
 from core.tool_registry import get_tool_components
@@ -130,7 +131,7 @@ class TestBatchManagerIntegration:
     @pytest.mark.asyncio
     async def test_end_to_end_execute_strikethrough(self, manager):
         manager._execute_batch_requests = AsyncMock(return_value={"replies": [{}]})
-        success, message, meta = await manager.execute_batch_operations(
+        success, _message, meta = await manager.execute_batch_operations(
             "doc-123",
             [
                 {

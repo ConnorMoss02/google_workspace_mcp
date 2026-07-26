@@ -28,9 +28,15 @@ jobs:
     - name: Auto-fix ruff lint and format
       # Same-repo only (guarded by job `if`), so we still avoid `uv sync`
       # to keep behaviour consistent and minimise blast radius.
+      #
+      # The ruff version is pinned deliberately: this step commits directly to
+      # the PR branch, so an unpinned `uvx ruff` lets any new ruff release
+      # rewrite the repo with no review. Ruff 0.16 would have silently
+      # reformatted Markdown code blocks this way. Keep in sync with the `ruff`
+      # pin in pyproject.toml's dev extras.
       run: |
-        uvx ruff check --fix
-        uvx ruff format
+        uvx ruff@0.16.0 check --fix
+        uvx ruff@0.16.0 format
     - name: Commit and push fixes
       run: |
         git diff --quiet && exit 0
@@ -57,5 +63,5 @@ jobs:
       # keeps the validation step safe to run on untrusted fork PR code.
       # For same-repo PRs, this runs after autofix commits any formatting fixes.
       run: |
-        uvx ruff check
-        uvx ruff format --check
+        uvx ruff@0.16.0 check
+        uvx ruff@0.16.0 format --check

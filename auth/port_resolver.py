@@ -11,7 +11,6 @@ from __future__ import annotations
 import logging
 import os
 import socket
-from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +27,7 @@ class PortConfigError(RuntimeError):
     """Raised when a port-related env var contains a non-integer value."""
 
 
-def _candidate_ports(preferred: int, fallback_count: int) -> List[int]:
+def _candidate_ports(preferred: int, fallback_count: int) -> list[int]:
     return [preferred] + [preferred + i for i in range(1, max(0, fallback_count) + 1)]
 
 
@@ -62,9 +61,9 @@ def _is_port_free(host: str, port: int) -> bool:
 
 
 def resolve_port(
-    preferred: Optional[int] = None,
-    fallback_count: Optional[int] = None,
-    host: Optional[str] = None,
+    preferred: int | None = None,
+    fallback_count: int | None = None,
+    host: str | None = None,
 ) -> int:
     """
     Resolve the first available port in [preferred, preferred+1, ..., preferred+fallback_count].

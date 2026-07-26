@@ -7,17 +7,16 @@ This module provides MCP tools for interacting with Google Contacts via the Peop
 import asyncio
 import logging
 import warnings
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Literal
 
 from googleapiclient.errors import HttpError
 from mcp import Resource
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
-
 from mcp.types import ToolAnnotations
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from auth.service_decorator import require_google_service
 from core.server import server
-from core.utils import UserInputError, handle_http_errors, StringList
+from core.utils import StringList, UserInputError, handle_http_errors
 from gcontacts.contacts_helpers import (
     _format_contact,
     _merge_emails,
@@ -45,7 +44,7 @@ DETAILED_PERSON_FIELDS = (
 CONTACT_GROUP_FIELDS = "name,groupType,memberCount,metadata"
 
 # Cache warmup tracking
-_search_cache_warmed_up: Dict[str, bool] = {}
+_search_cache_warmed_up: dict[str, bool] = {}
 
 # Known phone types supported by Google People API (custom types also allowed)
 KNOWN_PHONE_TYPES = {
@@ -70,15 +69,15 @@ class PhoneInput(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    number: Optional[str] = Field(
+    number: str | None = Field(
         default=None,
         description="Phone number value.",
     )
-    value: Optional[str] = Field(
+    value: str | None = Field(
         default=None,
         description="Backward-compatible alias for the phone number value.",
     )
-    type: Optional[str] = Field(
+    type: str | None = Field(
         default=None,
         description="Phone type such as mobile, work, home, or internal.",
     )
@@ -89,15 +88,15 @@ class EmailInput(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    address: Optional[str] = Field(
+    address: str | None = Field(
         default=None,
         description="Email address value.",
     )
-    value: Optional[str] = Field(
+    value: str | None = Field(
         default=None,
         description="Backward-compatible alias for the email address value.",
     )
-    type: Optional[str] = Field(
+    type: str | None = Field(
         default=None,
         description="Email type such as work, home, or other.",
     )
@@ -108,15 +107,15 @@ class OrganizationInput(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: Optional[str] = Field(default=None, description="Organization name.")
-    title: Optional[str] = Field(default=None, description="Job title.")
-    department: Optional[str] = Field(default=None, description="Department name.")
-    jobDescription: Optional[str] = Field(
+    name: str | None = Field(default=None, description="Organization name.")
+    title: str | None = Field(default=None, description="Job title.")
+    department: str | None = Field(default=None, description="Department name.")
+    jobDescription: str | None = Field(
         default=None,
         description="Optional organization job description.",
         validation_alias=AliasChoices("jobDescription", "description"),
     )
-    type: Optional[str] = Field(
+    type: str | None = Field(
         default=None,
         description="Organization type such as work or school.",
     )
@@ -130,7 +129,7 @@ class NicknameInput(BaseModel):
     value: str = Field(
         description="Nickname value. Used for bilingual contacts (e.g. Hebrew alternative form).",
     )
-    type: Optional[str] = Field(
+    type: str | None = Field(
         default=None,
         description="Nickname type such as default, alternate_name, maiden_name, initials, or other.",
     )
@@ -144,7 +143,7 @@ class UrlInput(BaseModel):
     value: str = Field(
         description="The URL value (e.g. https://example.com).",
     )
-    type: Optional[str] = Field(
+    type: str | None = Field(
         default=None,
         description="URL type such as homepage, blog, profile, work, ftp, reservations, or other. Custom values allowed.",
     )
@@ -172,7 +171,7 @@ class RelationInput(BaseModel):
     person: str = Field(
         description="The related person's name (matched against contact names by Google Assistant).",
     )
-    type: Optional[str] = Field(
+    type: str | None = Field(
         default=None,
         description="Relation type: spouse, child, parent, father, mother, sister, brother, friend, manager, assistant, partner, sibling, domesticPartner, or custom.",
     )
@@ -183,25 +182,25 @@ class ContactInput(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    given_name: Optional[str] = None
-    family_name: Optional[str] = None
-    phones: Optional[List[PhoneInput]] = None
-    emails: Optional[List[EmailInput]] = None
-    organizations: Optional[List[OrganizationInput]] = None
-    nicknames: Optional[List[NicknameInput]] = None
-    urls: Optional[List[UrlInput]] = None
-    user_defined: Optional[List[UserDefinedInput]] = None
-    relations: Optional[List[RelationInput]] = None
-    notes: Optional[str] = None
-    address: Optional[str] = None
-    birthday: Optional[str] = Field(
+    given_name: str | None = None
+    family_name: str | None = None
+    phones: list[PhoneInput] | None = None
+    emails: list[EmailInput] | None = None
+    organizations: list[OrganizationInput] | None = None
+    nicknames: list[NicknameInput] | None = None
+    urls: list[UrlInput] | None = None
+    user_defined: list[UserDefinedInput] | None = None
+    relations: list[RelationInput] | None = None
+    notes: str | None = None
+    address: str | None = None
+    birthday: str | None = Field(
         default=None,
         description="Birthday as 'YYYY-MM-DD', 'MM-DD' (no year), or 'clear'/'' to remove.",
     )
-    phone: Optional[str] = None
-    email: Optional[str] = None
-    organization: Optional[str] = None
-    job_title: Optional[str] = None
+    phone: str | None = None
+    email: str | None = None
+    organization: str | None = None
+    job_title: str | None = None
 
 
 class ContactUpdateInput(ContactInput):
@@ -283,25 +282,25 @@ def _coerce_contact_update_input(update: Any) -> ContactUpdateInput:
 
 
 def _build_person_body(
-    given_name: Optional[str] = None,
-    family_name: Optional[str] = None,
+    given_name: str | None = None,
+    family_name: str | None = None,
     # New multi-value params
-    phones: Optional[List[PhoneInput]] = None,
-    emails: Optional[List[EmailInput]] = None,
-    organizations: Optional[List[OrganizationInput]] = None,
-    nicknames: Optional[List[NicknameInput]] = None,
-    urls: Optional[List[UrlInput]] = None,
-    user_defined: Optional[List[UserDefinedInput]] = None,
-    relations: Optional[List[RelationInput]] = None,
-    notes: Optional[str] = None,
-    address: Optional[str] = None,
-    birthday: Optional[str] = None,
+    phones: list[PhoneInput] | None = None,
+    emails: list[EmailInput] | None = None,
+    organizations: list[OrganizationInput] | None = None,
+    nicknames: list[NicknameInput] | None = None,
+    urls: list[UrlInput] | None = None,
+    user_defined: list[UserDefinedInput] | None = None,
+    relations: list[RelationInput] | None = None,
+    notes: str | None = None,
+    address: str | None = None,
+    birthday: str | None = None,
     # Deprecated single-value aliases
-    email: Optional[str] = None,
-    phone: Optional[str] = None,
-    organization: Optional[str] = None,
-    job_title: Optional[str] = None,
-) -> Dict[str, Any]:
+    email: str | None = None,
+    phone: str | None = None,
+    organization: str | None = None,
+    job_title: str | None = None,
+) -> dict[str, Any]:
     """
     Build a Person resource body for create/update operations.
 
@@ -327,7 +326,7 @@ def _build_person_body(
     Returns:
         Person resource body dictionary.
     """
-    body: Dict[str, Any] = {}
+    body: dict[str, Any] = {}
 
     if phones is not None:
         phones = [_coerce_phone_input(phone) for phone in phones]
@@ -370,7 +369,7 @@ def _build_person_body(
     if emails is not None:
         email_entries = []
         for e in emails:
-            entry: Dict[str, Any] = {"value": e.address or e.value or ""}
+            entry: dict[str, Any] = {"value": e.address or e.value or ""}
             if e.type:
                 entry["type"] = e.type
             if entry["value"]:
@@ -460,7 +459,7 @@ def _build_person_body(
             value = (n.value or "").strip()
             if not value:
                 continue
-            entry: Dict[str, Any] = {"value": value}
+            entry: dict[str, Any] = {"value": value}
             if n.type:
                 entry["type"] = n.type
             nickname_entries.append(entry)
@@ -487,7 +486,7 @@ def _build_person_body(
             value = (ud.value or "").strip()
             if not key:
                 continue
-            entry: Dict[str, str] = {"key": key}
+            entry: dict[str, str] = {"key": key}
             if value:
                 entry["value"] = value
             ud_entries.append(entry)
@@ -537,8 +536,6 @@ async def _warmup_search_cache(service: Resource, user_google_email: str) -> Non
         service: Authenticated People API service.
         user_google_email: User's email for tracking.
     """
-    global _search_cache_warmed_up
-
     if _search_cache_warmed_up.get(user_google_email):
         return
 
@@ -576,8 +573,8 @@ async def list_contacts(
     service: Resource,
     user_google_email: str,
     page_size: int = 100,
-    page_token: Optional[str] = None,
-    sort_order: Optional[str] = None,
+    page_token: str | None = None,
+    sort_order: str | None = None,
 ) -> str:
     """
     List contacts for the authenticated user.
@@ -597,7 +594,7 @@ async def list_contacts(
         raise UserInputError("page_size must be >= 1")
     page_size = min(page_size, 1000)
 
-    params: Dict[str, Any] = {
+    params: dict[str, Any] = {
         "resourceName": "people/me",
         "personFields": DEFAULT_PERSON_FIELDS,
         "pageSize": page_size,
@@ -763,20 +760,20 @@ async def manage_contact(
     service: Resource,
     user_google_email: str,
     action: Literal["create", "update", "delete"],
-    contact_id: Optional[str] = None,
-    given_name: Optional[str] = None,
-    family_name: Optional[str] = None,
+    contact_id: str | None = None,
+    given_name: str | None = None,
+    family_name: str | None = None,
     # New multi-value params
-    phones: Optional[List[PhoneInput]] = None,
-    emails: Optional[List[EmailInput]] = None,
-    organizations: Optional[List[OrganizationInput]] = None,
-    nicknames: Optional[List[NicknameInput]] = None,
-    urls: Optional[List[UrlInput]] = None,
-    user_defined: Optional[List[UserDefinedInput]] = None,
-    relations: Optional[List[RelationInput]] = None,
-    notes: Optional[str] = None,
-    address: Optional[str] = None,
-    birthday: Optional[str] = None,
+    phones: list[PhoneInput] | None = None,
+    emails: list[EmailInput] | None = None,
+    organizations: list[OrganizationInput] | None = None,
+    nicknames: list[NicknameInput] | None = None,
+    urls: list[UrlInput] | None = None,
+    user_defined: list[UserDefinedInput] | None = None,
+    relations: list[RelationInput] | None = None,
+    notes: str | None = None,
+    address: str | None = None,
+    birthday: str | None = None,
     # Merge modes for update action
     phones_mode: Literal["merge", "replace", "remove"] = "merge",
     emails_mode: Literal["merge", "replace", "remove"] = "merge",
@@ -786,10 +783,10 @@ async def manage_contact(
     user_defined_mode: Literal["merge", "replace", "remove"] = "merge",
     relations_mode: Literal["merge", "replace", "remove"] = "merge",
     # Deprecated single-value aliases
-    phone: Optional[str] = None,
-    email: Optional[str] = None,
-    organization: Optional[str] = None,
-    job_title: Optional[str] = None,
+    phone: str | None = None,
+    email: str | None = None,
+    organization: str | None = None,
+    job_title: str | None = None,
 ) -> str:
     """
     Create, update, or delete a contact. Consolidated tool replacing create_contact,
@@ -953,7 +950,7 @@ async def manage_contact(
                 )
 
             # Apply merge modes for array fields
-            merged_body: Dict[str, Any] = dict(new_body)
+            merged_body: dict[str, Any] = dict(new_body)
 
             if "phoneNumbers" in new_body:
                 merged_body["phoneNumbers"] = _merge_phones(
@@ -1086,7 +1083,7 @@ async def list_contact_groups(
     service: Resource,
     user_google_email: str,
     page_size: int = 100,
-    page_token: Optional[str] = None,
+    page_token: str | None = None,
 ) -> str:
     """
     List contact groups (labels) for the user.
@@ -1105,7 +1102,7 @@ async def list_contact_groups(
         raise UserInputError("page_size must be >= 1")
     page_size = min(page_size, 1000)
 
-    params: Dict[str, Any] = {
+    params: dict[str, Any] = {
         "pageSize": page_size,
         "groupFields": CONTACT_GROUP_FIELDS,
     }
@@ -1235,24 +1232,23 @@ async def manage_contacts_batch(
     service: Resource,
     user_google_email: str,
     action: Literal["create", "update", "delete"],
-    contacts: Optional[List[ContactInput]] = None,
-    updates: Optional[List[ContactUpdateInput]] = None,
-    contact_ids: Optional[StringList] = None,
-    field: Optional[
-        Literal[
-            "names",
-            "phoneNumbers",
-            "emailAddresses",
-            "organizations",
-            "nicknames",
-            "urls",
-            "userDefined",
-            "relations",
-            "biographies",
-            "addresses",
-            "birthdays",
-        ]
-    ] = None,
+    contacts: list[ContactInput] | None = None,
+    updates: list[ContactUpdateInput] | None = None,
+    contact_ids: StringList | None = None,
+    field: Literal[
+        "names",
+        "phoneNumbers",
+        "emailAddresses",
+        "organizations",
+        "nicknames",
+        "urls",
+        "userDefined",
+        "relations",
+        "biographies",
+        "addresses",
+        "birthdays",
+    ]
+    | None = None,
 ) -> str:
     """
     Batch create, update, or delete contacts. Consolidated tool replacing
@@ -1426,7 +1422,7 @@ async def manage_contacts_batch(
         body_key = field_to_body_key[field]
 
         # Build contacts map (Dict[resourceName, Person]) — required by batchUpdateContacts API
-        contacts_map: Dict[str, Any] = {}
+        contacts_map: dict[str, Any] = {}
 
         for update in updates:
             cid = update.contact_id
@@ -1537,11 +1533,11 @@ async def manage_contact_group(
     service: Resource,
     user_google_email: str,
     action: str,
-    group_id: Optional[str] = None,
-    name: Optional[str] = None,
+    group_id: str | None = None,
+    name: str | None = None,
     delete_contacts: bool = False,
-    add_contact_ids: Optional[StringList] = None,
-    remove_contact_ids: Optional[StringList] = None,
+    add_contact_ids: StringList | None = None,
+    remove_contact_ids: StringList | None = None,
 ) -> str:
     """
     Create, update, delete a contact group, or modify its members. Consolidated tool
@@ -1647,7 +1643,7 @@ async def manage_contact_group(
             "At least one of add_contact_ids or remove_contact_ids must be provided."
         )
 
-    modify_body: Dict[str, Any] = {}
+    modify_body: dict[str, Any] = {}
 
     if add_contact_ids:
         add_names = []

@@ -10,7 +10,7 @@ class _FakeFastMCPContext:
         self.state = {}
         self.session_id = "session-123"
 
-    async def set_state(self, key, value, serializable=True):  # noqa: ARG002
+    async def set_state(self, key, value, serializable=True):
         self.state[key] = value
 
     async def get_state(self, key):
@@ -52,7 +52,7 @@ async def test_on_call_tool_includes_authorization_header_for_bearer_auth(
 
     monkeypatch.setattr("core.server.get_auth_provider", lambda: _FakeProvider())
 
-    async def _noop_ensure_session(*args, **kwargs):  # noqa: ARG001
+    async def _noop_ensure_session(*args, **kwargs):
         return None
 
     monkeypatch.setattr(
@@ -110,7 +110,7 @@ async def test_on_call_tool_requests_authorization_header_when_default_headers_a
 
     monkeypatch.setattr("core.server.get_auth_provider", lambda: _FakeProvider())
 
-    async def _noop_ensure_session(*args, **kwargs):  # noqa: ARG001
+    async def _noop_ensure_session(*args, **kwargs):
         return None
 
     monkeypatch.setattr(

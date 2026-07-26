@@ -4,16 +4,16 @@ Google Custom Search (PSE) MCP Tools
 This module provides MCP tools for interacting with Google Programmable Search Engine.
 """
 
-import logging
 import asyncio
+import logging
 import os
-from typing import Optional, Literal
+from typing import Literal
 
 from mcp.types import ToolAnnotations
 
 from auth.service_decorator import require_google_service
 from core.server import server
-from core.utils import handle_http_errors, StringList
+from core.utils import StringList, handle_http_errors
 
 logger = logging.getLogger(__name__)
 
@@ -36,14 +36,14 @@ async def search_custom(
     num: int = 10,
     start: int = 1,
     safe: Literal["active", "moderate", "off"] = "off",
-    search_type: Optional[Literal["image"]] = None,
-    site_search: Optional[str] = None,
-    site_search_filter: Optional[Literal["e", "i"]] = None,
-    date_restrict: Optional[str] = None,
-    file_type: Optional[str] = None,
-    language: Optional[str] = None,
-    country: Optional[str] = None,
-    sites: Optional[StringList] = None,
+    search_type: Literal["image"] | None = None,
+    site_search: str | None = None,
+    site_search_filter: Literal["e", "i"] | None = None,
+    date_restrict: str | None = None,
+    file_type: str | None = None,
+    language: str | None = None,
+    country: str | None = None,
+    sites: StringList | None = None,
 ) -> str:
     """
     Performs a search using Google Custom Search JSON API.
@@ -150,7 +150,7 @@ async def search_custom(
             # Add additional metadata if available
             if "pagemap" in item:
                 pagemap = item["pagemap"]
-                if "metatags" in pagemap and pagemap["metatags"]:
+                if pagemap.get("metatags"):
                     metatag = pagemap["metatags"][0]
                     if "og:type" in metatag:
                         confirmation_message += f"   Type: {metatag['og:type']}\n"

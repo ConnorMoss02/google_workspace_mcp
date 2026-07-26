@@ -1,6 +1,6 @@
 import pytest
 
-import auth.service_decorator as service_decorator
+from auth import service_decorator
 
 
 class _FakeService:

@@ -6,7 +6,7 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-import core.attachment_storage as attachment_storage
+from core import attachment_storage
 from core.utils import _get_allowed_file_dirs, validate_file_path
 
 

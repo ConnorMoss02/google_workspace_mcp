@@ -1,25 +1,25 @@
+import asyncio
 import base64
+import functools
 import io
 import json
 import logging
 import os
+import ssl
 import tempfile
 import zipfile
-import ssl
-import asyncio
-import functools
-
 from pathlib import Path
-from typing import Annotated, Any, List, Optional
+from typing import Annotated, Any
 
-from pydantic import BeforeValidator
 from defusedxml import ElementTree as ET
-
 from fastmcp.exceptions import ToolError
 from googleapiclient.errors import HttpError
-from .api_enablement import get_api_enablement_message
+from pydantic import BeforeValidator
+
 from auth.google_auth import GoogleAuthenticationError
-from auth.oauth_config import is_oauth21_enabled, is_external_oauth21_provider
+from auth.oauth_config import is_external_oauth21_provider, is_oauth21_enabled
+
+from .api_enablement import get_api_enablement_message
 
 logger = logging.getLogger(__name__)
 
@@ -29,13 +29,9 @@ GOOGLE_API_WRITE_RETRIES = 3
 class TransientNetworkError(Exception):
     """Custom exception for transient network errors after retries."""
 
-    pass
-
 
 class UserInputError(Exception):
     """Raised for user-facing input/validation errors that shouldn't be retried."""
-
-    pass
 
 
 def _coerce_json_str_to_type(v: Any, expected_type: type) -> Any:
@@ -61,7 +57,7 @@ def _coerce_json_str_to_list(v: Any) -> Any:
     return _coerce_json_str_to_type(v, list)
 
 
-StringList = Annotated[List[str], BeforeValidator(_coerce_json_str_to_list)]
+StringList = Annotated[list[str], BeforeValidator(_coerce_json_str_to_list)]
 """``List[str]`` that also accepts a JSON-encoded string of an array.
 
 Use in tool signatures instead of ``List[str]`` to work around MCP clients
@@ -69,7 +65,7 @@ that send ``'["value"]'`` instead of ``["value"]``.
 """
 
 
-DictList = Annotated[List[dict[str, Any]], BeforeValidator(_coerce_json_str_to_list)]
+DictList = Annotated[list[dict[str, Any]], BeforeValidator(_coerce_json_str_to_list)]
 """``List[dict]`` that also accepts a JSON-encoded string of an array.
 
 Use in tool signatures instead of ``List[dict]`` to work around MCP clients
@@ -77,7 +73,7 @@ that send ``'[{"key":"val"}]'`` instead of ``[{"key":"val"}]``.
 """
 
 
-ObjectList = Annotated[List[object], BeforeValidator(_coerce_json_str_to_list)]
+ObjectList = Annotated[list[object], BeforeValidator(_coerce_json_str_to_list)]
 """``List[object]`` that also accepts a JSON-encoded string of an array."""
 
 
@@ -245,7 +241,7 @@ def validate_file_path(file_path: str) -> Path:
     )
 
 
-def check_credentials_directory_permissions(credentials_dir: str = None) -> None:
+def check_credentials_directory_permissions(credentials_dir: str | None = None) -> None:
     """
     Check if the service has appropriate permissions to create and write to the .credentials directory.
 
@@ -282,18 +278,18 @@ def check_credentials_directory_permissions(credentials_dir: str = None) -> None
     )
 
 
-def extract_office_xml_text(file_bytes: bytes, mime_type: str) -> Optional[str]:
+def extract_office_xml_text(file_bytes: bytes, mime_type: str) -> str | None:
     """
     Very light-weight XML scraper for Word, Excel, PowerPoint files.
     Returns plain-text if something readable is found, else None.
     Uses zipfile + defusedxml.ElementTree.
     """
-    shared_strings: List[str] = []
+    shared_strings: list[str] = []
     ns_excel_main = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 
     try:
         with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
-            targets: List[str] = []
+            targets: list[str] = []
             # Map MIME → iterable of XML files to inspect
             if (
                 mime_type
@@ -335,20 +331,17 @@ def extract_office_xml_text(file_bytes: bytes, mime_type: str) -> Optional[str]:
                     logger.error(f"Error parsing sharedStrings.xml: {e}")
                 except (
                     Exception
-                ) as e:  # Catch any other unexpected error during sharedStrings parsing
-                    logger.error(
-                        f"Unexpected error processing sharedStrings.xml: {e}",
-                        exc_info=True,
-                    )
+                ):  # Catch any other unexpected error during sharedStrings parsing
+                    logger.exception("Unexpected error processing sharedStrings.xml")
             else:
                 return None
 
-            pieces: List[str] = []
+            pieces: list[str] = []
             for member in targets:
                 try:
                     xml_content = zf.read(member)
                     xml_root = ET.fromstring(xml_content)
-                    member_texts: List[str] = []
+                    member_texts: list[str] = []
 
                     if (
                         mime_type
@@ -403,10 +396,9 @@ def extract_office_xml_text(file_bytes: bytes, mime_type: str) -> Optional[str]:
                     logger.warning(
                         f"Could not parse XML in member '{member}' for {mime_type} file: {e}"
                     )
-                except Exception as e:
-                    logger.error(
-                        f"Error processing member '{member}' for {mime_type}: {e}",
-                        exc_info=True,
+                except Exception:
+                    logger.exception(
+                        f"Error processing member '{member}' for {mime_type}"
                     )
                     # continue processing other members
 
@@ -425,10 +417,8 @@ def extract_office_xml_text(file_bytes: bytes, mime_type: str) -> Optional[str]:
     ) as e:  # Catch parsing errors at the top level if zipfile itself is XML-like
         logger.error(f"XML parsing error at a high level for {mime_type}: {e}")
         return None
-    except Exception as e:
-        logger.error(
-            f"Failed to extract office XML text for {mime_type}: {e}", exc_info=True
-        )
+    except Exception:
+        logger.exception(f"Failed to extract office XML text for {mime_type}")
         return None
 
 
@@ -443,7 +433,7 @@ IMAGE_MIME_TYPES = {
 }
 
 
-def extract_pdf_text(file_bytes: bytes) -> Optional[str]:
+def extract_pdf_text(file_bytes: bytes) -> str | None:
     """
     Extract text from a PDF using pypdf.
     Returns plain text with pages separated by double newlines, or None on failure.
@@ -489,7 +479,7 @@ def encode_image_content(file_bytes: bytes, mime_type: str) -> str:
 
 
 def handle_http_errors(
-    tool_name: str, is_read_only: bool = False, service_type: Optional[str] = None
+    tool_name: str, is_read_only: bool = False, service_type: str | None = None
 ):
     """
     A decorator to handle Google API HttpErrors and transient SSL errors in a standardized way.
@@ -534,7 +524,7 @@ def handle_http_errors(
                 except UserInputError as e:
                     message = f"Input error in {tool_name}: {e}"
                     logger.warning(message)
-                    raise e
+                    raise
                 except HttpError as error:
                     user_google_email = kwargs.get("user_google_email", "N/A")
                     error_details = str(error)
@@ -586,7 +576,7 @@ def handle_http_errors(
                         # Other HTTP errors (400 Bad Request, etc.) - don't suggest re-auth
                         message = f"API error in {tool_name}: {error}"
 
-                    logger.error(f"API error in {tool_name}: {error}", exc_info=True)
+                    logger.exception(f"API error in {tool_name}")
                     raise Exception(message) from error
                 except TransientNetworkError:
                     # Re-raise without wrapping to preserve the specific error type

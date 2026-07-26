@@ -16,25 +16,27 @@ All tests call the unwrapped async function directly to bypass auth decorators.
 """
 
 import asyncio
-import sys
 import os
+import sys
 import warnings
+from unittest.mock import MagicMock
 
 import pytest
-from unittest.mock import MagicMock
 from googleapiclient.errors import HttpError
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-from gcontacts.contacts_tools import (
-    manage_contact as _manage_contact_wrapped,
-    manage_contacts_batch as _manage_contacts_batch_wrapped,
-)
+from core.utils import UserInputError
 from gcontacts.contacts_helpers import (
     _format_contact,
     _normalize_phone,
 )
-from core.utils import UserInputError
+from gcontacts.contacts_tools import (
+    manage_contact as _manage_contact_wrapped,
+)
+from gcontacts.contacts_tools import (
+    manage_contacts_batch as _manage_contacts_batch_wrapped,
+)
 
 
 def _unwrap(fn):

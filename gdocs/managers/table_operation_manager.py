@@ -5,9 +5,9 @@ This module provides high-level table operations that orchestrate
 multiple Google Docs API calls for complex table manipulations.
 """
 
-import logging
 import asyncio
-from typing import List, Dict, Any, Tuple, Optional
+import logging
+from typing import Any
 
 from gdocs.docs_helpers import (
     create_insert_table_request,
@@ -42,12 +42,12 @@ class TableOperationManager:
     async def create_and_populate_table(
         self,
         document_id: str,
-        table_data: List[List[str]],
+        table_data: list[list[str]],
         index: int,
         bold_headers: bool = True,
-        tab_id: Optional[str] = None,
+        tab_id: str | None = None,
         header_rows: int = 0,
-    ) -> Tuple[bool, str, Dict[str, Any]]:
+    ) -> tuple[bool, str, dict[str, Any]]:
         """
         Creates a table and populates it with data in a reliable multi-step process.
 
@@ -118,12 +118,14 @@ class TableOperationManager:
 
                 logger.error(
                     "Table was created, but the population/header-pinning batch "
-                    f"failed: {str(e)}"
+                    f"failed: {e!s}"
                 )
                 return (
                     True,
-                    "Table was created, but population and header pinning failed: "
-                    f"{str(e)}. Do not retry table creation.",
+                    (
+                        "Table was created, but population and header pinning failed: "
+                        f"{e!s}. Do not retry table creation."
+                    ),
                     {
                         "rows": rows,
                         "columns": cols,
@@ -150,8 +152,8 @@ class TableOperationManager:
             )
 
         except Exception as e:
-            logger.error(f"Failed to create and populate table: {str(e)}")
-            return False, f"Table creation failed: {str(e)}", {}
+            logger.error(f"Failed to create and populate table: {e!s}")
+            return False, f"Table creation failed: {e!s}", {}
 
     async def _create_empty_table(
         self,
@@ -159,7 +161,7 @@ class TableOperationManager:
         index: int,
         rows: int,
         cols: int,
-        tab_id: Optional[str] = None,
+        tab_id: str | None = None,
     ) -> None:
         """Create an empty table at the specified index."""
         logger.debug(f"Creating {rows}x{cols} table at index {index}")
@@ -176,8 +178,8 @@ class TableOperationManager:
         )
 
     async def _get_document_tables(
-        self, document_id: str, tab_id: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+        self, document_id: str, tab_id: str | None = None
+    ) -> list[dict[str, Any]]:
         """Get fresh document structure and extract table information."""
         doc = await asyncio.to_thread(
             self.service.documents()
@@ -207,8 +209,8 @@ class TableOperationManager:
 
     @staticmethod
     def _find_table_near_index(
-        tables: List[Dict[str, Any]], target_index: int
-    ) -> Optional[Dict[str, Any]]:
+        tables: list[dict[str, Any]], target_index: int
+    ) -> dict[str, Any] | None:
         """
         Find the table whose start_index is closest to the target insertion index.
 
@@ -243,10 +245,10 @@ class TableOperationManager:
     async def _populate_table_cells_batch(
         self,
         document_id: str,
-        table: Dict[str, Any],
-        table_data: List[List[str]],
+        table: dict[str, Any],
+        table_data: list[list[str]],
         bold_headers: bool,
-        tab_id: Optional[str] = None,
+        tab_id: str | None = None,
         header_rows: int = 0,
     ) -> int:
         """
@@ -366,9 +368,9 @@ class TableOperationManager:
         self,
         document_id: str,
         table_index: int,
-        table_data: List[List[str]],
-        tab_id: Optional[str] = None,
-    ) -> Tuple[bool, str, Dict[str, Any]]:
+        table_data: list[list[str]],
+        tab_id: str | None = None,
+    ) -> tuple[bool, str, dict[str, Any]]:
         """
         Populate an existing table with data.
 
@@ -424,14 +426,14 @@ class TableOperationManager:
             )
 
         except Exception as e:
-            return False, f"Failed to populate existing table: {str(e)}", {}
+            return False, f"Failed to populate existing table: {e!s}", {}
 
     async def _populate_existing_table_cells_batch(
         self,
         document_id: str,
-        table_info: Dict[str, Any],
-        table_data: List[List[str]],
-        tab_id: Optional[str] = None,
+        table_info: dict[str, Any],
+        table_data: list[list[str]],
+        tab_id: str | None = None,
     ) -> int:
         """Populate cells in an existing table using a single batch operation."""
         cells = table_info.get("cells", [])

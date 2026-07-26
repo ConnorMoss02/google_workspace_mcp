@@ -1,52 +1,55 @@
-# ruff: noqa: E402
 # Startup warning filters must be installed before importing FastMCP/Authlib dependencies.
 import asyncio
 import hashlib
 import logging
 import os
-from typing import List, Optional
 from importlib import metadata
-from urllib.parse import urlparse, ParseResult
+from urllib.parse import ParseResult, urlparse
 
 from core.warning_filters import install_startup_warning_filters
 
 install_startup_warning_filters()
 
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastmcp import FastMCP
+from fastmcp.server.auth.providers.google import GoogleProvider
+from mcp.types import Icon, ToolAnnotations
+from starlette.applications import Starlette
+from starlette.datastructures import MutableHeaders
+from starlette.middleware import Middleware
+from starlette.requests import Request
+from starlette.types import ASGIApp, Receive, Scope, Send
+
 from auth.auth_info_middleware import AuthInfoMiddleware
-from auth.google_auth import handle_auth_callback, start_auth_flow, check_client_secrets
+from auth.google_auth import check_client_secrets, handle_auth_callback, start_auth_flow
 from auth.mcp_session_middleware import MCPSessionMiddleware
 from auth.oauth21_session_store import set_auth_provider
 from auth.oauth_config import (
-    is_oauth21_enabled,
-    is_external_oauth21_provider,
     get_oauth_config,
+    is_external_oauth21_provider,
+    is_oauth21_enabled,
 )
 from auth.oauth_responses import (
     create_error_response,
-    create_success_response,
     create_server_error_response,
+    create_success_response,
 )
 from auth.scopes import PROTOCOL_AUTH_SCOPES, SCOPES, get_current_scopes  # noqa
 from core.config import (
     USER_GOOGLE_EMAIL,
     get_transport_mode,
-    set_transport_mode as _set_transport_mode,
+)
+from core.config import (
     get_oauth_redirect_uri as get_oauth_redirect_uri_for_current_mode,
 )
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
-from fastmcp import FastMCP
-from fastmcp.server.auth.providers.google import GoogleProvider
-from mcp.types import ToolAnnotations, Icon
-from starlette.applications import Starlette
-from starlette.datastructures import MutableHeaders
-from starlette.middleware import Middleware
-from starlette.requests import Request
-from starlette.types import ASGIApp, Scope, Receive, Send
+from core.config import (
+    set_transport_mode as _set_transport_mode,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-_auth_provider: Optional[GoogleProvider] = None
+_auth_provider: GoogleProvider | None = None
 _legacy_callback_registered = False
 
 session_middleware = Middleware(MCPSessionMiddleware)
@@ -68,7 +71,7 @@ _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 _DEFAULT_PORTS = {"http": 80, "https": 443, "ws": 80, "wss": 443}
 
 
-def _normalize_parsed(parsed: ParseResult) -> Optional[str]:
+def _normalize_parsed(parsed: ParseResult) -> str | None:
     if not parsed.scheme:
         return None
     if not parsed.hostname:
@@ -82,7 +85,7 @@ def _normalize_parsed(parsed: ParseResult) -> Optional[str]:
     return f"{parsed.scheme}://{netloc}"
 
 
-def _normalize_origin(origin: str) -> Optional[str]:
+def _normalize_origin(origin: str) -> str | None:
     return _normalize_parsed(urlparse(origin))
 
 
@@ -114,7 +117,7 @@ def _is_origin_allowed(origin: str) -> bool:
     return normalized in _get_allowed_http_origins()
 
 
-def _is_same_origin_as_host(origin: str, host_header: Optional[str]) -> bool:
+def _is_same_origin_as_host(origin: str, host_header: str | None) -> bool:
     """Return True when the Origin's authority matches the request's Host header.
 
     A same-origin request is the server's own page calling back to the host that
@@ -166,6 +169,15 @@ class OriginValidationMiddleware:
 origin_validation_middleware = Middleware(OriginValidationMiddleware)
 
 
+# OAuth discovery endpoints, matched either exactly or as a path prefix (the spec
+# allows an issuer suffix, e.g. /.well-known/oauth-protected-resource/mcp).
+OAUTH_WELL_KNOWN_PATHS = (
+    "/.well-known/oauth-authorization-server",
+    "/.well-known/oauth-protected-resource",
+)
+OAUTH_WELL_KNOWN_PREFIXES = tuple(f"{path}/" for path in OAUTH_WELL_KNOWN_PATHS)
+
+
 class WellKnownCacheControlMiddleware:
     """Force no-cache headers for OAuth well-known discovery endpoints."""
 
@@ -178,11 +190,8 @@ class WellKnownCacheControlMiddleware:
             return
 
         path = scope.get("path", "")
-        is_oauth_well_known = (
-            path == "/.well-known/oauth-authorization-server"
-            or path.startswith("/.well-known/oauth-authorization-server/")
-            or path == "/.well-known/oauth-protected-resource"
-            or path.startswith("/.well-known/oauth-protected-resource/")
+        is_oauth_well_known = path in OAUTH_WELL_KNOWN_PATHS or path.startswith(
+            OAUTH_WELL_KNOWN_PREFIXES
         )
         if not is_oauth_well_known:
             await self.app(scope, receive, send)
@@ -255,7 +264,7 @@ class SecureFastMCP(FastMCP):
                 patched.append(tool)
         return patched
 
-    async def call_tool(self, name: str, arguments: Optional[dict], *args, **kwargs):
+    async def call_tool(self, name: str, arguments: dict | None, *args, **kwargs):
         """Inject user_google_email before pydantic validates the call arguments.
 
         When USER_GOOGLE_EMAIL is configured and OAuth 2.1 is not active, callers
@@ -306,7 +315,7 @@ def _parse_bool_env(value: str) -> bool:
     return value.lower() in ("1", "true", "yes", "on")
 
 
-def _parse_allowed_redirect_uris(value: Optional[str]) -> Optional[List[str]]:
+def _parse_allowed_redirect_uris(value: str | None) -> list[str] | None:
     """Parse a comma-separated list of OAuth client redirect URIs.
 
     Returns a list of non-empty, trimmed URIs, or None when the input is
@@ -392,12 +401,12 @@ def configure_server_for_http():
 
         try:
             # Import common dependencies for storage backends
-            from key_value.aio.wrappers.encryption import FernetEncryptionWrapper
             from cryptography.fernet import Fernet
             from fastmcp.server.auth.jwt_issuer import derive_jwt_key
+            from key_value.aio.wrappers.encryption import FernetEncryptionWrapper
 
-            provider_valid_scopes: List[str] = sorted(get_current_scopes())
-            provider_required_scopes: List[str] = sorted(PROTOCOL_AUTH_SCOPES)
+            provider_valid_scopes: list[str] = sorted(get_current_scopes())
+            provider_required_scopes: list[str] = sorted(PROTOCOL_AUTH_SCOPES)
 
             client_storage = None
             jwt_signing_key_override = (
@@ -678,10 +687,8 @@ def configure_server_for_http():
             # Always set auth provider for token validation in middleware
             set_auth_provider(provider)
             _auth_provider = provider
-        except Exception as exc:
-            logger.error(
-                "Failed to initialize FastMCP GoogleProvider: %s", exc, exc_info=True
-            )
+        except Exception:
+            logger.exception("Failed to initialize FastMCP GoogleProvider")
             raise
     else:
         logger.info(
@@ -694,7 +701,7 @@ def configure_server_for_http():
         _ensure_legacy_callback_route()
 
 
-def get_auth_provider() -> Optional[GoogleProvider]:
+def get_auth_provider() -> GoogleProvider | None:
     """Gets the global authentication provider instance."""
     return _auth_provider
 
@@ -769,7 +776,7 @@ async def legacy_oauth2_callback(request: Request) -> HTMLResponse:
         if hasattr(request, "state") and hasattr(request.state, "session_id"):
             mcp_session_id = request.state.session_id
 
-        verified_user_id, credentials = await handle_auth_callback(
+        verified_user_id, _credentials = await handle_auth_callback(
             scopes=get_current_scopes(),
             authorization_response=str(request.url),
             redirect_uri=get_oauth_redirect_uri_for_current_mode(),
@@ -782,7 +789,7 @@ async def legacy_oauth2_callback(request: Request) -> HTMLResponse:
 
         return create_success_response(verified_user_id)
     except Exception as e:
-        logger.error(f"Error processing OAuth callback: {str(e)}", exc_info=True)
+        logger.exception("Error processing OAuth callback")
         return create_server_error_response(str(e))
 
 
@@ -850,5 +857,5 @@ async def start_google_auth(
         )
         return auth_message
     except Exception as e:
-        logger.error(f"Failed to start Google authentication flow: {e}", exc_info=True)
+        logger.exception("Failed to start Google authentication flow")
         return f"**Error:** An unexpected error occurred: {e}"

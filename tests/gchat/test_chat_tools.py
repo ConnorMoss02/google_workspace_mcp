@@ -5,13 +5,13 @@ Unit tests for Google Chat MCP tools — attachment support
 import asyncio
 import base64
 import inspect
+import os
 import ssl
+import sys
+from unittest.mock import AsyncMock, Mock, patch
 from urllib.parse import urlparse
 
 import pytest
-from unittest.mock import AsyncMock, Mock, patch
-import sys
-import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
@@ -336,8 +336,10 @@ async def test_search_messages_limits_parallel_space_fetches(mock_resolve, monke
     """Cross-space search should cap concurrent threaded Chat API calls."""
     mock_resolve.return_value = "Test User"
 
-    from gchat.chat_tools import _SEARCH_MESSAGES_MAX_CONCURRENT_SPACE_FETCHES
-    from gchat.chat_tools import search_messages
+    from gchat.chat_tools import (
+        _SEARCH_MESSAGES_MAX_CONCURRENT_SPACE_FETCHES,
+        search_messages,
+    )
 
     state = {"current": 0, "max": 0}
 
@@ -450,7 +452,7 @@ async def test_search_messages_raises_transient_error_when_all_spaces_ssl_fail(
     from core.utils import TransientNetworkError
     from gchat.chat_tools import search_messages
 
-    def list_messages(**kwargs):  # noqa: ARG001
+    def list_messages(**kwargs):
         request = Mock()
         request.execute.side_effect = ssl.SSLError("connection reset")
         return request

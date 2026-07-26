@@ -13,10 +13,10 @@ Covers:
 
 import json
 import os
-from difflib import unified_diff
-from pathlib import Path
 import sys
 import warnings
+from difflib import unified_diff
+from pathlib import Path
 
 import pytest
 
@@ -25,23 +25,22 @@ from core.tool_registry import get_tool_components
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
+from gcontacts.contacts_helpers import (
+    _format_contact,
+    _format_email_line,
+    _format_phone_line,
+    _merge_emails,
+    _merge_organizations,
+    _merge_phones,
+    _normalize_email,
+    _normalize_phone,
+)
 from gcontacts.contacts_tools import (
     EmailInput,
     OrganizationInput,
     PhoneInput,
     _build_person_body,
 )
-from gcontacts.contacts_helpers import (
-    _format_contact,
-    _format_phone_line,
-    _format_email_line,
-    _merge_phones,
-    _merge_emails,
-    _merge_organizations,
-    _normalize_phone,
-    _normalize_email,
-)
-
 
 SCHEMA_GOLDEN_PATH = (
     Path(__file__).with_name("golden").joinpath("contacts_tool_schemas.json")

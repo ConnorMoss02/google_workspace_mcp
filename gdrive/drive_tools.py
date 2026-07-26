@@ -5,25 +5,25 @@ This module provides MCP tools for interacting with Google Drive API.
 """
 
 import asyncio
-import logging
-import io
 import base64
 import binascii
-
-from typing import Optional, List, Dict, Any
+import io
+import logging
+from pathlib import Path
 from tempfile import NamedTemporaryFile, SpooledTemporaryFile
+from typing import Any
 from urllib.parse import urlparse
 from urllib.request import url2pathname
-from pathlib import Path
 
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
-
 from mcp.types import ToolAnnotations
 
-from auth.service_decorator import require_google_service
 from auth.oauth_config import is_stateless_mode
+from auth.service_decorator import require_google_service
 from core.attachment_storage import get_attachment_storage, get_attachment_url
+from core.config import get_transport_mode
+from core.server import server
 from core.utils import (
     GOOGLE_API_WRITE_RETRIES,
     IMAGE_MIME_TYPES,
@@ -33,8 +33,6 @@ from core.utils import (
     handle_http_errors,
     validate_file_path,
 )
-from core.server import server
-from core.config import get_transport_mode
 from gdrive.drive_helpers import (
     DRIVE_QUERY_PATTERNS,
     FOLDER_MIME_TYPE,
@@ -86,13 +84,13 @@ async def search_drive_files(
     user_google_email: str,
     query: str,
     page_size: int = 10,
-    page_token: Optional[str] = None,
-    drive_id: Optional[str] = None,
+    page_token: str | None = None,
+    drive_id: str | None = None,
     include_items_from_all_drives: bool = True,
-    corpora: Optional[str] = None,
-    file_type: Optional[str] = None,
+    corpora: str | None = None,
+    file_type: str | None = None,
     detailed: bool = True,
-    order_by: Optional[str] = None,
+    order_by: str | None = None,
 ) -> str:
     """
     Searches for files and folders within a user's Google Drive, including shared drives.
@@ -283,7 +281,7 @@ async def get_drive_file_content(
     loop = asyncio.get_event_loop()
     done = False
     while not done:
-        status, done = await loop.run_in_executor(None, downloader.next_chunk)
+        _status, done = await loop.run_in_executor(None, downloader.next_chunk)
 
     file_content_bytes = fh.getvalue()
 
@@ -358,7 +356,7 @@ async def get_drive_file_download_url(
     service,
     user_google_email: str,
     file_id: str,
-    export_format: Optional[str] = None,
+    export_format: str | None = None,
 ) -> str:
     """
     Downloads a Google Drive file and saves it to local disk.
@@ -464,7 +462,7 @@ async def get_drive_file_download_url(
     loop = asyncio.get_event_loop()
     done = False
     while not done:
-        status, done = await loop.run_in_executor(None, downloader.next_chunk)
+        _status, done = await loop.run_in_executor(None, downloader.next_chunk)
 
     file_content_bytes = fh.getvalue()
     size_bytes = len(file_content_bytes)
@@ -534,7 +532,7 @@ async def get_drive_file_download_url(
         return (
             f"Error: Failed to save file for download.\n"
             f"File was downloaded successfully ({size_kb:.1f} KB) but could not be saved.\n\n"
-            f"Error details: {str(e)}"
+            f"Error details: {e!s}"
         )
 
 
@@ -554,15 +552,15 @@ async def list_drive_items(
     user_google_email: str,
     folder_id: str = "root",
     page_size: int = 100,
-    page_token: Optional[str] = None,
-    drive_id: Optional[str] = None,
+    page_token: str | None = None,
+    drive_id: str | None = None,
     include_items_from_all_drives: bool = True,
-    corpora: Optional[str] = None,
-    file_type: Optional[str] = None,
+    corpora: str | None = None,
+    file_type: str | None = None,
     detailed: bool = True,
-    order_by: Optional[str] = None,
+    order_by: str | None = None,
     resource_type: str = "items",
-    query: Optional[str] = None,
+    query: str | None = None,
     include_organizers: bool = False,
 ) -> str:
     """
@@ -692,8 +690,8 @@ async def _list_shared_drives_impl(
     service,
     user_google_email: str,
     page_size: int = 100,
-    page_token: Optional[str] = None,
-    query: Optional[str] = None,
+    page_token: str | None = None,
+    query: str | None = None,
     include_organizers: bool = False,
 ) -> str:
     """List shared drives available to the authenticated user."""
@@ -702,7 +700,7 @@ async def _list_shared_drives_impl(
         f"include_organizers: {include_organizers}"
     )
 
-    list_params: Dict[str, Any] = {
+    list_params: dict[str, Any] = {
         "pageSize": min(max(page_size, 1), 100),
         "fields": (
             "drives(id, name, createdTime, hidden, "
@@ -722,13 +720,13 @@ async def _list_shared_drives_impl(
 
     if include_organizers:
 
-        async def _fetch_organizers(d: Dict[str, Any]) -> None:
+        async def _fetch_organizers(d: dict[str, Any]) -> None:
             try:
                 permissions = []
                 next_permission_page_token = None
 
                 while True:
-                    list_kwargs: Dict[str, Any] = {
+                    list_kwargs: dict[str, Any] = {
                         "fileId": d["id"],
                         "supportsAllDrives": True,
                         "useDomainAdminAccess": False,
@@ -764,7 +762,7 @@ async def _list_shared_drives_impl(
             SHARED_DRIVE_ORGANIZER_CONCURRENCY_LIMIT
         )
 
-        async def _bounded_fetch_organizers(d: Dict[str, Any]) -> None:
+        async def _bounded_fetch_organizers(d: dict[str, Any]) -> None:
             async with organizer_fetch_sem:
                 await _fetch_organizers(d)
 
@@ -892,12 +890,12 @@ async def create_drive_file(
     service,
     user_google_email: str,
     file_name: str,
-    content: Optional[str] = None,  # Now explicitly Optional
+    content: str | None = None,  # Now explicitly Optional
     folder_id: str = "root",
     mime_type: str = "text/plain",
-    fileUrl: Optional[str] = None,  # Now explicitly Optional
-    base64_content: Optional[str] = None,
-    content_mime_type: Optional[str] = None,
+    fileUrl: str | None = None,  # Now explicitly Optional
+    base64_content: str | None = None,
+    content_mime_type: str | None = None,
 ) -> str:
     """
     Creates a new file in Google Drive, supporting creation within shared drives.
@@ -1170,13 +1168,13 @@ async def _import_with_conversion(
     target_label: str,
     id_label: str,
     target_mime_type: str,
-    format_map: Dict[str, str],
+    format_map: dict[str, str],
     user_google_email: str,
     file_name: str,
-    content: Optional[str],
-    file_path: Optional[str],
-    file_url: Optional[str],
-    source_format: Optional[str],
+    content: str | None,
+    file_path: str | None,
+    file_url: str | None,
+    source_format: str | None,
     folder_id: str,
 ) -> str:
     """
@@ -1279,10 +1277,10 @@ async def import_to_google_doc(
     service,
     user_google_email: str,
     file_name: str,
-    content: Optional[str] = None,
-    file_path: Optional[str] = None,
-    file_url: Optional[str] = None,
-    source_format: Optional[str] = None,
+    content: str | None = None,
+    file_path: str | None = None,
+    file_url: str | None = None,
+    source_format: str | None = None,
     folder_id: str = "root",
 ) -> str:
     """
@@ -1351,9 +1349,9 @@ async def import_to_google_slides(
     service,
     user_google_email: str,
     file_name: str,
-    file_path: Optional[str] = None,
-    file_url: Optional[str] = None,
-    source_format: Optional[str] = None,
+    file_path: str | None = None,
+    file_url: str | None = None,
+    source_format: str | None = None,
     folder_id: str = "root",
 ) -> str:
     """
@@ -1415,10 +1413,10 @@ async def import_to_google_sheets(
     service,
     user_google_email: str,
     file_name: str,
-    content: Optional[str] = None,
-    file_path: Optional[str] = None,
-    file_url: Optional[str] = None,
-    source_format: Optional[str] = None,
+    content: str | None = None,
+    file_path: str | None = None,
+    file_url: str | None = None,
+    source_format: str | None = None,
     folder_id: str = "root",
 ) -> str:
     """
@@ -1633,7 +1631,7 @@ async def check_drive_file_public_access(
     service,
     user_google_email: str,
     file_name: str,
-    drive_id: Optional[str] = None,
+    drive_id: str | None = None,
 ) -> str:
     """
     Searches for a file by name and checks if it has public link sharing enabled.
@@ -1659,7 +1657,7 @@ async def check_drive_file_public_access(
     escaped_name = file_name.replace("'", "\\'")
     query = f"name = '{escaped_name}'"
 
-    list_params: Dict[str, Any] = {
+    list_params: dict[str, Any] = {
         "q": query,
         "pageSize": 10,
         "fields": "files(id, name, mimeType, webViewLink)",
@@ -1749,25 +1747,25 @@ async def update_drive_file(
     user_google_email: str,
     file_id: str,
     # File metadata updates
-    name: Optional[str] = None,
-    description: Optional[str] = None,
-    mime_type: Optional[str] = None,
+    name: str | None = None,
+    description: str | None = None,
+    mime_type: str | None = None,
     # Folder organization
-    add_parents: Optional[str] = None,  # Comma-separated folder IDs to add
-    remove_parents: Optional[str] = None,  # Comma-separated folder IDs to remove
+    add_parents: str | None = None,  # Comma-separated folder IDs to add
+    remove_parents: str | None = None,  # Comma-separated folder IDs to remove
     # File status
-    starred: Optional[bool] = None,
-    trashed: Optional[bool] = None,
+    starred: bool | None = None,
+    trashed: bool | None = None,
     # Sharing and permissions
-    writers_can_share: Optional[bool] = None,
-    copy_requires_writer_permission: Optional[bool] = None,
+    writers_can_share: bool | None = None,
+    copy_requires_writer_permission: bool | None = None,
     # Custom properties
-    properties: Optional[dict] = None,  # User-visible custom properties
+    properties: dict | None = None,  # User-visible custom properties
     # Content replacement (re-import with format conversion, preserving the file ID)
-    content: Optional[str] = None,  # Text content (markdown, TXT, HTML)
-    file_path: Optional[str] = None,  # Local file path (DOCX, ODT, etc.)
-    file_url: Optional[str] = None,  # Remote URL to fetch content from
-    source_format: Optional[str] = None,  # Format hint (md, docx, txt, html, rtf, odt)
+    content: str | None = None,  # Text content (markdown, TXT, HTML)
+    file_path: str | None = None,  # Local file path (DOCX, ODT, etc.)
+    file_url: str | None = None,  # Remote URL to fetch content from
+    source_format: str | None = None,  # Format hint (md, docx, txt, html, rtf, odt)
 ) -> str:
     """
     Updates metadata, properties, and/or content of a Google Drive file.
@@ -1833,7 +1831,7 @@ async def update_drive_file(
     if properties is not None:
         update_body["properties"] = properties
 
-    async def _resolve_parent_arguments(parent_arg: Optional[str]) -> Optional[str]:
+    async def _resolve_parent_arguments(parent_arg: str | None) -> str | None:
         if not parent_arg:
             return None
         parent_ids = [part.strip() for part in parent_arg.split(",") if part.strip()]
@@ -2058,16 +2056,16 @@ async def manage_drive_access(
     user_google_email: str,
     file_id: str,
     action: str,
-    share_with: Optional[str] = None,
-    role: Optional[str] = None,
+    share_with: str | None = None,
+    role: str | None = None,
     share_type: str = "user",
-    permission_id: Optional[str] = None,
-    recipients: Optional[List[Dict[str, Any]]] = None,
+    permission_id: str | None = None,
+    recipients: list[dict[str, Any]] | None = None,
     send_notification: bool = True,
-    email_message: Optional[str] = None,
-    expiration_time: Optional[str] = None,
-    allow_file_discovery: Optional[bool] = None,
-    new_owner_email: Optional[str] = None,
+    email_message: str | None = None,
+    expiration_time: str | None = None,
+    allow_file_discovery: bool | None = None,
+    new_owner_email: str | None = None,
     move_to_new_owners_root: bool = False,
 ) -> str:
     """
@@ -2142,7 +2140,7 @@ async def manage_drive_access(
         )
         file_id = resolved_file_id
 
-        permission_body: Dict[str, Any] = {
+        permission_body: dict[str, Any] = {
             "type": share_type,
             "role": effective_role,
         }
@@ -2158,7 +2156,7 @@ async def manage_drive_access(
         if share_type in ("domain", "anyone") and allow_file_discovery is not None:
             permission_body["allowFileDiscovery"] = allow_file_discovery
 
-        create_params: Dict[str, Any] = {
+        create_params: dict[str, Any] = {
             "fileId": file_id,
             "body": permission_body,
             "supportsAllDrives": True,
@@ -2194,7 +2192,7 @@ async def manage_drive_access(
         )
         file_id = resolved_file_id
 
-        results: List[str] = []
+        results: list[str] = []
         success_count = 0
         failure_count = 0
 
@@ -2231,7 +2229,7 @@ async def manage_drive_access(
                 failure_count += 1
                 continue
 
-            r_perm_body: Dict[str, Any] = {
+            r_perm_body: dict[str, Any] = {
                 "type": r_share_type,
                 "role": r_role,
             }
@@ -2249,7 +2247,7 @@ async def manage_drive_access(
                     failure_count += 1
                     continue
 
-            r_create_params: Dict[str, Any] = {
+            r_create_params: dict[str, Any] = {
                 "fileId": file_id,
                 "body": r_perm_body,
                 "supportsAllDrives": True,
@@ -2267,7 +2265,7 @@ async def manage_drive_access(
                 results.append(f"  - {format_permission_info(created_perm)}")
                 success_count += 1
             except HttpError as e:
-                results.append(f"  - {identifier}: Failed - {str(e)}")
+                results.append(f"  - {identifier}: Failed - {e!s}")
                 failure_count += 1
 
         output_parts = [
@@ -2319,7 +2317,7 @@ async def manage_drive_access(
             )
             effective_role = current_permission.get("role")
 
-        update_body: Dict[str, Any] = {"role": effective_role}
+        update_body: dict[str, Any] = {"role": effective_role}
         if expiration_time:
             update_body["expirationTime"] = expiration_time
 
@@ -2385,7 +2383,7 @@ async def manage_drive_access(
     current_owners = file_metadata.get("owners", [])
     current_owner_emails = [o.get("emailAddress", "") for o in current_owners]
 
-    transfer_body: Dict[str, Any] = {
+    transfer_body: dict[str, Any] = {
         "type": "user",
         "role": "owner",
         "emailAddress": new_owner_email,
@@ -2432,7 +2430,7 @@ async def copy_drive_file(
     service,
     user_google_email: str,
     file_id: str,
-    new_name: Optional[str] = None,
+    new_name: str | None = None,
     parent_folder_id: str = "root",
 ) -> str:
     """
@@ -2514,9 +2512,9 @@ async def set_drive_file_permissions(
     service,
     user_google_email: str,
     file_id: str,
-    link_sharing: Optional[str] = None,
-    writers_can_share: Optional[bool] = None,
-    copy_requires_writer_permission: Optional[bool] = None,
+    link_sharing: str | None = None,
+    writers_can_share: bool | None = None,
+    copy_requires_writer_permission: bool | None = None,
 ) -> str:
     """
     Sets file-level sharing settings and controls link sharing for a Google Drive file or folder.
