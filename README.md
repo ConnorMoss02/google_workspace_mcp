@@ -208,7 +208,7 @@ uvx workspace-mcp --transport streamable-http --tool-tier core
 </tr>
 </table>
 
-**Tool tiers** keep context windows lean: `core` is the essential set, `extended` adds management operations, `complete` loads everything. Combine with `--tools <service> ...`, `--read-only`, or per-service `--permissions` - details in the [server modes docs](https://workspacemcp.com/docs#server-modes).
+**Tool tiers** keep context windows lean: `core` is the essential set, `extended` adds management operations, `complete` loads everything. Combine with `--tools <service> ...`, `--read-only`, or per-service `--permissions`, and subtract individual tools with `--disabled-tools <name> ...` - details in the [server modes docs](https://workspacemcp.com/docs#server-modes).
 
 ## Connect Your Client
 
