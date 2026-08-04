@@ -57,7 +57,7 @@ class _FakeDownloader:
 def _patch_downloader(content_bytes):
     """Patch MediaIoBaseDownload to write content_bytes into the BytesIO handle."""
     return patch(
-        "gdrive.drive_tools.MediaIoBaseDownload",
+        "core.file_limits.MediaIoBaseDownload",
         side_effect=lambda fh, req: _FakeDownloader(fh, content_bytes),
     )
 

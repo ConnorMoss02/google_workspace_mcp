@@ -34,6 +34,7 @@ from core.attachment_storage import (
     get_attachment_url,
     STORAGE_DIR,
 )
+from core.file_limits import FileTooLargeError, ensure_within_file_size_limit
 from core.config import (
     get_transport_mode,
     WORKSPACE_EXTERNAL_URL,
@@ -1992,6 +1993,19 @@ async def get_gmail_attachment_content(
     size_bytes = attachment.get("size", 0)
     size_kb = size_bytes / 1024 if size_bytes else 0
     base64_data = attachment.get("data", "")
+
+    try:
+        ensure_within_file_size_limit(
+            size_bytes,
+            file_id=attachment_id,
+            kind="attachment",
+        )
+    except FileTooLargeError as e:
+        # Drop payload reference so GC can reclaim before returning.
+        if isinstance(attachment, dict):
+            attachment.pop("data", None)
+        base64_data = ""
+        return str(e)
 
     # Check if we're in stateless mode (can't save files)
     from auth.oauth_config import is_stateless_mode

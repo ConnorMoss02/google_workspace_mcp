@@ -695,6 +695,17 @@ async def download_chat_attachment(
     size_bytes = len(file_bytes)
     size_kb = size_bytes / 1024
 
+    from core.file_limits import FileTooLargeError, ensure_within_file_size_limit
+
+    try:
+        ensure_within_file_size_limit(
+            size_bytes,
+            file_name=filename,
+            kind="attachment",
+        )
+    except FileTooLargeError as e:
+        return str(e)
+
     # Check if we're in stateless mode (can't save files)
     from auth.oauth_config import is_stateless_mode
 

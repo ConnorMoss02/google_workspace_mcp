@@ -17,13 +17,18 @@ from urllib.request import url2pathname
 from pathlib import Path
 
 from googleapiclient.errors import HttpError
-from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
+from googleapiclient.http import MediaIoBaseUpload
 
 from mcp.types import ToolAnnotations
 
 from auth.service_decorator import require_google_service
 from auth.oauth_config import is_stateless_mode
 from core.attachment_storage import get_attachment_storage, get_attachment_url
+from core.file_limits import (
+    FileTooLargeError,
+    download_media_bytes,
+    ensure_within_file_size_limit,
+)
 from core.utils import (
     GOOGLE_API_WRITE_RETRIES,
     IMAGE_MIME_TYPES,
@@ -277,30 +282,44 @@ async def get_drive_file_content(
     resolved_file_id, file_metadata = await resolve_drive_item(
         service,
         file_id,
-        extra_fields="name, webViewLink",
+        extra_fields="name, webViewLink, size",
     )
     file_id = resolved_file_id
     mime_type = file_metadata.get("mimeType", "")
     file_name = file_metadata.get("name", "Unknown File")
+    web_view_link = file_metadata.get("webViewLink", "#")
     export_mime_type = {
         "application/vnd.google-apps.document": "text/plain",
         "application/vnd.google-apps.spreadsheet": "text/csv",
         "application/vnd.google-apps.presentation": "text/plain",
     }.get(mime_type)
 
+    # Declared Drive size is only meaningful for binary downloads (not exports).
+    if not export_mime_type:
+        try:
+            ensure_within_file_size_limit(
+                file_metadata.get("size"),
+                file_name=file_name,
+                file_id=file_id,
+                web_view_link=web_view_link,
+            )
+        except FileTooLargeError as e:
+            return str(e)
+
     request_obj = (
         service.files().export_media(fileId=file_id, mimeType=export_mime_type)
         if export_mime_type
         else service.files().get_media(fileId=file_id)
     )
-    fh = io.BytesIO()
-    downloader = MediaIoBaseDownload(fh, request_obj)
-    loop = asyncio.get_event_loop()
-    done = False
-    while not done:
-        status, done = await loop.run_in_executor(None, downloader.next_chunk)
-
-    file_content_bytes = fh.getvalue()
+    try:
+        file_content_bytes = await download_media_bytes(
+            request_obj,
+            file_name=file_name,
+            file_id=file_id,
+            web_view_link=web_view_link,
+        )
+    except FileTooLargeError as e:
+        return str(e)
 
     # Attempt Office XML extraction only for actual Office XML files
     office_mime_types = {
@@ -351,7 +370,7 @@ async def get_drive_file_content(
     # Assemble response
     header = (
         f'File: "{file_name}" (ID: {file_id}, Type: {mime_type})\n'
-        f"Link: {file_metadata.get('webViewLink', '#')}\n\n--- CONTENT ---\n"
+        f"Link: {web_view_link}\n\n--- CONTENT ---\n"
     )
     return header + body_text
 
@@ -407,11 +426,12 @@ async def get_drive_file_download_url(
     resolved_file_id, file_metadata = await resolve_drive_item(
         service,
         file_id,
-        extra_fields="name, webViewLink, mimeType",
+        extra_fields="name, webViewLink, mimeType, size",
     )
     file_id = resolved_file_id
     mime_type = file_metadata.get("mimeType", "")
     file_name = file_metadata.get("name", "Unknown File")
+    web_view_link = file_metadata.get("webViewLink", "#")
 
     # Determine export format for Google native files
     export_mime_type = None
@@ -467,6 +487,18 @@ async def get_drive_file_download_url(
             if not output_filename.endswith(".pdf"):
                 output_filename = f"{Path(output_filename).stem}.pdf"
 
+    # Declared Drive size only applies to original-file downloads (not GSuite exports).
+    if not export_mime_type:
+        try:
+            ensure_within_file_size_limit(
+                file_metadata.get("size"),
+                file_name=file_name,
+                file_id=file_id,
+                web_view_link=web_view_link,
+            )
+        except FileTooLargeError as e:
+            return str(e)
+
     # Download the file
     request_obj = (
         service.files().export_media(fileId=file_id, mimeType=export_mime_type)
@@ -474,14 +506,16 @@ async def get_drive_file_download_url(
         else service.files().get_media(fileId=file_id)
     )
 
-    fh = io.BytesIO()
-    downloader = MediaIoBaseDownload(fh, request_obj)
-    loop = asyncio.get_event_loop()
-    done = False
-    while not done:
-        status, done = await loop.run_in_executor(None, downloader.next_chunk)
+    try:
+        file_content_bytes = await download_media_bytes(
+            request_obj,
+            file_name=file_name,
+            file_id=file_id,
+            web_view_link=web_view_link,
+        )
+    except FileTooLargeError as e:
+        return str(e)
 
-    file_content_bytes = fh.getvalue()
     size_bytes = len(file_content_bytes)
     size_kb = size_bytes / 1024 if size_bytes else 0
 
