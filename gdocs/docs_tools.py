@@ -466,7 +466,7 @@ async def modify_doc_text(
     italic: bool = None,
     underline: bool = None,
     strikethrough: bool = None,
-    font_size: int = None,
+    font_size: float = None,
     font_family: str = None,
     font_weight: int = None,
     text_color: str = None,
@@ -2135,6 +2135,11 @@ async def update_paragraph_style(
     page_break_before: bool = None,
     spacing_mode: str = None,
     shading_color: str = None,
+    border_edges: list = None,
+    border_color: str = None,
+    border_width: float = None,
+    border_padding: float = None,
+    border_dash: str = None,
     list_type: str = None,
     list_nesting_level: int = None,
     bullet_preset: str = None,
@@ -2284,6 +2289,11 @@ async def update_paragraph_style(
         page_break_before,
         spacing_mode,
         shading_color,
+        border_edges,
+        border_color,
+        border_width,
+        border_padding,
+        border_dash,
     )
     if paragraph_style_request:
         requests.append(paragraph_style_request)

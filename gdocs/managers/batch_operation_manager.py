@@ -404,6 +404,11 @@ class BatchOperationManager:
                 op.get("page_break_before"),
                 op.get("spacing_mode"),
                 op.get("shading_color"),
+                op.get("border_edges"),
+                op.get("border_color"),
+                op.get("border_width"),
+                op.get("border_padding"),
+                op.get("border_dash"),
             )
 
             if not request:
@@ -488,6 +493,7 @@ class BatchOperationManager:
                 row_span=op.get("row_span"),
                 column_span=op.get("column_span"),
                 tab_id=tab_id,
+                border_edges=op.get("border_edges"),
             )
 
             if not request:
@@ -1035,6 +1041,11 @@ class BatchOperationManager:
                         "page_break_before",
                         "spacing_mode",
                         "shading_color",
+                        "border_edges",
+                        "border_color",
+                        "border_width",
+                        "border_padding",
+                        "border_dash",
                         "segment_id",
                         "tab_id",
                     ],
@@ -1055,6 +1066,7 @@ class BatchOperationManager:
                         "column_index",
                         "row_span",
                         "column_span",
+                        "border_edges",
                     ],
                     "description": "Apply table cell styling to an entire table or a targeted cell range",
                 },

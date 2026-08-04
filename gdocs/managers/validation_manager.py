@@ -169,7 +169,7 @@ class ValidationManager:
         italic: Optional[bool] = None,
         underline: Optional[bool] = None,
         strikethrough: Optional[bool] = None,
-        font_size: Optional[int] = None,
+        font_size: Optional[float] = None,
         font_family: Optional[str] = None,
         font_weight: Optional[int] = None,
         text_color: Optional[str] = None,
@@ -243,10 +243,11 @@ class ValidationManager:
 
         # Validate font size
         if font_size is not None:
-            if not isinstance(font_size, int):
+            # kenorai patch 2026-08-04: fractional point sizes are valid (Dimension.magnitude is a number).
+            if not isinstance(font_size, (int, float)) or isinstance(font_size, bool):
                 return (
                     False,
-                    f"font_size must be an integer, got {type(font_size).__name__}",
+                    f"font_size must be a number, got {type(font_size).__name__}",
                 )
 
             min_size, max_size = self.validation_rules["font_size_range"]
@@ -354,6 +355,11 @@ class ValidationManager:
         page_break_before: Optional[bool] = None,
         spacing_mode: Optional[str] = None,
         shading_color: Optional[str] = None,
+        border_edges: Optional[list] = None,
+        border_color: Optional[str] = None,
+        border_width: Optional[float] = None,
+        border_padding: Optional[float] = None,
+        border_dash: Optional[str] = None,
     ) -> Tuple[bool, str]:
         """
         Validate paragraph style parameters.
@@ -389,6 +395,12 @@ class ValidationManager:
             page_break_before,
             spacing_mode,
             shading_color,
+            # kenorai enhancement 2026-08-04: paragraph borders
+            border_edges,
+            border_color,
+            border_width,
+            border_padding,
+            border_dash,
         ]
         if all(param is None for param in style_params):
             return (
@@ -1156,6 +1168,11 @@ class ValidationManager:
                     op.get("page_break_before"),
                     op.get("spacing_mode"),
                     op.get("shading_color"),
+                    border_edges=op.get("border_edges"),
+                    border_color=op.get("border_color"),
+                    border_width=op.get("border_width"),
+                    border_padding=op.get("border_padding"),
+                    border_dash=op.get("border_dash"),
                 )
                 if not is_valid:
                     return (

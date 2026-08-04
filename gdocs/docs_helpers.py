@@ -209,7 +209,7 @@ def build_text_style(
     italic: bool = None,
     underline: bool = None,
     strikethrough: bool = None,
-    font_size: int = None,
+    font_size: float = None,
     font_family: str = None,
     font_weight: int = None,
     text_color: str = None,
@@ -324,6 +324,11 @@ def build_paragraph_style(
     page_break_before: Optional[bool] = None,
     spacing_mode: Optional[str] = None,
     shading_color: Optional[str] = None,
+    border_edges: Optional[List[str]] = None,
+    border_color: Optional[str] = None,
+    border_width: Optional[float] = None,
+    border_padding: Optional[float] = None,
+    border_dash: Optional[str] = None,
 ) -> tuple[Dict[str, Any], list[str]]:
     """
     Build paragraph style object for Google Docs API requests.
@@ -449,6 +454,51 @@ def build_paragraph_style(
         }
         fields.append("shading")
 
+    # kenorai enhancement 2026-08-04: paragraph borders (the callout left-rule pattern).
+    # ParagraphBorder requires color, width, padding and dashStyle all set.
+    if border_color is not None or border_width is not None or border_edges:
+        dash = (border_dash or "SOLID").upper()
+        if dash not in VALID_DASH_STYLES:
+            raise ValueError(
+                f"border_dash must be one of {', '.join(VALID_DASH_STYLES)}, got '{border_dash}'"
+            )
+        para_border = {
+            "color": _build_optional_color(
+                border_color if border_color is not None else "#000000",
+                "border_color",
+            ),
+            "width": {
+                "magnitude": border_width if border_width is not None else 1,
+                "unit": "PT",
+            },
+            "padding": {
+                "magnitude": border_padding if border_padding is not None else 4,
+                "unit": "PT",
+            },
+            "dashStyle": dash,
+        }
+        edge_map = {
+            "top": "borderTop",
+            "bottom": "borderBottom",
+            "left": "borderLeft",
+            "right": "borderRight",
+            "between": "borderBetween",
+        }
+        if border_edges:
+            selected = []
+            for edge in border_edges:
+                edge_key = str(edge).strip().lower()
+                if edge_key not in edge_map:
+                    raise ValueError(
+                        f"border_edges entries must be one of {sorted(edge_map)}, got '{edge}'"
+                    )
+                selected.append(edge_map[edge_key])
+        else:
+            selected = ["borderTop", "borderBottom", "borderLeft", "borderRight"]
+        for border_name in selected:
+            paragraph_style[border_name] = dict(para_border)
+            fields.append(border_name)
+
     return paragraph_style, fields
 
 
@@ -473,9 +523,11 @@ def build_document_style(
     fields: List[str] = []
 
     if background_color is not None:
-        document_style["background"] = _build_optional_color(
-            background_color, "background_color"
-        )
+        # DocumentStyle.background is type Background{color: OptionalColor{color: Color}}
+        # — three levels of nesting, not two (kenorai patch 2026-08-04).
+        document_style["background"] = {
+            "color": _build_optional_color(background_color, "background_color")
+        }
         fields.append("background")
 
     for value, field_name in (
@@ -617,6 +669,7 @@ def build_table_cell_style(
     padding_left: float = None,
     padding_right: float = None,
     content_alignment: str = None,
+    border_edges: Optional[List[str]] = None,
 ) -> tuple[Dict[str, Any], list[str]]:
     """
     Build a table cell style object for Google Docs API requests.
@@ -638,16 +691,42 @@ def build_table_cell_style(
     fields = []
 
     if border_color is not None or border_width is not None:
-        border_style = {}
+        # kenorai patch 2026-08-04: TableCellBorder requires color, width AND dashStyle
+        # all set; dashStyle must not be UNSPECIFIED or the API 400s. Default the missing
+        # members so a color-only or width-only call still forms a valid border.
+        # kenorai enhancement: border_edges limits the border to named edges
+        # (["top","bottom","left","right"]); default = all four (uniform).
+        border_style = {"dashStyle": "SOLID"}
 
-        if border_width is not None:
-            border_style["width"] = {"magnitude": border_width, "unit": "PT"}
+        border_style["width"] = {
+            "magnitude": border_width if border_width is not None else 1,
+            "unit": "PT",
+        }
 
-        if border_color is not None:
-            rgb = _normalize_color(border_color, "border_color")
-            border_style["color"] = {"color": {"rgbColor": rgb}}
+        rgb = _normalize_color(
+            border_color if border_color is not None else "#000000", "border_color"
+        )
+        border_style["color"] = {"color": {"rgbColor": rgb}}
 
-        for border_name in ("borderTop", "borderBottom", "borderLeft", "borderRight"):
+        edge_map = {
+            "top": "borderTop",
+            "bottom": "borderBottom",
+            "left": "borderLeft",
+            "right": "borderRight",
+        }
+        if border_edges:
+            selected = []
+            for edge in border_edges:
+                edge_key = str(edge).strip().lower()
+                if edge_key not in edge_map:
+                    raise ValueError(
+                        f"border_edges entries must be one of {sorted(edge_map)}, got '{edge}'"
+                    )
+                selected.append(edge_map[edge_key])
+        else:
+            selected = list(edge_map.values())
+
+        for border_name in selected:
             table_cell_style[border_name] = border_style.copy()
             fields.append(border_name)
 
@@ -757,7 +836,7 @@ def create_format_text_request(
     italic: bool = None,
     underline: bool = None,
     strikethrough: bool = None,
-    font_size: int = None,
+    font_size: float = None,
     font_family: str = None,
     font_weight: int = None,
     text_color: str = None,
@@ -838,6 +917,11 @@ def create_update_paragraph_style_request(
     page_break_before: Optional[bool] = None,
     spacing_mode: Optional[str] = None,
     shading_color: Optional[str] = None,
+    border_edges: Optional[List[str]] = None,
+    border_color: Optional[str] = None,
+    border_width: Optional[float] = None,
+    border_padding: Optional[float] = None,
+    border_dash: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Create an updateParagraphStyle request for Google Docs API.
@@ -877,6 +961,11 @@ def create_update_paragraph_style_request(
         page_break_before=page_break_before,
         spacing_mode=spacing_mode,
         shading_color=shading_color,
+        border_edges=border_edges,
+        border_color=border_color,
+        border_width=border_width,
+        border_padding=border_padding,
+        border_dash=border_dash,
     )
 
     if not paragraph_style:
@@ -974,6 +1063,7 @@ def create_update_table_cell_style_request(
     row_span: int = None,
     column_span: int = None,
     tab_id: Optional[str] = None,
+    border_edges: Optional[List[str]] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Create an updateTableCellStyle request for Google Docs API.
@@ -1007,6 +1097,7 @@ def create_update_table_cell_style_request(
         padding_left=padding_left,
         padding_right=padding_right,
         content_alignment=content_alignment,
+        border_edges=border_edges,
     )
     if not table_cell_style:
         return None

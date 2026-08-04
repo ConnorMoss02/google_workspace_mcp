@@ -8,7 +8,7 @@ LLMs receive a machine-readable contract instead of a free-form object array.
 from __future__ import annotations
 
 import json
-from typing import Annotated, Any, Literal, Optional, Union
+from typing import Annotated, Any, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, BeforeValidator, model_validator
 
@@ -89,7 +89,7 @@ class FormatTextOperation(SegmentTargetDocOperation):
     italic: Optional[bool] = None
     underline: Optional[bool] = None
     strikethrough: Optional[bool] = None
-    font_size: Optional[int] = None
+    font_size: Optional[float] = None
     font_family: Optional[str] = None
     font_weight: Optional[int] = None
     text_color: Optional[str] = None
@@ -120,6 +120,12 @@ class UpdateParagraphStyleOperation(SegmentTargetDocOperation):
     page_break_before: Optional[bool] = None
     spacing_mode: Optional[str] = None
     shading_color: Optional[str] = None
+    # kenorai enhancement 2026-08-04: paragraph borders
+    border_edges: Optional[List[str]] = None
+    border_color: Optional[str] = None
+    border_width: Optional[float] = None
+    border_padding: Optional[float] = None
+    border_dash: Optional[str] = None
 
 
 class UpdateTableCellStyleOperation(StrictDocOperation):
@@ -137,6 +143,8 @@ class UpdateTableCellStyleOperation(StrictDocOperation):
     column_index: Optional[int] = None
     row_span: Optional[int] = None
     column_span: Optional[int] = None
+    # kenorai enhancement 2026-08-04: per-edge borders ("top","bottom","left","right")
+    border_edges: Optional[List[str]] = None
 
 
 class InsertTableOperation(SegmentTargetDocOperation):
