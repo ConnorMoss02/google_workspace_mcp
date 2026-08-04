@@ -1969,8 +1969,53 @@ async def get_gmail_attachment_content(
         f"[get_gmail_attachment_content] Invoked. Message ID: '{message_id}', Email: '{user_google_email}'"
     )
 
-    # Download attachment content first, then optionally re-fetch message metadata
-    # to resolve filename and MIME type for the saved file.
+    # Resolve attachment size/filename from message metadata before downloading
+    # the binary payload — attachments().get() returns the full body in one shot.
+    filename = None
+    mime_type = None
+    declared_size = None
+    try:
+        message_full = await asyncio.to_thread(
+            service.users()
+            .messages()
+            .get(
+                userId="me",
+                id=message_id,
+                format="full",
+                fields="payload(parts(filename,mimeType,body(attachmentId,size)),body(attachmentId,size),filename,mimeType)",
+            )
+            .execute
+        )
+        payload = message_full.get("payload", {})
+        attachments = _extract_attachments(payload)
+
+        matched = None
+        for att in attachments:
+            if att.get("attachmentId") == attachment_id:
+                matched = att
+                break
+        if matched is None and len(attachments) == 1:
+            matched = attachments[0]
+
+        if matched is not None:
+            filename = matched.get("filename")
+            mime_type = matched.get("mimeType")
+            declared_size = matched.get("size")
+    except Exception:
+        logger.debug(
+            f"Could not fetch attachment metadata for {attachment_id} before download"
+        )
+
+    try:
+        ensure_within_file_size_limit(
+            declared_size,
+            file_name=filename,
+            file_id=attachment_id,
+            kind="attachment",
+        )
+    except FileTooLargeError as e:
+        return str(e)
+
     try:
         attachment = await asyncio.to_thread(
             service.users()
@@ -1990,18 +2035,19 @@ async def get_gmail_attachment_content(
         )
 
     # Format response with attachment data
-    size_bytes = attachment.get("size", 0)
+    size_bytes = attachment.get("size", 0) or declared_size or 0
     size_kb = size_bytes / 1024 if size_bytes else 0
     base64_data = attachment.get("data", "")
 
+    # Safety net if metadata size was missing/stale.
     try:
         ensure_within_file_size_limit(
             size_bytes,
+            file_name=filename,
             file_id=attachment_id,
             kind="attachment",
         )
     except FileTooLargeError as e:
-        # Drop payload reference so GC can reclaim before returning.
         if isinstance(attachment, dict):
             attachment.pop("data", None)
         base64_data = ""
@@ -2034,54 +2080,49 @@ async def get_gmail_attachment_content(
 
         storage = get_attachment_storage()
 
-        # Try to get filename and mime type from message
-        filename = None
-        mime_type = None
-        try:
-            # Use format="full" with fields to limit response to attachment metadata only
-            message_full = await asyncio.to_thread(
-                service.users()
-                .messages()
-                .get(
-                    userId="me",
-                    id=message_id,
-                    format="full",
-                    fields="payload(parts(filename,mimeType,body(attachmentId,size)),body(attachmentId,size),filename,mimeType)",
-                )
-                .execute
-            )
-            payload = message_full.get("payload", {})
-            attachments = _extract_attachments(payload)
-
-            # First try exact attachmentId match
-            for att in attachments:
-                if att.get("attachmentId") == attachment_id:
-                    filename = att.get("filename")
-                    mime_type = att.get("mimeType")
-                    break
-
-            # Fallback: match by size if exactly one attachment matches (IDs are ephemeral)
-            if not filename and attachments:
-                size_matches = [
-                    att
-                    for att in attachments
-                    if att.get("size") and abs(att["size"] - size_bytes) < 100
-                ]
-                if len(size_matches) == 1:
-                    filename = size_matches[0].get("filename")
-                    mime_type = size_matches[0].get("mimeType")
-                    logger.warning(
-                        f"Attachment {attachment_id} matched by size fallback as '{filename}'"
+        # If metadata was incomplete, try size-based fallback among attachments.
+        if not filename:
+            try:
+                message_full = await asyncio.to_thread(
+                    service.users()
+                    .messages()
+                    .get(
+                        userId="me",
+                        id=message_id,
+                        format="full",
+                        fields="payload(parts(filename,mimeType,body(attachmentId,size)),body(attachmentId,size),filename,mimeType)",
                     )
+                    .execute
+                )
+                payload = message_full.get("payload", {})
+                attachments = _extract_attachments(payload)
 
-            # Last resort: if only one attachment, use its name
-            if not filename and len(attachments) == 1:
-                filename = attachments[0].get("filename")
-                mime_type = attachments[0].get("mimeType")
-        except Exception:
-            logger.debug(
-                f"Could not fetch attachment metadata for {attachment_id}, using defaults"
-            )
+                for att in attachments:
+                    if att.get("attachmentId") == attachment_id:
+                        filename = att.get("filename")
+                        mime_type = att.get("mimeType")
+                        break
+
+                if not filename and attachments:
+                    size_matches = [
+                        att
+                        for att in attachments
+                        if att.get("size") and abs(att["size"] - size_bytes) < 100
+                    ]
+                    if len(size_matches) == 1:
+                        filename = size_matches[0].get("filename")
+                        mime_type = size_matches[0].get("mimeType")
+                        logger.warning(
+                            f"Attachment {attachment_id} matched by size fallback as '{filename}'"
+                        )
+
+                if not filename and len(attachments) == 1:
+                    filename = attachments[0].get("filename")
+                    mime_type = attachments[0].get("mimeType")
+            except Exception:
+                logger.debug(
+                    f"Could not fetch attachment metadata for {attachment_id}, using defaults"
+                )
 
         # Save attachment to local disk
         result = storage.save_attachment(

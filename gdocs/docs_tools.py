@@ -20,7 +20,11 @@ from mcp.types import ToolAnnotations
 
 # Auth & server utilities
 from auth.service_decorator import require_google_service, require_multiple_services
-from core.file_limits import FileTooLargeError, download_media_bytes
+from core.file_limits import (
+    FileTooLargeError,
+    download_media_bytes,
+    ensure_within_file_size_limit,
+)
 from core.utils import (
     GOOGLE_API_WRITE_RETRIES,
     extract_office_xml_text,
@@ -181,7 +185,7 @@ async def get_doc_content(
         drive_service.files()
         .get(
             fileId=document_id,
-            fields="id, name, mimeType, webViewLink",
+            fields="id, name, mimeType, webViewLink, size",
             supportsAllDrives=True,
         )
         .execute
@@ -289,6 +293,18 @@ async def get_doc_content(
             # was intended to export them. For .docx, direct download is used.
         }
         effective_export_mime = export_mime_type_map.get(mime_type)
+
+        # Declared Drive size applies to binary downloads (not GSuite exports).
+        if not effective_export_mime:
+            try:
+                ensure_within_file_size_limit(
+                    file_metadata.get("size"),
+                    file_name=file_name,
+                    file_id=document_id,
+                    web_view_link=web_view_link,
+                )
+            except FileTooLargeError as e:
+                return str(e)
 
         request_obj = (
             drive_service.files().export_media(

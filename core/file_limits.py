@@ -174,6 +174,104 @@ async def _download_media_bytes_uncapped(request_obj: Any) -> bytes:
     return fh.getvalue()
 
 
+async def _accumulate_capped_stream(
+    resp: httpx.Response,
+    *,
+    limit: int,
+    file_name: Optional[str],
+    file_id: Optional[str],
+    web_view_link: Optional[str],
+    kind: str,
+) -> bytes:
+    """Read an open streamed response, aborting once past ``limit``."""
+    content_length = resp.headers.get("content-length")
+    if content_length is not None:
+        try:
+            declared = int(content_length)
+        except ValueError:
+            declared = None
+        if declared is not None and declared > limit:
+            # Close without reading the body into process memory.
+            _raise_too_large(
+                size_bytes=declared,
+                max_bytes=limit,
+                file_name=file_name,
+                file_id=file_id,
+                web_view_link=web_view_link,
+                kind=kind,
+            )
+
+    read_size = max(1, min(_STREAM_READ_SIZE_BYTES, limit))
+    buf = bytearray()
+    async for chunk in resp.aiter_bytes(chunk_size=read_size):
+        if not chunk:
+            continue
+        next_size = len(buf) + len(chunk)
+        if next_size > limit:
+            _raise_too_large(
+                size_bytes=next_size,
+                max_bytes=limit,
+                file_name=file_name,
+                file_id=file_id,
+                web_view_link=web_view_link,
+                kind=kind,
+            )
+        buf.extend(chunk)
+    return bytes(buf)
+
+
+def _http_status_error(resp: httpx.Response) -> httpx.HTTPStatusError:
+    """Build an HTTPStatusError for a completed (possibly streamed) response."""
+    return httpx.HTTPStatusError(
+        f"Client error '{resp.status_code} {resp.reason_phrase}' for url '{resp.request.url}'",
+        request=resp.request,
+        response=resp,
+    )
+
+
+async def download_http_url_bytes(
+    url: str,
+    *,
+    headers: Optional[dict[str, str]] = None,
+    method: str = "GET",
+    file_name: Optional[str] = None,
+    file_id: Optional[str] = None,
+    web_view_link: Optional[str] = None,
+    kind: str = "file",
+    max_bytes: Optional[int] = None,
+) -> bytes:
+    """Download ``url`` into memory, honoring ``WORKSPACE_MCP_MAX_FILE_BYTES``.
+
+    When a cap is set, streams and aborts on Content-Length or mid-body.
+    Raises ``FileTooLargeError`` when over the limit, or
+    ``httpx.HTTPStatusError`` for non-2xx responses.
+    """
+    limit = get_max_file_bytes() if max_bytes is None else max_bytes
+    req_headers = dict(headers or {})
+    timeout = httpx.Timeout(120.0, connect=30.0)
+    method = method.upper()
+
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        if limit is None:
+            resp = await client.request(method, url, headers=req_headers)
+            if resp.status_code >= 400:
+                raise _http_status_error(resp)
+            return resp.content
+
+        async with client.stream(method, url, headers=req_headers) as resp:
+            if resp.status_code >= 400:
+                await resp.aread()
+                raise _http_status_error(resp)
+            return await _accumulate_capped_stream(
+                resp,
+                limit=limit,
+                file_name=file_name,
+                file_id=file_id,
+                web_view_link=web_view_link,
+                kind=kind,
+            )
+
+
 async def _download_media_bytes_capped(
     request_obj: Any,
     *,
@@ -195,58 +293,28 @@ async def _download_media_bytes_capped(
 
     method = (getattr(request_obj, "method", None) or "GET").upper()
     headers = await asyncio.to_thread(_authorize_headers, request_obj)
-    read_size = max(1, min(_STREAM_READ_SIZE_BYTES, limit))
-    timeout = httpx.Timeout(120.0, connect=30.0)
-    buf = bytearray()
-
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-        async with client.stream(method, uri, headers=headers) as resp:
-            if resp.status_code >= 400:
-                body = await resp.aread()
-                # googleapiclient.HttpError expects an httplib2-style resp.status.
-                httplib2_resp = type(
-                    "Response",
-                    (),
-                    {
-                        "status": resp.status_code,
-                        "reason": resp.reason_phrase,
-                    },
-                )()
-                raise HttpError(httplib2_resp, body, uri=uri)
-
-            content_length = resp.headers.get("content-length")
-            if content_length is not None:
-                try:
-                    declared = int(content_length)
-                except ValueError:
-                    declared = None
-                if declared is not None and declared > limit:
-                    # Close without reading the body into process memory.
-                    _raise_too_large(
-                        size_bytes=declared,
-                        max_bytes=limit,
-                        file_name=file_name,
-                        file_id=file_id,
-                        web_view_link=web_view_link,
-                        kind=kind,
-                    )
-
-            async for chunk in resp.aiter_bytes(chunk_size=read_size):
-                if not chunk:
-                    continue
-                next_size = len(buf) + len(chunk)
-                if next_size > limit:
-                    _raise_too_large(
-                        size_bytes=next_size,
-                        max_bytes=limit,
-                        file_name=file_name,
-                        file_id=file_id,
-                        web_view_link=web_view_link,
-                        kind=kind,
-                    )
-                buf.extend(chunk)
-
-    return bytes(buf)
+    try:
+        return await download_http_url_bytes(
+            uri,
+            headers=headers,
+            method=method,
+            file_name=file_name,
+            file_id=file_id,
+            web_view_link=web_view_link,
+            kind=kind,
+            max_bytes=limit,
+        )
+    except httpx.HTTPStatusError as exc:
+        body = exc.response.content or b""
+        httplib2_resp = type(
+            "Response",
+            (),
+            {
+                "status": exc.response.status_code,
+                "reason": exc.response.reason_phrase,
+            },
+        )()
+        raise HttpError(httplib2_resp, body, uri=uri) from exc
 
 
 async def download_media_bytes(

@@ -665,9 +665,9 @@ async def download_chat_attachment(
     )
 
     # Download the attachment binary data via the Chat API media endpoint.
-    # We use httpx with the Bearer token directly because MediaIoBaseDownload
-    # and AuthorizedHttp fail in OAuth 2.1 (no refresh_token). The attachment's
-    # downloadUri points to chat.google.com which requires browser cookies.
+    # Prefer httpx + Bearer token: MediaIoBaseDownload / AuthorizedHttp fail in
+    # OAuth 2.1 (no refresh_token). The attachment's downloadUri points to
+    # chat.google.com which requires browser cookies.
     if not media_resource and not att_name:
         return f"No resource name available for attachment '{filename}'."
 
@@ -675,36 +675,29 @@ async def download_chat_attachment(
     resource_name = media_resource or att_name
     download_url = f"https://chat.googleapis.com/v1/media/{resource_name}?alt=media"
 
+    from core.file_limits import FileTooLargeError, download_http_url_bytes
+
     try:
         access_token = service._http.credentials.token
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            resp = await client.get(
-                download_url,
-                headers={"Authorization": f"Bearer {access_token}"},
-            )
-            if resp.status_code != 200:
-                body = resp.text[:500]
-                return (
-                    f"Failed to download attachment '{filename}': "
-                    f"HTTP {resp.status_code} from {download_url}\n{body}"
-                )
-            file_bytes = resp.content
-    except Exception as e:
-        return f"Failed to download attachment '{filename}': {e}"
-
-    size_bytes = len(file_bytes)
-    size_kb = size_bytes / 1024
-
-    from core.file_limits import FileTooLargeError, ensure_within_file_size_limit
-
-    try:
-        ensure_within_file_size_limit(
-            size_bytes,
+        file_bytes = await download_http_url_bytes(
+            download_url,
+            headers={"Authorization": f"Bearer {access_token}"},
             file_name=filename,
             kind="attachment",
         )
     except FileTooLargeError as e:
         return str(e)
+    except httpx.HTTPStatusError as e:
+        body = (e.response.text or "")[:500]
+        return (
+            f"Failed to download attachment '{filename}': "
+            f"HTTP {e.response.status_code} from {download_url}\n{body}"
+        )
+    except Exception as e:
+        return f"Failed to download attachment '{filename}': {e}"
+
+    size_bytes = len(file_bytes)
+    size_kb = size_bytes / 1024
 
     # Check if we're in stateless mode (can't save files)
     from auth.oauth_config import is_stateless_mode

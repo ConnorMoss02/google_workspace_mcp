@@ -135,6 +135,41 @@ async def test_default_call_omits_base64_content(isolated_attachment_env):
 
 
 @pytest.mark.asyncio
+async def test_rejects_oversized_before_download(monkeypatch, isolated_attachment_env):
+    """Declared attachment size should block attachments().get() entirely."""
+    monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", "100")
+    mock_service = _build_mock_service(
+        b"x" * 50, filename="huge.bin", mime_type="application/octet-stream"
+    )
+    # Metadata declares an oversized attachment.
+    mock_service.users().messages().get().execute.return_value = {
+        "payload": {
+            "parts": [
+                {
+                    "filename": "huge.bin",
+                    "mimeType": "application/octet-stream",
+                    "body": {"attachmentId": "att-123", "size": 500},
+                }
+            ],
+        },
+    }
+    download_execute = mock_service.users().messages().attachments().get().execute
+    download_execute.reset_mock()
+
+    result = await _unwrap(get_gmail_attachment_content)(
+        service=mock_service,
+        message_id="msg-1",
+        attachment_id="att-123",
+        user_google_email="user@example.com",
+    )
+
+    assert result.startswith("Error:")
+    assert "huge.bin" in result
+    assert "WORKSPACE_MCP_MAX_FILE_BYTES" in result
+    download_execute.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_download_response_reports_sanitized_saved_filename(
     isolated_attachment_env,
 ):
