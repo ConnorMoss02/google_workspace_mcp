@@ -21,9 +21,23 @@ logger = logging.getLogger(__name__)
 
 _ENV_NAME = "WORKSPACE_MCP_MAX_FILE_BYTES"
 
+# googleapiclient's MediaIoBaseDownload defaults to 100 MiB per chunk. With
+# that default, the first next_chunk() can fully buffer a ~97 MiB file before
+# any size check runs — defeating WORKSPACE_MCP_MAX_FILE_BYTES. Keep download
+# chunks small relative to the configured limit so we abort near the ceiling.
+_DOWNLOAD_CHUNK_SIZE_BYTES = 256 * 1024  # 256 KiB
+
 
 class FileTooLargeError(ValueError):
     """Raised when a download would exceed ``WORKSPACE_MCP_MAX_FILE_BYTES``."""
+
+
+def _chunksize_for_limit(limit: Optional[int]) -> int:
+    """Return a MediaIoBaseDownload chunk size that respects ``limit`` when set."""
+    if limit is None:
+        return _DOWNLOAD_CHUNK_SIZE_BYTES
+    return max(1, min(_DOWNLOAD_CHUNK_SIZE_BYTES, limit))
+
 
 
 def get_max_file_bytes() -> Optional[int]:
@@ -128,12 +142,15 @@ async def download_media_bytes(
 ) -> bytes:
     """Download a Drive ``get_media`` / ``export_media`` request into memory.
 
-    When ``WORKSPACE_MCP_MAX_FILE_BYTES`` is set, aborts as soon as buffered
-    bytes exceed the limit so a multi‑MB/GB download cannot fill the cgroup.
+    When ``WORKSPACE_MCP_MAX_FILE_BYTES`` is set, uses a chunk size no larger
+    than the limit and aborts as soon as buffered bytes exceed it — so a
+    multi‑MB/GB object cannot fill the cgroup on the first media chunk.
     """
     limit = get_max_file_bytes() if max_bytes is None else max_bytes
     fh = io.BytesIO()
-    downloader = MediaIoBaseDownload(fh, request_obj)
+    downloader = MediaIoBaseDownload(
+        fh, request_obj, chunksize=_chunksize_for_limit(limit)
+    )
     done = False
     while not done:
         _status, done = await asyncio.to_thread(downloader.next_chunk)

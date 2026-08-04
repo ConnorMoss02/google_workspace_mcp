@@ -17,9 +17,10 @@ def _unwrap(tool):
 
 
 class _FakeDownloader:
-    def __init__(self, fh, data):
+    def __init__(self, fh, data, chunksize=None):
         fh.write(data)
         fh.seek(0)
+        self.chunksize = chunksize
 
     def next_chunk(self):
         return None, True
@@ -63,7 +64,7 @@ async def test_get_drive_file_download_url_rejects_mid_download(monkeypatch):
         patch("gdrive.drive_tools.resolve_drive_item") as resolve,
         patch(
             "core.file_limits.MediaIoBaseDownload",
-            side_effect=lambda fh, req: _FakeDownloader(fh, data),
+            side_effect=lambda fh, req, chunksize=None: _FakeDownloader(fh, data, chunksize=chunksize),
         ),
     ):
         resolve.return_value = (
@@ -97,7 +98,7 @@ async def test_get_drive_file_content_allows_under_limit(monkeypatch):
         patch("gdrive.drive_tools.resolve_drive_item") as resolve,
         patch(
             "core.file_limits.MediaIoBaseDownload",
-            side_effect=lambda fh, req: _FakeDownloader(fh, data),
+            side_effect=lambda fh, req, chunksize=None: _FakeDownloader(fh, data, chunksize=chunksize),
         ),
     ):
         resolve.return_value = (
