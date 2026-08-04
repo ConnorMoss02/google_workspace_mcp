@@ -124,7 +124,9 @@ def _mock_stream_response(
 async def test_download_media_bytes_rejects_via_content_length(monkeypatch):
     """Drive export often sends Content-Length and ignores Range — reject before body."""
     monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", "1000")
-    request = Mock(uri="https://www.googleapis.com/drive/v3/files/x/export", method="GET")
+    request = Mock(
+        uri="https://www.googleapis.com/drive/v3/files/x/export", method="GET"
+    )
     request.headers = {}
     request.http = Mock(credentials=None)
 
@@ -135,9 +137,7 @@ async def test_download_media_bytes_rejects_via_content_length(monkeypatch):
 
     with patch("core.file_limits.httpx.AsyncClient", return_value=client_cm):
         with pytest.raises(FileTooLargeError) as exc:
-            await download_media_bytes(
-                request, file_name="CV_Oleg_Kulyk", file_id="f1"
-            )
+            await download_media_bytes(request, file_name="CV_Oleg_Kulyk", file_id="f1")
 
     assert "276,690" in str(exc.value) or "276690" in str(exc.value)
     assert "CV_Oleg_Kulyk" in str(exc.value)
@@ -149,7 +149,9 @@ async def test_download_media_bytes_rejects_via_content_length(monkeypatch):
 @pytest.mark.asyncio
 async def test_download_media_bytes_aborts_mid_stream(monkeypatch):
     monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", "15")
-    request = Mock(uri="https://www.googleapis.com/drive/v3/files/x?alt=media", method="GET")
+    request = Mock(
+        uri="https://www.googleapis.com/drive/v3/files/x?alt=media", method="GET"
+    )
     request.headers = {}
     request.http = Mock(credentials=None)
 
@@ -166,7 +168,9 @@ async def test_download_media_bytes_aborts_mid_stream(monkeypatch):
 @pytest.mark.asyncio
 async def test_download_media_bytes_capped_success(monkeypatch):
     monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", "100")
-    request = Mock(uri="https://www.googleapis.com/drive/v3/files/x?alt=media", method="GET")
+    request = Mock(
+        uri="https://www.googleapis.com/drive/v3/files/x?alt=media", method="GET"
+    )
     request.headers = {}
     request.http = Mock(credentials=None)
 

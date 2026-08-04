@@ -58,9 +58,7 @@ def _patch_downloader(content_bytes):
     """Patch MediaIoBaseDownload to write content_bytes into the BytesIO handle."""
     return patch(
         "core.file_limits.MediaIoBaseDownload",
-        side_effect=lambda fh, req, chunksize=None: _FakeDownloader(
-            fh, content_bytes
-        ),
+        side_effect=lambda fh, req, chunksize=None: _FakeDownloader(fh, content_bytes),
     )
 
 
