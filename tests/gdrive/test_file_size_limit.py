@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from core.file_limits import FileTooLargeError
 from gdrive.drive_tools import get_drive_file_content, get_drive_file_download_url
 
 
@@ -14,16 +15,6 @@ def _unwrap(tool):
     while hasattr(fn, "__wrapped__"):
         fn = fn.__wrapped__
     return fn
-
-
-class _FakeDownloader:
-    def __init__(self, fh, data, chunksize=None):
-        fh.write(data)
-        fh.seek(0)
-        self.chunksize = chunksize
-
-    def next_chunk(self):
-        return None, True
 
 
 @pytest.mark.asyncio
@@ -57,14 +48,19 @@ async def test_get_drive_file_content_rejects_declared_oversized(monkeypatch):
 async def test_get_drive_file_download_url_rejects_mid_download(monkeypatch):
     monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", "20")
     mock_service = Mock()
-    mock_service.files().get_media.return_value = "req"
-    data = b"x" * 50
+    mock_service.files().get_media.return_value = Mock(uri="https://example/media")
+
+    async def _raise(*_args, **kwargs):
+        raise FileTooLargeError(
+            'Error: "blob.bin" (ID: file123) is too large to load into this MCP server '
+            "(50 bytes; limit is 20 bytes via WORKSPACE_MCP_MAX_FILE_BYTES)."
+        )
 
     with (
         patch("gdrive.drive_tools.resolve_drive_item") as resolve,
         patch(
-            "core.file_limits.MediaIoBaseDownload",
-            side_effect=lambda fh, req, chunksize=None: _FakeDownloader(fh, data, chunksize=chunksize),
+            "gdrive.drive_tools.download_media_bytes",
+            new=AsyncMock(side_effect=_raise),
         ),
     ):
         resolve.return_value = (
@@ -73,7 +69,7 @@ async def test_get_drive_file_download_url_rejects_mid_download(monkeypatch):
                 "name": "blob.bin",
                 "mimeType": "application/octet-stream",
                 "webViewLink": "https://drive.google.com/file/d/file123",
-                # Declared size under limit so we exercise streaming check.
+                # Declared size under limit so we exercise download-time check.
                 "size": "10",
             },
         )
@@ -91,14 +87,14 @@ async def test_get_drive_file_download_url_rejects_mid_download(monkeypatch):
 async def test_get_drive_file_content_allows_under_limit(monkeypatch):
     monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", "1000")
     mock_service = Mock()
-    mock_service.files().get_media.return_value = "req"
+    mock_service.files().get_media.return_value = Mock(uri="https://example/media")
     data = b"hello under limit"
 
     with (
         patch("gdrive.drive_tools.resolve_drive_item") as resolve,
         patch(
-            "core.file_limits.MediaIoBaseDownload",
-            side_effect=lambda fh, req, chunksize=None: _FakeDownloader(fh, data, chunksize=chunksize),
+            "gdrive.drive_tools.download_media_bytes",
+            new=AsyncMock(return_value=data),
         ),
     ):
         resolve.return_value = (

@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import io
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
+import httpx
 import pytest
 
 from core.file_limits import (
     FileTooLargeError,
-    _DOWNLOAD_CHUNK_SIZE_BYTES,
-    _chunksize_for_limit,
     download_media_bytes,
     ensure_within_file_size_limit,
     get_max_file_bytes,
@@ -28,24 +26,6 @@ class _FakeDownloader:
 
     def next_chunk(self):
         return None, True
-
-
-class _ChunkedDownloader:
-    """Writes one chunk per next_chunk call so mid-download limits can fire."""
-
-    def __init__(self, fh, _request, chunks: list[bytes], chunksize=None):
-        self._fh = fh
-        self._chunks = list(chunks)
-        self._idx = 0
-        self.chunksize = chunksize
-
-    def next_chunk(self):
-        if self._idx >= len(self._chunks):
-            return None, True
-        self._fh.write(self._chunks[self._idx])
-        self._idx += 1
-        done = self._idx >= len(self._chunks)
-        return None, done
 
 
 def test_get_max_file_bytes_default_uncapped(monkeypatch):
@@ -105,57 +85,97 @@ async def test_download_media_bytes_uncapped(monkeypatch):
     assert result == data
 
 
-@pytest.mark.asyncio
-async def test_download_media_bytes_rejects_over_limit(monkeypatch):
-    monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", "10")
-    data = b"x" * 50
+def _mock_stream_response(
+    *,
+    body: bytes = b"",
+    status_code: int = 200,
+    headers: dict | None = None,
+):
+    """Build an async context-manager stream response for httpx.AsyncClient."""
+    resp = MagicMock()
+    resp.status_code = status_code
+    resp.reason_phrase = "OK" if status_code < 400 else "Error"
+    resp.headers = httpx.Headers(headers or {})
 
-    with patch(
-        "core.file_limits.MediaIoBaseDownload",
-        side_effect=lambda fh, req, chunksize=None: _FakeDownloader(
-            fh, req, data, chunksize=chunksize
-        ),
-    ):
+    async def _aiter_bytes(chunk_size=65536):
+        for i in range(0, len(body), chunk_size):
+            yield body[i : i + chunk_size]
+
+    async def _aread():
+        return body
+
+    resp.aiter_bytes = _aiter_bytes
+    resp.aread = _aread
+
+    stream_cm = AsyncMock()
+    stream_cm.__aenter__.return_value = resp
+    stream_cm.__aexit__.return_value = None
+
+    client = MagicMock()
+    client.stream.return_value = stream_cm
+
+    client_cm = AsyncMock()
+    client_cm.__aenter__.return_value = client
+    client_cm.__aexit__.return_value = None
+    return client_cm, resp
+
+
+@pytest.mark.asyncio
+async def test_download_media_bytes_rejects_via_content_length(monkeypatch):
+    """Drive export often sends Content-Length and ignores Range — reject before body."""
+    monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", "1000")
+    request = Mock(uri="https://www.googleapis.com/drive/v3/files/x/export", method="GET")
+    request.headers = {}
+    request.http = Mock(credentials=None)
+
+    client_cm, _resp = _mock_stream_response(
+        body=b"x" * 5000,  # would be large if read
+        headers={"content-length": "276690"},
+    )
+
+    with patch("core.file_limits.httpx.AsyncClient", return_value=client_cm):
         with pytest.raises(FileTooLargeError) as exc:
-            await download_media_bytes(Mock(), file_name="big.bin", file_id="f1")
-    assert "big.bin" in str(exc.value)
-    assert "50" in str(exc.value)
+            await download_media_bytes(
+                request, file_name="CV_Oleg_Kulyk", file_id="f1"
+            )
+
+    assert "276,690" in str(exc.value) or "276690" in str(exc.value)
+    assert "CV_Oleg_Kulyk" in str(exc.value)
+    # Body must not have been consumed when Content-Length rejects.
+    # aiter_bytes is never awaited if we raise first — verify stream entered.
+    client_cm.__aenter__.assert_awaited()
 
 
 @pytest.mark.asyncio
 async def test_download_media_bytes_aborts_mid_stream(monkeypatch):
     monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", "15")
-    chunks = [b"a" * 10, b"b" * 10, b"c" * 10]
+    request = Mock(uri="https://www.googleapis.com/drive/v3/files/x?alt=media", method="GET")
+    request.headers = {}
+    request.http = Mock(credentials=None)
 
-    with patch(
-        "core.file_limits.MediaIoBaseDownload",
-        side_effect=lambda fh, req, chunksize=None: _ChunkedDownloader(
-            fh, req, chunks, chunksize=chunksize
-        ),
-    ):
+    # No Content-Length: must abort while streaming.
+    client_cm, _resp = _mock_stream_response(body=b"a" * 40)
+
+    with patch("core.file_limits.httpx.AsyncClient", return_value=client_cm):
         with pytest.raises(FileTooLargeError) as exc:
-            await download_media_bytes(Mock(), file_name="stream.bin")
-    # After second chunk we are at 20 bytes > 15
-    assert "20" in str(exc.value) or "stream.bin" in str(exc.value)
+            await download_media_bytes(request, file_name="stream.bin")
 
-
-def test_chunksize_for_limit_caps_default_100mib_chunk():
-    assert _chunksize_for_limit(None) == _DOWNLOAD_CHUNK_SIZE_BYTES
-    assert _chunksize_for_limit(5 * 1024 * 1024) == _DOWNLOAD_CHUNK_SIZE_BYTES
-    assert _chunksize_for_limit(1000) == 1000
-    assert _chunksize_for_limit(1) == 1
+    assert "stream.bin" in str(exc.value)
 
 
 @pytest.mark.asyncio
-async def test_download_media_bytes_passes_bounded_chunksize(monkeypatch):
-    monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", "1000")
-    seen = {}
+async def test_download_media_bytes_capped_success(monkeypatch):
+    monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", "100")
+    request = Mock(uri="https://www.googleapis.com/drive/v3/files/x?alt=media", method="GET")
+    request.headers = {}
+    request.http = Mock(credentials=None)
 
-    def _factory(fh, req, chunksize=None):
-        seen["chunksize"] = chunksize
-        return _FakeDownloader(fh, req, b"ok", chunksize=chunksize)
+    data = b"ok-payload"
+    client_cm, _resp = _mock_stream_response(
+        body=data, headers={"content-length": str(len(data))}
+    )
 
-    with patch("core.file_limits.MediaIoBaseDownload", side_effect=_factory):
-        await download_media_bytes(Mock())
+    with patch("core.file_limits.httpx.AsyncClient", return_value=client_cm):
+        result = await download_media_bytes(request)
 
-    assert seen["chunksize"] == 1000
+    assert result == data
