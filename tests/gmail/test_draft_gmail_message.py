@@ -950,3 +950,192 @@ async def test_send_gmail_message_with_url_attachment(monkeypatch):
     raw_bytes = base64.urlsafe_b64decode(create_kwargs["body"]["raw"])
     assert b"Content-Disposition: attachment;" in raw_bytes
     assert b"doc.pdf" in raw_bytes
+
+
+@pytest.mark.asyncio
+async def test_send_gmail_message_autofills_reply_headers_from_thread():
+    mock_service = Mock()
+    mock_service.users().messages().send().execute.return_value = {"id": "sent_reply"}
+    mock_service.users().threads().get().execute.return_value = _thread_response(
+        "<msg1@example.com>",
+        "<msg2@example.com>",
+    )
+
+    await _unwrap(send_gmail_message)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        to="recipient@example.com",
+        subject="Re: Meeting tomorrow",
+        body="Thanks for the update.",
+        thread_id="thread123",
+        include_signature=False,
+    )
+
+    send_kwargs = (
+        mock_service.users.return_value.messages.return_value.send.call_args.kwargs
+    )
+    parsed = _parse_raw_message(send_kwargs["body"]["raw"])
+    assert parsed["In-Reply-To"] == "<msg2@example.com>"
+    assert parsed["References"] == "<msg1@example.com> <msg2@example.com>"
+
+
+@pytest.mark.asyncio
+async def test_send_gmail_message_preserves_caller_reply_headers():
+    mock_service = Mock()
+    mock_service.users().messages().send().execute.return_value = {"id": "sent_reply"}
+    mock_service.users().threads().get().execute.return_value = _thread_response(
+        "<msg1@example.com>",
+        "<msg2@example.com>",
+    )
+
+    await _unwrap(send_gmail_message)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        to="recipient@example.com",
+        subject="Re: Meeting tomorrow",
+        body="Thanks.",
+        thread_id="thread123",
+        in_reply_to="<msg1@example.com>",
+        references="<msg1@example.com>",
+        include_signature=False,
+    )
+
+    send_kwargs = (
+        mock_service.users.return_value.messages.return_value.send.call_args.kwargs
+    )
+    parsed = _parse_raw_message(send_kwargs["body"]["raw"])
+    assert parsed["In-Reply-To"] == "<msg1@example.com>"
+    assert parsed["References"] == "<msg1@example.com>"
+
+
+@pytest.mark.asyncio
+async def test_send_gmail_message_quotes_original_when_requested():
+    mock_service = Mock()
+    mock_service.users().messages().send().execute.return_value = {"id": "sent_reply"}
+    mock_service.users().threads().get().execute.return_value = {
+        "messages": [
+            _thread_message(
+                "<msg1@example.com>",
+                from_value="Alice Example <alice@example.com>",
+                text="Original plain text",
+            )
+        ]
+    }
+
+    await _unwrap(send_gmail_message)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        to="recipient@example.com",
+        subject="Re: Meeting tomorrow",
+        body="Thanks for the update.",
+        thread_id="thread123",
+        quote_original=True,
+        include_signature=False,
+    )
+
+    send_kwargs = (
+        mock_service.users.return_value.messages.return_value.send.call_args.kwargs
+    )
+    parsed = _parse_raw_message(send_kwargs["body"]["raw"])
+    payload = parsed.get_content()
+    assert "Alice Example <alice@example.com> wrote:" in payload
+    assert "> Original plain text" in payload
+
+
+@pytest.mark.asyncio
+async def test_send_gmail_message_reply_all_derives_recipients():
+    mock_service = Mock()
+    mock_service.users().messages().send().execute.return_value = {"id": "sent_reply"}
+    mock_service.users().threads().get().execute.return_value = {
+        "messages": [
+            _thread_message(
+                "<msg1@example.com>",
+                from_value="Alice Example <alice@example.com>",
+                to_value="user@example.com, bob@example.com",
+                cc_value="carol@example.com",
+            )
+        ]
+    }
+
+    await _unwrap(send_gmail_message)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        subject="Re: Meeting tomorrow",
+        body="Thanks all.",
+        thread_id="thread123",
+        reply_all=True,
+        include_signature=False,
+    )
+
+    send_kwargs = (
+        mock_service.users.return_value.messages.return_value.send.call_args.kwargs
+    )
+    parsed = _parse_raw_message(send_kwargs["body"]["raw"])
+    assert parsed["To"] == "alice@example.com"
+    # The authenticated account is dropped; everyone else on the message is kept.
+    assert parsed["Cc"] == "bob@example.com, carol@example.com"
+
+
+@pytest.mark.asyncio
+async def test_send_gmail_message_reply_all_prefers_reply_to_and_explicit_cc():
+    mock_service = Mock()
+    mock_service.users().messages().send().execute.return_value = {"id": "sent_reply"}
+    mock_service.users().threads().get().execute.return_value = {
+        "messages": [
+            _thread_message(
+                "<msg1@example.com>",
+                from_value="noreply@example.com",
+                reply_to="alice@example.com",
+                to_value="user@example.com, bob@example.com",
+            )
+        ]
+    }
+
+    await _unwrap(send_gmail_message)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        subject="Re: Meeting tomorrow",
+        body="Thanks.",
+        thread_id="thread123",
+        reply_all=True,
+        cc="explicit@example.com",
+        include_signature=False,
+    )
+
+    send_kwargs = (
+        mock_service.users.return_value.messages.return_value.send.call_args.kwargs
+    )
+    parsed = _parse_raw_message(send_kwargs["body"]["raw"])
+    assert parsed["To"] == "alice@example.com"
+    assert parsed["Cc"] == "explicit@example.com"
+
+
+@pytest.mark.asyncio
+async def test_send_gmail_message_requires_to_without_reply_all():
+    mock_service = Mock()
+
+    with pytest.raises((UserInputError, ToolError)):
+        await _unwrap(send_gmail_message)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            subject="Hello",
+            body="Hi there!",
+        )
+
+
+@pytest.mark.asyncio
+async def test_send_gmail_message_does_not_fetch_thread_for_a_new_message():
+    mock_service = Mock()
+    mock_service.users().messages().send().execute.return_value = {"id": "sent123"}
+    mock_service.users.return_value.threads.return_value.get.reset_mock()
+
+    await _unwrap(send_gmail_message)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        to="recipient@example.com",
+        subject="Hello",
+        body="Hi there!",
+        include_signature=False,
+    )
+
+    assert mock_service.users.return_value.threads.return_value.get.call_count == 0

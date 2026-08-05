@@ -19,7 +19,7 @@ from urllib.parse import unquote, urlparse, urlunsplit
 
 from email.message import EmailMessage
 from email.policy import SMTP
-from email.utils import formataddr
+from email.utils import formataddr, getaddresses
 
 import httpx
 from mcp.types import ToolAnnotations
@@ -897,6 +897,43 @@ def _derive_reply_headers(
             derived_references = " ".join(thread_message_ids)
 
     return derived_in_reply_to, derived_references
+
+
+def _derive_reply_all_recipients(
+    target: Dict[str, Any],
+    exclude: set,
+    to: Optional[str],
+    cc: Optional[str],
+) -> tuple[Optional[str], Optional[str]]:
+    """Fill missing reply-all recipients from the message being answered.
+
+    To = whoever sent it (Reply-To when set, else From). Cc = everyone else it
+    reached, minus `exclude` and minus anyone already in To. Caller-supplied
+    values win, mirroring _derive_reply_headers.
+
+    Only the authenticated address can be excluded reliably: a caller sending
+    under several aliases still has to post-filter, which is why this is opt-in
+    rather than applied to every threaded send.
+    """
+    excluded = {addr.lower() for addr in exclude if addr}
+
+    derived_to = to
+    if not derived_to:
+        sender = target.get("reply_to") or target.get("from") or ""
+        derived_to = ", ".join(addr for _name, addr in getaddresses([sender]) if addr)
+
+    derived_cc = cc
+    if not derived_cc:
+        seen = {addr.lower() for _n, addr in getaddresses([derived_to or ""]) if addr}
+        seen |= excluded
+        others = []
+        for _name, addr in getaddresses([target.get("to", ""), target.get("cc", "")]):
+            if addr and addr.lower() not in seen:
+                seen.add(addr.lower())
+                others.append(addr)
+        derived_cc = ", ".join(others) or None
+
+    return derived_to or None, derived_cc
 
 
 async def _fetch_thread_reply_context(
@@ -2140,7 +2177,12 @@ async def get_gmail_attachment_content(
 async def send_gmail_message(
     service,
     user_google_email: str,
-    to: Annotated[str, Field(description="Recipient email address.")],
+    to: Annotated[
+        Optional[str],
+        Field(
+            description="Recipient email address. Optional when replying with reply_all=True, which derives it from the thread.",
+        ),
+    ] = None,
     subject: Annotated[
         Optional[str],
         Field(
@@ -2219,6 +2261,18 @@ async def send_gmail_message(
             description="Whether to append the Gmail signature from Settings > Signature when available. Defaults to true.",
         ),
     ] = True,
+    quote_original: Annotated[
+        bool,
+        Field(
+            description="Whether to include the message being replied to as a quoted original. Requires thread_id. Defaults to false.",
+        ),
+    ] = False,
+    reply_all: Annotated[
+        bool,
+        Field(
+            description="Whether to derive reply-all recipients from the thread: To = the sender being replied to, Cc = the other participants, excluding the authenticated account. Requires thread_id. Explicit to/cc win. Defaults to false.",
+        ),
+    ] = False,
 ) -> str:
     """
     Sends an email using the user's Gmail account. Supports new emails, replies, and
@@ -2261,6 +2315,11 @@ async def send_gmail_message(
             (e.g., missing gmail.settings.basic scope), the send proceeds without a signature.
             Non-benign failures such as quota/rate-limit or API errors raise ToolError and abort
             the send.
+        quote_original (bool): Whether to append the message being replied to as a quoted
+            original. Requires thread_id.
+        reply_all (bool): Whether to derive reply-all recipients from the thread: To = the
+            sender being replied to, Cc = the other participants, excluding the authenticated
+            account. Requires thread_id. Explicit to/cc win over the derived values.
 
     Returns:
         str: Confirmation message with the sent email's message ID.
@@ -2329,6 +2388,16 @@ async def send_gmail_message(
             references="<original@gmail.com> <message123@gmail.com>"
         )
 
+        # Send a reply-all with the original quoted, deriving headers and
+        # recipients from the thread
+        send_gmail_message(
+            subject="Re: Meeting tomorrow",
+            body="Thanks for the update!",
+            thread_id="thread_123",
+            reply_all=True,
+            quote_original=True
+        )
+
         # Forward a message with a note
         send_gmail_message(
             to="user@example.com",
@@ -2370,6 +2439,12 @@ async def send_gmail_message(
             "(they are optional only when forwarding via 'forward_message_id')."
         )
 
+    if not to and not (thread_id and reply_all):
+        raise UserInputError(
+            "'to' is required unless replying with reply_all=True and a thread_id, "
+            "which derives the recipients from the thread."
+        )
+
     logger.info(
         f"[send_gmail_message] Invoked. Email: '{user_google_email}', Subject: '{subject}', Attachments: {len(attachments) if attachments else 0}"
     )
@@ -2378,16 +2453,57 @@ async def send_gmail_message(
     # Use from_email (Send As alias) if provided, otherwise default to authenticated user
     sender_email = from_email or user_google_email
 
+    # A reply's headers, recipients and quoted original are all derivable from the
+    # thread, so a caller should not have to assemble them by hand. Mirrors
+    # draft_gmail_message; one thread fetch serves all three.
+    reply_context = None
+    if thread_id and (quote_original or reply_all or not in_reply_to or not references):
+        reply_context = await _fetch_thread_reply_context(
+            service,
+            thread_id,
+            in_reply_to=in_reply_to,
+            include_bodies=quote_original,
+        )
+
+    if thread_id and (not in_reply_to or not references):
+        in_reply_to, references = _derive_reply_headers(
+            reply_context.get("message_ids", []) if reply_context else [],
+            in_reply_to,
+            references,
+        )
+
+    target_reply = reply_context.get("target") if reply_context else None
+    if reply_all and target_reply:
+        to, cc = _derive_reply_all_recipients(
+            target_reply, {user_google_email, sender_email}, to, cc
+        )
+    if not to:
+        raise UserInputError(
+            f"Could not derive a recipient from thread '{thread_id}'. Pass 'to' explicitly."
+        )
+
     # Optionally append the Gmail signature from send-as settings, mirroring
     # draft_gmail_message so sent mail respects the user's Settings > Signature.
-    send_body_content = body
+    signature_html = ""
     if include_signature:
         signature_html = await _get_send_as_signature_html_for_tool(
             service, from_email=sender_email
         )
-        send_body_content = _append_signature_to_body(
-            send_body_content, body_format, signature_html
+
+    if quote_original and target_reply:
+        send_body_content = _build_quoted_reply_body(
+            body,
+            body_format,
+            signature_html,
+            {
+                "sender": target_reply.get("from") or "unknown",
+                "date": target_reply.get("date", ""),
+                "text_body": target_reply.get("text_body", ""),
+                "html_body": target_reply.get("html_body", ""),
+            },
         )
+    else:
+        send_body_content = _append_signature_to_body(body, body_format, signature_html)
 
     resolved_attachments = await _resolve_url_attachments(attachments)
     raw_message, thread_id_final, attached_count, attachment_errors = (
