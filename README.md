@@ -123,7 +123,7 @@ This project is [MIT licensed](LICENSE) — not "open core," not "source availab
 </td>
 <td align="center" width="25%">
 <h3>🖼️</h3><a href="https://workspacemcp.com/google-slides"><b>Slides</b></a><br>
-<sub>7 tools - create, batch update,<br>thumbnails, comments</sub>
+<sub>7 tools - create, batch update,<br>speaker notes, thumbnails, comments</sub>
 </td>
 <td align="center" width="25%">
 <h3>📋</h3><a href="https://workspacemcp.com/google-forms"><b>Forms</b></a><br>
