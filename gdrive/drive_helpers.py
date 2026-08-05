@@ -79,7 +79,9 @@ def list_all_permissions(service, file_id: str) -> List[Dict[str, Any]]:
     return permissions
 
 
-def derive_shared_state(file_metadata: Dict[str, Any], permissions: List[Dict[str, Any]]) -> bool:
+def derive_shared_state(
+    file_metadata: Dict[str, Any], permissions: List[Dict[str, Any]]
+) -> bool:
     """
     Determine whether a file is shared.
 
