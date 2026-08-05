@@ -2303,3 +2303,54 @@ async def test_get_drive_file_permissions_my_drive_uses_inline(mock_resolve):
     # inline path used → permissions.list must NOT be called
     mock_service.permissions.return_value.list.return_value.execute.assert_not_called()
     assert "NOT shared with 'Anyone with the link'" in result
+
+
+# ---------------------------------------------------------------------------
+# check_drive_file_public_access — Shared Drive public access
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.resolve_drive_item", new_callable=AsyncMock)
+async def test_check_drive_file_public_access_shared_drive(mock_resolve):
+    """
+    For a Shared Drive file, files.get() returns no inline permissions, so the
+    public-access check must request driveId and fall back to permissions.list()
+    to detect the 'anyone with link' grant.
+    """
+    from gdrive.drive_tools import check_drive_file_public_access
+
+    mock_resolve.return_value = ("file123", {})
+    mock_service = Mock()
+    mock_service.files().list().execute.return_value = {
+        "files": [
+            {
+                "id": "file123",
+                "name": "spec.pdf",
+                "mimeType": "application/pdf",
+                "webViewLink": "https://drive.google.com/file/d/file123/view",
+            }
+        ]
+    }
+    mock_service.files().get().execute.return_value = {
+        "id": "file123",
+        "name": "spec.pdf",
+        "mimeType": "application/pdf",
+        "driveId": "0ASharedDriveId",
+        "webViewLink": "https://drive.google.com/file/d/file123/view",
+    }
+    mock_service.permissions().list().execute.return_value = {
+        "permissions": [
+            {"id": "anyoneWithLink", "type": "anyone", "role": "reader"},
+        ]
+    }
+
+    result = await _unwrap(check_drive_file_public_access)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        file_name="spec.pdf",
+        drive_id="0ASharedDriveId",
+    )
+
+    assert "PUBLIC ACCESS ENABLED" in result
+    assert "Shared: True" in result

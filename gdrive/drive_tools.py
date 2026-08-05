@@ -1719,7 +1719,7 @@ async def check_drive_file_public_access(
         service.files()
         .get(
             fileId=file_id,
-            fields="id, name, mimeType, permissions, webViewLink, webContentLink, shared",
+            fields="id, name, mimeType, driveId, permissions, webViewLink, webContentLink, shared",
             supportsAllDrives=True,
         )
         .execute
@@ -1738,7 +1738,7 @@ async def check_drive_file_public_access(
             f"File: {file_metadata['name']}",
             f"ID: {file_id}",
             f"Type: {file_metadata['mimeType']}",
-            f"Shared: {file_metadata.get('shared', False)}",
+            f"Shared: {derive_shared_state(file_metadata, permissions)}",
             "",
         ]
     )
