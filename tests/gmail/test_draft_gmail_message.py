@@ -1140,7 +1140,7 @@ async def test_send_gmail_message_reply_all_never_addresses_the_account_itself()
             include_signature=False,
         )
 
-    assert mock_service.users.return_value.messages.return_value.send.called is False
+    mock_service.users.return_value.messages.return_value.send.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -1158,6 +1158,8 @@ async def test_send_gmail_message_reply_all_excludes_the_send_as_alias_from_to()
         ]
     }
 
+    mock_service.users.return_value.messages.return_value.send.reset_mock()
+
     with pytest.raises((UserInputError, ToolError)):
         await _unwrap(send_gmail_message)(
             service=mock_service,
@@ -1169,6 +1171,8 @@ async def test_send_gmail_message_reply_all_excludes_the_send_as_alias_from_to()
             reply_all=True,
             include_signature=False,
         )
+
+    mock_service.users.return_value.messages.return_value.send.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -1185,6 +1189,10 @@ async def test_send_gmail_message_reply_all_requires_a_thread_id():
             reply_all=True,
             include_signature=False,
         )
+
+    mock_service.users.return_value.messages.return_value.send.assert_not_called()
+    # Validation runs before the thread fetch, so no API call is made at all.
+    mock_service.users.return_value.threads.return_value.get.assert_not_called()
 
 
 @pytest.mark.asyncio
