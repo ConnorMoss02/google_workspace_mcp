@@ -1111,6 +1111,83 @@ async def test_send_gmail_message_reply_all_prefers_reply_to_and_explicit_cc():
 
 
 @pytest.mark.asyncio
+async def test_send_gmail_message_reply_all_never_addresses_the_account_itself():
+    mock_service = Mock()
+    mock_service.users().messages().send().execute.return_value = {"id": "sent_reply"}
+    mock_service.users().threads().get().execute.return_value = {
+        "messages": [
+            _thread_message(
+                "<msg1@example.com>",
+                from_value="user@example.com",
+                to_value="alice@example.com",
+                cc_value="bob@example.com",
+            )
+        ]
+    }
+
+    mock_service.users.return_value.messages.return_value.send.reset_mock()
+
+    # The message being replied to was sent by the account, so there is no
+    # sender to reply to; deriving one would address the account itself.
+    with pytest.raises((UserInputError, ToolError)):
+        await _unwrap(send_gmail_message)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            subject="Re: Meeting tomorrow",
+            body="One more thing.",
+            thread_id="thread123",
+            reply_all=True,
+            include_signature=False,
+        )
+
+    assert mock_service.users.return_value.messages.return_value.send.called is False
+
+
+@pytest.mark.asyncio
+async def test_send_gmail_message_reply_all_excludes_the_send_as_alias_from_to():
+    mock_service = Mock()
+    mock_service.users().messages().send().execute.return_value = {"id": "sent_reply"}
+    mock_service.users().threads().get().execute.return_value = {
+        "messages": [
+            _thread_message(
+                "<msg1@example.com>",
+                from_value="Alias <alias@example.com>",
+                to_value="alice@example.com",
+                cc_value="bob@example.com",
+            )
+        ]
+    }
+
+    with pytest.raises((UserInputError, ToolError)):
+        await _unwrap(send_gmail_message)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            from_email="alias@example.com",
+            subject="Re: Meeting tomorrow",
+            body="One more thing.",
+            thread_id="thread123",
+            reply_all=True,
+            include_signature=False,
+        )
+
+
+@pytest.mark.asyncio
+async def test_send_gmail_message_reply_all_requires_a_thread_id():
+    mock_service = Mock()
+
+    with pytest.raises((UserInputError, ToolError)):
+        await _unwrap(send_gmail_message)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            to="recipient@example.com",
+            subject="Hello",
+            body="Hi there!",
+            reply_all=True,
+            include_signature=False,
+        )
+
+
+@pytest.mark.asyncio
 async def test_send_gmail_message_requires_to_without_reply_all():
     mock_service = Mock()
 

@@ -911,6 +911,10 @@ def _derive_reply_all_recipients(
     reached, minus `exclude` and minus anyone already in To. Caller-supplied
     values win, mirroring _derive_reply_headers.
 
+    `exclude` applies to To as well as Cc, so replying to a message the account
+    sent itself derives no recipient rather than addressing the account; the
+    caller passes `to` explicitly for that case.
+
     Only the authenticated address can be excluded reliably: a caller sending
     under several aliases still has to post-filter, which is why this is opt-in
     rather than applied to every threaded send.
@@ -920,7 +924,11 @@ def _derive_reply_all_recipients(
     derived_to = to
     if not derived_to:
         sender = target.get("reply_to") or target.get("from") or ""
-        derived_to = ", ".join(addr for _name, addr in getaddresses([sender]) if addr)
+        derived_to = ", ".join(
+            addr
+            for _name, addr in getaddresses([sender])
+            if addr and addr.lower() not in excluded
+        )
 
     derived_cc = cc
     if not derived_cc:
@@ -2437,6 +2445,12 @@ async def send_gmail_message(
         raise UserInputError(
             "Both 'subject' and 'body' are required when sending a message "
             "(they are optional only when forwarding via 'forward_message_id')."
+        )
+
+    if reply_all and not thread_id:
+        raise UserInputError(
+            "'reply_all' requires a thread_id: the recipients are derived from "
+            "the message being replied to."
         )
 
     if not to and not (thread_id and reply_all):
