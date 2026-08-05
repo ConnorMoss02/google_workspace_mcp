@@ -2272,7 +2272,7 @@ async def send_gmail_message(
     quote_original: Annotated[
         bool,
         Field(
-            description="Whether to include the message being replied to as a quoted original. Requires thread_id. Defaults to false.",
+            description="Whether to include the message being replied to as a quoted original. Only has an effect when thread_id is provided. Defaults to false.",
         ),
     ] = False,
     reply_all: Annotated[
@@ -2324,7 +2324,7 @@ async def send_gmail_message(
             Non-benign failures such as quota/rate-limit or API errors raise ToolError and abort
             the send.
         quote_original (bool): Whether to append the message being replied to as a quoted
-            original. Requires thread_id.
+            original. Only has an effect when thread_id is provided.
         reply_all (bool): Whether to derive reply-all recipients from the thread: To = the
             sender being replied to, Cc = the other participants, excluding the authenticated
             account. Requires thread_id. Explicit to/cc win over the derived values.
@@ -2771,7 +2771,7 @@ async def draft_gmail_message(
     quote_original: Annotated[
         bool,
         Field(
-            description="Whether to include the original message as a quoted reply. Requires thread_id. Defaults to false.",
+            description="Whether to include the original message as a quoted reply. Only has an effect when thread_id is provided. Defaults to false.",
         ),
     ] = False,
 ) -> str:
@@ -2809,8 +2809,8 @@ async def draft_gmail_message(
             Non-benign failures such as quota/rate-limit or API errors raise ToolError and abort
             the draft.
         quote_original (bool): Whether to include the original message as a quoted reply.
-            Requires thread_id to be provided. When enabled, fetches the original message
-            and appends it below the signature. Defaults to False.
+            Only has an effect when thread_id is provided. When enabled, fetches the
+            original message and appends it below the signature. Defaults to False.
 
     Returns:
         str: Confirmation message with the created draft's ID.
