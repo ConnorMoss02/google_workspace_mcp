@@ -2218,3 +2218,88 @@ def test_has_explicit_trashed_clause_ignores_quoted_literals():
     assert not has_explicit_trashed_clause("name contains 'trashed != false'")
     assert not has_explicit_trashed_clause(r"name contains 'it\'s trashed=true'")
     assert not has_explicit_trashed_clause("budget")
+
+
+# ---------------------------------------------------------------------------
+# get_drive_file_permissions — Shared Drive permission read
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.resolve_drive_item", new_callable=AsyncMock)
+async def test_get_drive_file_permissions_shared_drive_uses_permissions_list(
+    mock_resolve,
+):
+    """
+    For Shared Drive items, files.get() returns no inline `permissions` (and no
+    `shared` boolean). The tool must fall back to permissions.list() so an
+    'anyone with link' grant is surfaced instead of misreporting the file as
+    private.
+    """
+    mock_resolve.return_value = ("file123", {})
+    mock_service = Mock()
+    # files.get() on a Shared Drive item: driveId present, no permissions, no shared
+    mock_service.files().get().execute.return_value = {
+        "id": "file123",
+        "name": "spec.pdf",
+        "mimeType": "application/pdf",
+        "driveId": "0ASharedDriveId",
+        "parents": ["parent1"],
+        "webViewLink": "https://drive.google.com/file/d/file123/view",
+    }
+    # permissions.list() returns the real set, including anyone-with-link
+    mock_service.permissions().list().execute.return_value = {
+        "permissions": [
+            {"id": "anyoneWithLink", "type": "anyone", "role": "reader"},
+            {
+                "id": "1",
+                "type": "user",
+                "role": "organizer",
+                "emailAddress": "owner@example.com",
+            },
+        ]
+    }
+
+    result = await _unwrap(get_drive_file_permissions)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        file_id="file123",
+    )
+
+    assert "Shared: True" in result
+    assert "Anyone with the link" in result
+    assert "This file is shared with 'Anyone with the link'" in result
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.resolve_drive_item", new_callable=AsyncMock)
+async def test_get_drive_file_permissions_my_drive_uses_inline(mock_resolve):
+    """My Drive files keep the inline permissions path (no extra permissions.list)."""
+    mock_resolve.return_value = ("file456", {})
+    mock_service = Mock()
+    mock_service.files().get().execute.return_value = {
+        "id": "file456",
+        "name": "private.pdf",
+        "mimeType": "application/pdf",
+        "shared": False,
+        "parents": ["parent1"],
+        "permissions": [
+            {
+                "id": "1",
+                "type": "user",
+                "role": "owner",
+                "emailAddress": "user@example.com",
+            }
+        ],
+        "webViewLink": "https://drive.google.com/file/d/file456/view",
+    }
+
+    result = await _unwrap(get_drive_file_permissions)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        file_id="file456",
+    )
+
+    # inline path used → permissions.list must NOT be called
+    mock_service.permissions.return_value.list.return_value.execute.assert_not_called()
+    assert "NOT shared with 'Anyone with the link'" in result
