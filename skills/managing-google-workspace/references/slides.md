@@ -20,6 +20,7 @@ Get presentation metadata: title, slide count, and slide object IDs.
 |-----------|------|----------|---------|-------|
 | user_google_email | string | yes | | |
 | presentation_id | string | yes | | |
+| include_speaker_notes | boolean | no | false | Also report each slide's speaker notes shape ID and current notes text |
 
 ### get_page
 Get details about a specific slide, including its elements and layout.
@@ -105,7 +106,9 @@ Each slide has a notes page, and the notes text lives in the single shape on it 
 ]
 ```
 
-Omit the `deleteText` request when the notes are already empty -- deleting an empty range is an API error. To append, read the existing text first and insert the concatenated result. To clear notes, send `deleteText` alone.
+Omit the `deleteText` request when the notes are already empty -- deleting an empty range is an API error. To clear notes, send `deleteText` alone.
+
+Appending uses the same clear-then-insert pair: read the existing notes, then insert `existing + new` as one `insertText` at index 0. Inserting only the new text without the `deleteText` duplicates the existing notes, and the notes text reported by `get_presentation` is normalized (blank lines dropped, trailing whitespace stripped), so its length cannot be used as an `insertionIndex` -- `insertionIndex` counts Unicode code units in the shape's actual text.
 
 If an `insertText` accidentally targets the notes page instead of the notes shape, the error response names the correct shape ID to retry with.
 
