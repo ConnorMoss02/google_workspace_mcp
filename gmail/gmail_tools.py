@@ -2024,7 +2024,11 @@ async def get_gmail_attachment_content(
         filename = None
         mime_type = None
         try:
-            # Use format="full" with fields to limit response to attachment metadata only
+            # No `fields` mask here: Gmail's partial-response field masks are not
+            # recursive, so restricting to one level of `parts` silently drops
+            # attachments nested deeper (e.g. multipart/signed S/MIME messages,
+            # where the real attachment sits inside a nested multipart/mixed
+            # part and only the top-level pkcs7-signature part remains visible).
             message_full = await asyncio.to_thread(
                 service.users()
                 .messages()
@@ -2032,7 +2036,6 @@ async def get_gmail_attachment_content(
                     userId="me",
                     id=message_id,
                     format="full",
-                    fields="payload(parts(filename,mimeType,body(attachmentId,size)),body(attachmentId,size),filename,mimeType)",
                 )
                 .execute
             )

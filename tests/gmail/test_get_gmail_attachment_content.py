@@ -60,6 +60,72 @@ def _build_mock_service(
     return mock_service
 
 
+def _build_mock_service_nested(
+    payload: bytes,
+    *,
+    filename: str,
+    mime_type: str,
+    attachment_id: str,
+) -> Mock:
+    """Build a Mock service whose payload mirrors an S/MIME-signed message:
+    multipart/signed -> [multipart/mixed -> [the real attachment], smime.p7s].
+    The real attachment sits two levels deep, and the sibling signature part
+    is itself named ``smime.p7s`` with its own attachmentId.
+
+    A real Gmail API `fields` mask that only lists one level of `parts`
+    silently drops any deeper-nested `parts`, so the mock's `.get()` mimics
+    that truncation whenever a `fields` kwarg is passed — a plain
+    ``Mock(return_value=...)`` would ignore the kwarg entirely and couldn't
+    catch this class of regression.
+    """
+    urlsafe_b64 = base64.urlsafe_b64encode(payload).decode("ascii")
+
+    full_payload = {
+        "mimeType": "multipart/signed",
+        "parts": [
+            {
+                "mimeType": "multipart/mixed",
+                "parts": [
+                    {
+                        "filename": filename,
+                        "mimeType": mime_type,
+                        "body": {
+                            "attachmentId": attachment_id,
+                            "size": len(payload),
+                        },
+                    }
+                ],
+            },
+            {
+                "filename": "smime.p7s",
+                "mimeType": "application/pkcs7-signature",
+                "body": {"attachmentId": "sig-456", "size": 4771},
+            },
+        ],
+    }
+
+    def messages_get(**kwargs):
+        if kwargs.get("fields"):
+            # Simulate Gmail's non-recursive field mask: only the top-level
+            # `parts` survive, each stripped of its own nested `parts`.
+            truncated = [
+                {k: v for k, v in part.items() if k != "parts"}
+                for part in full_payload["parts"]
+            ]
+            result = {"payload": {**full_payload, "parts": truncated}}
+        else:
+            result = {"payload": full_payload}
+        return Mock(execute=Mock(return_value=result))
+
+    mock_service = Mock()
+    mock_service.users().messages().attachments().get().execute.return_value = {
+        "size": len(payload),
+        "data": urlsafe_b64,
+    }
+    mock_service.users().messages().get = Mock(side_effect=messages_get)
+    return mock_service
+
+
 @pytest.fixture
 def isolated_attachment_env(tmp_path, monkeypatch):
     """Route attachment storage to a temp dir and force HTTP (not stateless) mode."""
@@ -227,3 +293,39 @@ async def test_return_base64_preserves_file_save_behavior(isolated_attachment_en
     assert "Download URL" in result
     # ...and includes the base64 block.
     assert "📦 Base64 content" in result
+
+
+@pytest.mark.asyncio
+async def test_resolves_correct_filename_for_nested_smime_attachment(
+    isolated_attachment_env,
+):
+    """Regression test: on S/MIME-signed messages the real attachment is
+    nested two levels deep (multipart/signed -> multipart/mixed -> file),
+    while the sibling smime.p7s signature part sits at the top level. The
+    metadata re-fetch used to request a `fields` mask that only covered one
+    level of `parts`, so the nested attachment was invisible and the
+    "only one attachment visible" fallback mislabeled every download as
+    smime.p7s regardless of which attachment was actually requested.
+    """
+    payload = b"%PDF-1.4 fake pdf bytes" + bytes(range(200))
+    mock_service = _build_mock_service_nested(
+        payload,
+        filename="statement.pdf",
+        mime_type="application/pdf",
+        attachment_id="att-pdf-123",
+    )
+
+    result = await _unwrap(get_gmail_attachment_content)(
+        service=mock_service,
+        message_id="msg-1",
+        attachment_id="att-pdf-123",
+        user_google_email="user@example.com",
+    )
+
+    assert "Filename: statement.pdf" in result
+    assert "smime.p7s" not in result
+
+    saved_files = list(isolated_attachment_env.iterdir())
+    assert len(saved_files) == 1
+    assert saved_files[0].suffix == ".pdf"
+    assert saved_files[0].read_bytes() == payload
