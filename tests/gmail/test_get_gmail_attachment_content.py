@@ -72,11 +72,15 @@ def _build_mock_service_nested(
     The real attachment sits two levels deep, and the sibling signature part
     is itself named ``smime.p7s`` with its own attachmentId.
 
-    A real Gmail API `fields` mask that only lists one level of `parts`
-    silently drops any deeper-nested `parts`, so the mock's `.get()` mimics
-    that truncation whenever a `fields` kwarg is passed — a plain
+    A real Gmail API `fields` mask is not recursive: `parts(...)` nested `n`
+    levels deep in the mask string only returns `n` levels of `parts` in the
+    response, silently dropping anything nested deeper. The mock's `.get()`
+    reproduces that truncation for whatever depth the `fields` kwarg actually
+    asks for (parsed by counting `parts(` occurrences), rather than
+    hardcoding one depth — so this test stays meaningful against the real
+    mask's depth, not just a mock frozen to the old, buggy depth. A plain
     ``Mock(return_value=...)`` would ignore the kwarg entirely and couldn't
-    catch this class of regression.
+    catch this class of regression at all.
     """
     urlsafe_b64 = base64.urlsafe_b64encode(payload).decode("ascii")
 
@@ -104,15 +108,21 @@ def _build_mock_service_nested(
         ],
     }
 
-    def messages_get(**kwargs):
-        if kwargs.get("fields"):
-            # Simulate Gmail's non-recursive field mask: only the top-level
-            # `parts` survive, each stripped of its own nested `parts`.
-            truncated = [
-                {k: v for k, v in part.items() if k != "parts"}
-                for part in full_payload["parts"]
+    def truncate_to_depth(part: dict, remaining_depth: int) -> dict:
+        if remaining_depth <= 0:
+            return {k: v for k, v in part.items() if k != "parts"}
+        truncated = {k: v for k, v in part.items() if k != "parts"}
+        if "parts" in part:
+            truncated["parts"] = [
+                truncate_to_depth(child, remaining_depth - 1) for child in part["parts"]
             ]
-            result = {"payload": {**full_payload, "parts": truncated}}
+        return truncated
+
+    def messages_get(**kwargs):
+        fields = kwargs.get("fields")
+        if fields:
+            depth = fields.count("parts(")
+            result = {"payload": truncate_to_depth(full_payload, depth)}
         else:
             result = {"payload": full_payload}
         return Mock(execute=Mock(return_value=result))
