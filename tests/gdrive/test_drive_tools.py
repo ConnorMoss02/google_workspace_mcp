@@ -2220,6 +2220,21 @@ async def test_update_drive_file_append_requires_content():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["append", "prepend"])
+async def test_update_drive_file_splice_rejects_mime_type(mode):
+    """append/prepend cannot change the MIME type while splicing existing text."""
+    with pytest.raises(ValueError, match=f"mime_type cannot be set when mode='{mode}'"):
+        await _unwrap(update_drive_file)(
+            service=Mock(),
+            user_google_email="user@example.com",
+            file_id="md123",
+            content="More text",
+            mime_type="text/plain",
+            mode=mode,
+        )
+
+
+@pytest.mark.asyncio
 @patch("gdrive.drive_tools.resolve_drive_item", new_callable=AsyncMock)
 async def test_update_drive_file_rejects_string_content_for_binary_targets(
     mock_resolve_item,

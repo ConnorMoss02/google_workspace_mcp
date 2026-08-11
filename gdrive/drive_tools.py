@@ -77,7 +77,10 @@ _CONTENT_UPDATE_LOCKS: WeakValueDictionary[str, asyncio.Lock] = WeakValueDiction
 
 
 def _get_content_update_lock(file_id: str) -> asyncio.Lock:
-    """Return the process-wide lock for a file's read-modify-write update."""
+    """Return a cached lock for updates within one event loop and process.
+
+    This does not coordinate updates across processes, replicas, or other Drive clients.
+    """
     lock = _CONTENT_UPDATE_LOCKS.get(file_id)
     if lock is None:
         lock = asyncio.Lock()
@@ -1851,6 +1854,8 @@ async def update_drive_file(
         raise ValueError(
             f"Unsupported mode: '{mode}'. Supported: {', '.join(CONTENT_UPDATE_MODES)}."
         )
+    if mode != "replace" and mime_type is not None:
+        raise ValueError(f"mime_type cannot be set when mode='{mode}'.")
     if mode != "replace" and content is None:
         raise ValueError(
             f"mode='{mode}' requires 'content' (the text to add). "
@@ -1924,6 +1929,7 @@ async def update_drive_file(
     # so its bytes stream back verbatim under the same file ID.
     replacing_content = any(x is not None for x in (content, file_path, file_url))
     remote_file_data = None
+    format_map = None
     content_update_lock = (
         _get_content_update_lock(file_id)
         if replacing_content and mode != "replace"
