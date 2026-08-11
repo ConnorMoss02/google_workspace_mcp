@@ -6,6 +6,7 @@ Tests create_drive_folder with mocked API responses, plus coverage for
 and `file_type` filtering behaviors.
 """
 
+import asyncio
 import base64
 import pytest
 from unittest.mock import Mock, AsyncMock, patch
@@ -2125,6 +2126,60 @@ async def test_update_drive_file_prepend_keeps_existing_seam(
     media = mock_service.files.return_value.update.call_args.kwargs["media_body"]
     uploaded = media.getbytes(0, media.size()).decode("utf-8")
     assert uploaded == "## Newest entry\n## Older entry\n"
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools._download_file_bytes", new_callable=AsyncMock)
+@patch("gdrive.drive_tools.resolve_drive_item", new_callable=AsyncMock)
+async def test_update_drive_file_serializes_splices_across_service_instances(
+    mock_resolve_item, mock_download
+):
+    """Concurrent appends to one file each build on the latest uploaded content."""
+    mock_resolve_item.return_value = (
+        "md123",
+        {"name": "log.md", "mimeType": "text/markdown"},
+    )
+    stored_content = b"Base"
+
+    async def download(_service, _file_id):
+        snapshot = stored_content
+        await asyncio.sleep(0)
+        return snapshot
+
+    def make_service():
+        service = Mock()
+
+        def execute(**_kwargs):
+            nonlocal stored_content
+            media = service.files.return_value.update.call_args.kwargs["media_body"]
+            stored_content = media.getbytes(0, media.size())
+            return {"id": "md123", "name": "log.md", "mimeType": "text/markdown"}
+
+        service.files().update().execute.side_effect = execute
+        return service
+
+    mock_download.side_effect = download
+    first_service = make_service()
+    second_service = make_service()
+
+    await asyncio.gather(
+        _unwrap(update_drive_file)(
+            service=first_service,
+            user_google_email="user@example.com",
+            file_id="md123",
+            content="First",
+            mode="append",
+        ),
+        _unwrap(update_drive_file)(
+            service=second_service,
+            user_google_email="user@example.com",
+            file_id="md123",
+            content="Second",
+            mode="append",
+        ),
+    )
+
+    assert stored_content.decode("utf-8").splitlines() == ["Base", "First", "Second"]
 
 
 @pytest.mark.asyncio

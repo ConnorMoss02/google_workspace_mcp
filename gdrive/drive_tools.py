@@ -15,6 +15,7 @@ from tempfile import NamedTemporaryFile, SpooledTemporaryFile
 from urllib.parse import urlparse
 from urllib.request import url2pathname
 from pathlib import Path
+from weakref import WeakValueDictionary
 
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
@@ -72,6 +73,16 @@ IMPORT_FORMATS_BY_GOOGLE_MIME_TYPE = {
 }
 
 CONTENT_UPDATE_MODES = ("replace", "append", "prepend")
+_CONTENT_UPDATE_LOCKS: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
+
+
+def _get_content_update_lock(file_id: str) -> asyncio.Lock:
+    """Return the process-wide lock for a file's read-modify-write update."""
+    lock = _CONTENT_UPDATE_LOCKS.get(file_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _CONTENT_UPDATE_LOCKS[file_id] = lock
+    return lock
 
 
 async def _download_file_bytes(
@@ -81,7 +92,7 @@ async def _download_file_bytes(
     request_obj = (
         service.files().export_media(fileId=file_id, mimeType=export_mime_type)
         if export_mime_type
-        else service.files().get_media(fileId=file_id)
+        else service.files().get_media(fileId=file_id, supportsAllDrives=True)
     )
     fh = io.BytesIO()
     downloader = MediaIoBaseDownload(fh, request_obj)
@@ -1913,53 +1924,64 @@ async def update_drive_file(
     # so its bytes stream back verbatim under the same file ID.
     replacing_content = any(x is not None for x in (content, file_path, file_url))
     remote_file_data = None
-    if replacing_content:
-        target_mime_type = mime_type or current_file.get("mimeType") or ""
-        format_map = IMPORT_FORMATS_BY_GOOGLE_MIME_TYPE.get(target_mime_type)
-        if format_map is None and target_mime_type.startswith(GOOGLE_APPS_MIME_PREFIX):
-            supported_targets = ", ".join(
-                mime for mime in IMPORT_FORMATS_BY_GOOGLE_MIME_TYPE
-            )
-            raise ValueError(
-                "Content replacement is not supported for this Google Apps type "
-                f"({target_mime_type}). Editable Google types: {supported_targets}."
-            )
-
-        if mode != "replace":
-            if format_map is not None:
-                raise ValueError(
-                    f"mode='{mode}' is only supported for non-Google files, because a "
-                    f"native {target_mime_type} would have to be exported and re-imported "
-                    "to splice text in. Use insert_doc_elements, modify_doc_text, or "
-                    "find_and_replace_doc to edit a Google Doc in place."
-                )
-            existing_bytes = await _download_file_bytes(service, file_id)
-            try:
-                existing_text = existing_bytes.decode("utf-8")
-            except UnicodeDecodeError as exc:
-                raise ValueError(
-                    f"mode='{mode}' requires a UTF-8 text file, but "
-                    f"'{current_file.get('name', file_id)}' ({target_mime_type}) "
-                    "could not be decoded as text."
-                ) from exc
-            content = _splice_content(existing_text, content, mode)
-
-        media, _source_mime_type, remote_file_data = await _resolve_import_media(
-            tool_name="update_drive_file",
-            file_name=name or current_file.get("name", ""),
-            content=content,
-            file_path=file_path,
-            file_url=file_url,
-            source_format=source_format,
-            format_map=format_map,
-            passthrough_mime_type=(
-                None if format_map else (target_mime_type or "application/octet-stream")
-            ),
-        )
-        query_params["media_body"] = media
-
-    # Perform the update
+    content_update_lock = (
+        _get_content_update_lock(file_id)
+        if replacing_content and mode != "replace"
+        else None
+    )
+    if content_update_lock is not None:
+        await content_update_lock.acquire()
     try:
+        if replacing_content:
+            target_mime_type = mime_type or current_file.get("mimeType") or ""
+            format_map = IMPORT_FORMATS_BY_GOOGLE_MIME_TYPE.get(target_mime_type)
+            if format_map is None and target_mime_type.startswith(
+                GOOGLE_APPS_MIME_PREFIX
+            ):
+                supported_targets = ", ".join(
+                    mime for mime in IMPORT_FORMATS_BY_GOOGLE_MIME_TYPE
+                )
+                raise ValueError(
+                    "Content replacement is not supported for this Google Apps type "
+                    f"({target_mime_type}). Editable Google types: {supported_targets}."
+                )
+
+            if mode != "replace":
+                if format_map is not None:
+                    raise ValueError(
+                        f"mode='{mode}' is only supported for non-Google files, because a "
+                        f"native {target_mime_type} would have to be exported and re-imported "
+                        "to splice text in. Use insert_doc_elements, modify_doc_text, or "
+                        "find_and_replace_doc to edit a Google Doc in place."
+                    )
+                existing_bytes = await _download_file_bytes(service, file_id)
+                try:
+                    existing_text = existing_bytes.decode("utf-8")
+                except UnicodeDecodeError as exc:
+                    raise ValueError(
+                        f"mode='{mode}' requires a UTF-8 text file, but "
+                        f"'{current_file.get('name', file_id)}' ({target_mime_type}) "
+                        "could not be decoded as text."
+                    ) from exc
+                content = _splice_content(existing_text, content, mode)
+
+            media, _source_mime_type, remote_file_data = await _resolve_import_media(
+                tool_name="update_drive_file",
+                file_name=name or current_file.get("name", ""),
+                content=content,
+                file_path=file_path,
+                file_url=file_url,
+                source_format=source_format,
+                format_map=format_map,
+                passthrough_mime_type=(
+                    None
+                    if format_map
+                    else (target_mime_type or "application/octet-stream")
+                ),
+            )
+            query_params["media_body"] = media
+
+        # Perform the update while append/prepend still hold the file lock.
         updated_file = await asyncio.to_thread(
             service.files().update(**query_params).execute,
             num_retries=GOOGLE_API_WRITE_RETRIES if replacing_content else 0,
@@ -1967,6 +1989,8 @@ async def update_drive_file(
     finally:
         if remote_file_data is not None:
             remote_file_data.close()
+        if content_update_lock is not None:
+            content_update_lock.release()
 
     # Build response message
     output_parts = [
