@@ -46,6 +46,57 @@ def check_public_link_permission(permissions: List[Dict[str, Any]]) -> bool:
     )
 
 
+def list_all_permissions(service, file_id: str) -> List[Dict[str, Any]]:
+    """
+    Return the complete permission set for a file, including Shared Drive items.
+
+    files.get() does NOT populate the inline `permissions` field (nor the `shared`
+    boolean) for items that live in a Shared Drive, even when supportsAllDrives=True
+    is passed. permissions.list() is the only reliable source in that case. This
+    helper paginates and always sets supportsAllDrives=True.
+    """
+    permissions: List[Dict[str, Any]] = []
+    page_token = None
+    while True:
+        resp = (
+            service.permissions()
+            .list(
+                fileId=file_id,
+                supportsAllDrives=True,
+                pageSize=100,
+                pageToken=page_token,
+                fields=(
+                    "nextPageToken, permissions(id, type, role, emailAddress, "
+                    "domain, expirationTime, permissionDetails, allowFileDiscovery)"
+                ),
+            )
+            .execute()
+        )
+        permissions.extend(resp.get("permissions", []))
+        page_token = resp.get("nextPageToken")
+        if not page_token:
+            break
+    return permissions
+
+
+def derive_shared_state(
+    file_metadata: Dict[str, Any], permissions: List[Dict[str, Any]]
+) -> bool:
+    """
+    Determine whether a file is shared.
+
+    The Drive API omits the `shared` boolean for Shared Drive items, so derive it
+    from the driveId and the resolved permission set instead of trusting `shared`.
+    """
+    if file_metadata.get("shared"):
+        return True
+    if file_metadata.get("driveId"):
+        return True
+    if any(p.get("type") in ("anyone", "domain") for p in permissions):
+        return True
+    return len([p for p in permissions if p.get("type") in ("user", "group")]) > 1
+
+
 def format_public_sharing_error(file_name: str, file_id: str) -> str:
     """
     Format error message for files without public sharing.

@@ -51,6 +51,8 @@ from gdrive.drive_helpers import (
     _stream_url_with_validation,
     build_drive_list_params,
     check_public_link_permission,
+    list_all_permissions,
+    derive_shared_state,
     format_permission_info,
     get_drive_image_url,
     has_explicit_trashed_clause,
@@ -1555,6 +1557,13 @@ async def get_drive_file_permissions(
         )
 
         # Format the response
+        # Resolve permissions up front: Shared Drive items omit inline permissions
+        # (and the `shared` boolean) on files.get(), so fetch via permissions.list().
+        _perms_for_shared = file_metadata.get("permissions", [])
+        if file_metadata.get("driveId"):
+            _perms_for_shared = await asyncio.to_thread(
+                list_all_permissions, service, file_id
+            )
         parents = file_metadata.get("parents")
         parent_str = ", ".join(parents) if parents else "None (root or orphaned)"
         owners = file_metadata.get("owners") or []
@@ -1590,7 +1599,7 @@ async def get_drive_file_permissions(
             [
                 "",
                 "Sharing Status:",
-                f"  Shared: {file_metadata.get('shared', False)}",
+                f"  Shared: {derive_shared_state(file_metadata, _perms_for_shared)}",
             ]
         )
 
@@ -1601,8 +1610,8 @@ async def get_drive_file_permissions(
                 f"  Shared by: {sharing_user.get('displayName', 'Unknown')} ({sharing_user.get('emailAddress', 'Unknown')})"
             )
 
-        # Process permissions
-        permissions = file_metadata.get("permissions", [])
+        # Process permissions (already resolved above as _perms_for_shared)
+        permissions = _perms_for_shared
         if permissions:
             output_parts.append(f"  Number of permissions: {len(permissions)}")
             output_parts.append("  Permissions:")
@@ -1729,13 +1738,17 @@ async def check_drive_file_public_access(
         service.files()
         .get(
             fileId=file_id,
-            fields="id, name, mimeType, permissions, webViewLink, webContentLink, shared",
+            fields="id, name, mimeType, driveId, permissions, webViewLink, webContentLink, shared",
             supportsAllDrives=True,
         )
         .execute
     )
 
     permissions = file_metadata.get("permissions", [])
+    # Shared Drive items do not return inline permissions on files.get(); fall
+    # back to permissions.list() so 'anyone with link' surfaces correctly.
+    if file_metadata.get("driveId"):
+        permissions = await asyncio.to_thread(list_all_permissions, service, file_id)
 
     has_public_link = check_public_link_permission(permissions)
 
@@ -1744,7 +1757,7 @@ async def check_drive_file_public_access(
             f"File: {file_metadata['name']}",
             f"ID: {file_id}",
             f"Type: {file_metadata['mimeType']}",
-            f"Shared: {file_metadata.get('shared', False)}",
+            f"Shared: {derive_shared_state(file_metadata, permissions)}",
             "",
         ]
     )
