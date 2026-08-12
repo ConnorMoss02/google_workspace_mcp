@@ -2260,6 +2260,11 @@ async def update_paragraph_style(
         page_break_before=page_break_before,
         spacing_mode=spacing_mode,
         shading_color=shading_color,
+        border_edges=border_edges,
+        border_color=border_color,
+        border_width=border_width,
+        border_padding=border_padding,
+        border_dash=border_dash,
     )
     if not is_valid and list_type_value is None:
         return f"Error: {error_msg}"

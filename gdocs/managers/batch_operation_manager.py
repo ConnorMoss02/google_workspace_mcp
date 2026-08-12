@@ -473,6 +473,7 @@ class BatchOperationManager:
                     column_index=op.get("column_index"),
                     row_span=op.get("row_span"),
                     column_span=op.get("column_span"),
+                    border_edges=op.get("border_edges"),
                 )
             )
             if not is_valid:

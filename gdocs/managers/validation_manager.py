@@ -20,6 +20,9 @@ from gdocs.docs_helpers import (
     VALID_COLUMN_SEPARATOR_STYLES,
     VALID_DOCUMENT_MODES,
     VALID_BULLET_PRESETS,
+    VALID_DASH_STYLES,
+    PARAGRAPH_BORDER_EDGE_MAP,
+    TABLE_BORDER_EDGE_MAP,
 )
 
 logger = logging.getLogger(__name__)
@@ -515,6 +518,77 @@ class ValidationManager:
         if not is_valid:
             return False, error_msg
 
+        is_valid, error_msg = self.validate_border_edges(
+            border_edges, PARAGRAPH_BORDER_EDGE_MAP
+        )
+        if not is_valid:
+            return False, error_msg
+
+        is_valid, error_msg = self.validate_color_param(border_color, "border_color")
+        if not is_valid:
+            return False, error_msg
+
+        if border_width is not None:
+            if isinstance(border_width, bool) or not isinstance(
+                border_width, (int, float)
+            ):
+                return (
+                    False,
+                    f"border_width must be a number, got {type(border_width).__name__}",
+                )
+            if border_width <= 0:
+                return False, f"border_width must be positive, got {border_width}"
+
+        if border_padding is not None:
+            if isinstance(border_padding, bool) or not isinstance(
+                border_padding, (int, float)
+            ):
+                return (
+                    False,
+                    f"border_padding must be a number, got {type(border_padding).__name__}",
+                )
+            if border_padding < 0:
+                return (
+                    False,
+                    f"border_padding must be non-negative, got {border_padding}",
+                )
+
+        if border_dash is not None:
+            if not isinstance(border_dash, str):
+                return (
+                    False,
+                    f"border_dash must be a string, got {type(border_dash).__name__}",
+                )
+            if border_dash.upper() not in VALID_DASH_STYLES:
+                return (
+                    False,
+                    "border_dash must be one of: "
+                    f"{', '.join(VALID_DASH_STYLES)}, got '{border_dash}'",
+                )
+
+        return True, ""
+
+    def validate_border_edges(
+        self, border_edges: Optional[list], edge_map: Dict[str, str]
+    ) -> Tuple[bool, str]:
+        """Validate a border_edges list against the allowed edge names."""
+        if border_edges is None:
+            return True, ""
+
+        if not isinstance(border_edges, (list, tuple)):
+            return (
+                False,
+                f"border_edges must be a list, got {type(border_edges).__name__}",
+            )
+
+        for edge in border_edges:
+            if not isinstance(edge, str) or edge.strip().lower() not in edge_map:
+                return (
+                    False,
+                    f"border_edges entries must be one of: {', '.join(sorted(edge_map))}, "
+                    f"got '{edge}'",
+                )
+
         return True, ""
 
     def validate_named_range_operation(
@@ -767,6 +841,7 @@ class ValidationManager:
         column_index: Optional[int] = None,
         row_span: Optional[int] = None,
         column_span: Optional[int] = None,
+        border_edges: Optional[list] = None,
     ) -> Tuple[bool, str]:
         """
         Validate table cell style parameters for updateTableCellStyle requests.
@@ -784,6 +859,8 @@ class ValidationManager:
             column_index: Optional starting column index for a targeted cell range
             row_span: Optional row span for a targeted cell range
             column_span: Optional column span for a targeted cell range
+            border_edges: Optional list of edges to border ("top", "bottom",
+                "left", "right"); defaults to all four
 
         Returns:
             Tuple of (is_valid, error_message)
@@ -799,14 +876,21 @@ class ValidationManager:
                 padding_left,
                 padding_right,
                 content_alignment,
+                border_edges,
             )
         ):
             return (
                 False,
                 "At least one table cell style parameter must be provided "
-                "(background_color, border_color, border_width, padding_top, "
+                "(background_color, border_color, border_width, border_edges, padding_top, "
                 "padding_bottom, padding_left, padding_right, or content_alignment)",
             )
+
+        is_valid, error_msg = self.validate_border_edges(
+            border_edges, TABLE_BORDER_EDGE_MAP
+        )
+        if not is_valid:
+            return False, error_msg
 
         is_valid, error_msg = self.validate_color_param(
             background_color, "background_color"
@@ -1212,6 +1296,7 @@ class ValidationManager:
                     op.get("column_index"),
                     op.get("row_span"),
                     op.get("column_span"),
+                    border_edges=op.get("border_edges"),
                 )
                 if not is_valid:
                     return (

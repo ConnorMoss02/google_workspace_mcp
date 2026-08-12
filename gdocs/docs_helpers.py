@@ -51,6 +51,23 @@ VALID_DASH_STYLES = (
     "DASH",
 )
 
+# Border edge name -> ParagraphStyle/TableCellStyle field. Paragraphs additionally
+# support "between"; table cells do not.
+PARAGRAPH_BORDER_EDGE_MAP = {
+    "top": "borderTop",
+    "bottom": "borderBottom",
+    "left": "borderLeft",
+    "right": "borderRight",
+    "between": "borderBetween",
+}
+
+TABLE_BORDER_EDGE_MAP = {
+    "top": "borderTop",
+    "bottom": "borderBottom",
+    "left": "borderLeft",
+    "right": "borderRight",
+}
+
 VALID_SECTION_TYPES = (
     "CONTINUOUS",
     "NEXT_PAGE",
@@ -456,7 +473,13 @@ def build_paragraph_style(
 
     # kenorai enhancement 2026-08-04: paragraph borders (the callout left-rule pattern).
     # ParagraphBorder requires color, width, padding and dashStyle all set.
-    if border_color is not None or border_width is not None or border_edges:
+    if (
+        border_color is not None
+        or border_width is not None
+        or border_padding is not None
+        or border_dash is not None
+        or border_edges
+    ):
         dash = (border_dash or "SOLID").upper()
         if dash not in VALID_DASH_STYLES:
             raise ValueError(
@@ -477,13 +500,7 @@ def build_paragraph_style(
             },
             "dashStyle": dash,
         }
-        edge_map = {
-            "top": "borderTop",
-            "bottom": "borderBottom",
-            "left": "borderLeft",
-            "right": "borderRight",
-            "between": "borderBetween",
-        }
+        edge_map = PARAGRAPH_BORDER_EDGE_MAP
         if border_edges:
             selected = []
             for edge in border_edges:
@@ -690,7 +707,7 @@ def build_table_cell_style(
     table_cell_style = {}
     fields = []
 
-    if border_color is not None or border_width is not None:
+    if border_color is not None or border_width is not None or border_edges:
         # kenorai patch 2026-08-04: TableCellBorder requires color, width AND dashStyle
         # all set; dashStyle must not be UNSPECIFIED or the API 400s. Default the missing
         # members so a color-only or width-only call still forms a valid border.
@@ -708,12 +725,7 @@ def build_table_cell_style(
         )
         border_style["color"] = {"color": {"rgbColor": rgb}}
 
-        edge_map = {
-            "top": "borderTop",
-            "bottom": "borderBottom",
-            "left": "borderLeft",
-            "right": "borderRight",
-        }
+        edge_map = TABLE_BORDER_EDGE_MAP
         if border_edges:
             selected = []
             for edge in border_edges:
