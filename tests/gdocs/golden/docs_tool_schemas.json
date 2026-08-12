@@ -1757,15 +1757,24 @@
             "anyOf": [
               {
                 "items": {
+                  "enum": [
+                    "top",
+                    "bottom",
+                    "left",
+                    "right",
+                    "between"
+                  ],
                   "type": "string"
                 },
+                "minItems": 1,
                 "type": "array"
               },
               {
                 "type": "null"
               }
             ],
-            "default": null
+            "default": null,
+            "description": "Paragraph border edges to update; omit to update top, bottom, left, and right."
           },
           "border_color": {
             "anyOf": [
@@ -2161,15 +2170,23 @@
             "anyOf": [
               {
                 "items": {
+                  "enum": [
+                    "top",
+                    "bottom",
+                    "left",
+                    "right"
+                  ],
                   "type": "string"
                 },
+                "minItems": 1,
                 "type": "array"
               },
               {
                 "type": "null"
               }
             ],
-            "default": null
+            "default": null,
+            "description": "Table-cell border edges to update; omit to update all four edges."
           }
         },
         "required": [

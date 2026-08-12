@@ -420,6 +420,8 @@ class BatchOperationManager:
                 "indent_end",
                 "space_above",
                 "space_below",
+                "border_width",
+                "border_padding",
             }
             _SUFFIX = {
                 "heading_level": lambda v: f"H{v}",
@@ -444,6 +446,11 @@ class BatchOperationManager:
                 ("page_break_before", "page break before"),
                 ("spacing_mode", "spacing mode"),
                 ("shading_color", "shading"),
+                ("border_edges", "border edges"),
+                ("border_color", "border color"),
+                ("border_width", "border width"),
+                ("border_padding", "border padding"),
+                ("border_dash", "border dash"),
             ]:
                 if op.get(param) is not None:
                     raw = op[param]
@@ -510,6 +517,7 @@ class BatchOperationManager:
                 ("padding_left", "padding left"),
                 ("padding_right", "padding right"),
                 ("content_alignment", "content alignment"),
+                ("border_edges", "border edges"),
             ]:
                 if op.get(param) is not None:
                     value = (

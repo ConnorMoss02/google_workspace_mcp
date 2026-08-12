@@ -368,12 +368,20 @@ def build_paragraph_style(
         page_break_before: Always start paragraph on a new page
         spacing_mode: Paragraph spacing mode - NEVER_COLLAPSE or COLLAPSE_LISTS
         shading_color: Paragraph shading/background color as hex string "#RRGGBB"
+        border_edges: Border edges to update; omit for all four outer edges
+        border_color: Border color as hex string "#RRGGBB"
+        border_width: Border width in points
+        border_padding: Border padding in points
+        border_dash: Border dash style (SOLID, DOT, or DASH)
 
     Returns:
         Tuple of (paragraph_style_dict, list_of_field_names)
     """
     paragraph_style = {}
     fields = []
+
+    if border_edges is not None and not border_edges:
+        raise ValueError("border_edges must contain at least one edge")
 
     if named_style_type is not None:
         if named_style_type not in VALID_NAMED_STYLE_TYPES:
@@ -471,14 +479,13 @@ def build_paragraph_style(
         }
         fields.append("shading")
 
-    # kenorai enhancement 2026-08-04: paragraph borders (the callout left-rule pattern).
     # ParagraphBorder requires color, width, padding and dashStyle all set.
     if (
         border_color is not None
         or border_width is not None
         or border_padding is not None
         or border_dash is not None
-        or border_edges
+        or border_edges is not None
     ):
         dash = (border_dash or "SOLID").upper()
         if dash not in VALID_DASH_STYLES:
@@ -501,7 +508,7 @@ def build_paragraph_style(
             "dashStyle": dash,
         }
         edge_map = PARAGRAPH_BORDER_EDGE_MAP
-        if border_edges:
+        if border_edges is not None:
             selected = []
             for edge in border_edges:
                 edge_key = str(edge).strip().lower()
@@ -540,8 +547,7 @@ def build_document_style(
     fields: List[str] = []
 
     if background_color is not None:
-        # DocumentStyle.background is type Background{color: OptionalColor{color: Color}}
-        # — three levels of nesting, not two (kenorai patch 2026-08-04).
+        # DocumentStyle.background wraps an OptionalColor in a Background object.
         document_style["background"] = {
             "color": _build_optional_color(background_color, "background_color")
         }
@@ -700,6 +706,7 @@ def build_table_cell_style(
         padding_left: Left padding in points
         padding_right: Right padding in points
         content_alignment: Vertical content alignment ("TOP", "MIDDLE", "BOTTOM")
+        border_edges: Border edges to update; omit for all four edges
 
     Returns:
         Tuple of (table_cell_style_dict, list_of_field_names)
@@ -707,12 +714,12 @@ def build_table_cell_style(
     table_cell_style = {}
     fields = []
 
-    if border_color is not None or border_width is not None or border_edges:
-        # kenorai patch 2026-08-04: TableCellBorder requires color, width AND dashStyle
-        # all set; dashStyle must not be UNSPECIFIED or the API 400s. Default the missing
-        # members so a color-only or width-only call still forms a valid border.
-        # kenorai enhancement: border_edges limits the border to named edges
-        # (["top","bottom","left","right"]); default = all four (uniform).
+    if border_edges is not None and not border_edges:
+        raise ValueError("border_edges must contain at least one edge")
+
+    if border_color is not None or border_width is not None or border_edges is not None:
+        # TableCellBorder requires color, width and dashStyle. Default missing
+        # members so color-only or width-only calls still form valid borders.
         border_style = {"dashStyle": "SOLID"}
 
         border_style["width"] = {
@@ -726,7 +733,7 @@ def build_table_cell_style(
         border_style["color"] = {"color": {"rgbColor": rgb}}
 
         edge_map = TABLE_BORDER_EDGE_MAP
-        if border_edges:
+        if border_edges is not None:
             selected = []
             for edge in border_edges:
                 edge_key = str(edge).strip().lower()

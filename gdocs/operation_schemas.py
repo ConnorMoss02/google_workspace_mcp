@@ -8,9 +8,13 @@ LLMs receive a machine-readable contract instead of a free-form object array.
 from __future__ import annotations
 
 import json
-from typing import Annotated, Any, List, Literal, Optional, Union
+from typing import Annotated, Any, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, BeforeValidator, model_validator
+
+
+ParagraphBorderEdge = Literal["top", "bottom", "left", "right", "between"]
+TableBorderEdge = Literal["top", "bottom", "left", "right"]
 
 
 def _coerce_json_str_to_list(v: Any) -> Any:
@@ -120,8 +124,11 @@ class UpdateParagraphStyleOperation(SegmentTargetDocOperation):
     page_break_before: Optional[bool] = None
     spacing_mode: Optional[str] = None
     shading_color: Optional[str] = None
-    # kenorai enhancement 2026-08-04: paragraph borders
-    border_edges: Optional[List[str]] = None
+    border_edges: Optional[list[ParagraphBorderEdge]] = Field(
+        default=None,
+        min_length=1,
+        description="Paragraph border edges to update; omit to update top, bottom, left, and right.",
+    )
     border_color: Optional[str] = None
     border_width: Optional[float] = None
     border_padding: Optional[float] = None
@@ -143,8 +150,11 @@ class UpdateTableCellStyleOperation(StrictDocOperation):
     column_index: Optional[int] = None
     row_span: Optional[int] = None
     column_span: Optional[int] = None
-    # kenorai enhancement 2026-08-04: per-edge borders ("top","bottom","left","right")
-    border_edges: Optional[List[str]] = None
+    border_edges: Optional[list[TableBorderEdge]] = Field(
+        default=None,
+        min_length=1,
+        description="Table-cell border edges to update; omit to update all four edges.",
+    )
 
 
 class InsertTableOperation(SegmentTargetDocOperation):

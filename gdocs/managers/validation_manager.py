@@ -6,6 +6,7 @@ extracting validation patterns from individual tool functions.
 """
 
 import logging
+import math
 from typing import Dict, Any, List, Tuple, Optional
 from urllib.parse import urlparse
 
@@ -246,7 +247,6 @@ class ValidationManager:
 
         # Validate font size
         if font_size is not None:
-            # kenorai patch 2026-08-04: fractional point sizes are valid (Dimension.magnitude is a number).
             if not isinstance(font_size, (int, float)) or isinstance(font_size, bool):
                 return (
                     False,
@@ -377,6 +377,11 @@ class ValidationManager:
             space_above: Space above paragraph in points
             space_below: Space below paragraph in points
             named_style_type: Direct named style (TITLE, SUBTITLE, HEADING_1..6, NORMAL_TEXT)
+            border_edges: Paragraph border edges to update
+            border_color: Paragraph border color as #RRGGBB
+            border_width: Paragraph border width in points
+            border_padding: Paragraph border padding in points
+            border_dash: Paragraph border dash style
 
         Returns:
             Tuple of (is_valid, error_message)
@@ -398,7 +403,6 @@ class ValidationManager:
             page_break_before,
             spacing_mode,
             shading_color,
-            # kenorai enhancement 2026-08-04: paragraph borders
             border_edges,
             border_color,
             border_width,
@@ -408,7 +412,7 @@ class ValidationManager:
         if all(param is None for param in style_params):
             return (
                 False,
-                "At least one paragraph style parameter must be provided (heading_level, alignment, line_spacing, indent_first_line, indent_start, indent_end, space_above, space_below, named_style_type, direction, keep_lines_together, keep_with_next, avoid_widow_and_orphan, page_break_before, spacing_mode, or shading_color)",
+                "At least one paragraph style parameter must be provided (heading_level, alignment, line_spacing, indent_first_line, indent_start, indent_end, space_above, space_below, named_style_type, direction, keep_lines_together, keep_with_next, avoid_widow_and_orphan, page_break_before, spacing_mode, shading_color, border_edges, border_color, border_width, border_padding, or border_dash)",
             )
 
         if heading_level is not None and named_style_type is not None:
@@ -536,6 +540,8 @@ class ValidationManager:
                     False,
                     f"border_width must be a number, got {type(border_width).__name__}",
                 )
+            if not math.isfinite(border_width):
+                return False, f"border_width must be finite, got {border_width}"
             if border_width <= 0:
                 return False, f"border_width must be positive, got {border_width}"
 
@@ -547,6 +553,8 @@ class ValidationManager:
                     False,
                     f"border_padding must be a number, got {type(border_padding).__name__}",
                 )
+            if not math.isfinite(border_padding):
+                return False, f"border_padding must be finite, got {border_padding}"
             if border_padding < 0:
                 return (
                     False,
@@ -580,6 +588,9 @@ class ValidationManager:
                 False,
                 f"border_edges must be a list, got {type(border_edges).__name__}",
             )
+
+        if not border_edges:
+            return False, "border_edges must contain at least one edge"
 
         for edge in border_edges:
             if not isinstance(edge, str) or edge.strip().lower() not in edge_map:
