@@ -9,7 +9,6 @@ import asyncio
 import base64
 import binascii
 import re
-import ssl
 import mimetypes
 import html
 from html.parser import HTMLParser
@@ -27,9 +26,15 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 from googleapiclient.errors import HttpError
 
+from auth.oauth_config import is_stateless_mode
 from auth.service_decorator import require_google_service
-from core.attachment_storage import get_attachment_storage, STORAGE_DIR
+from core.attachment_storage import (
+    get_attachment_storage,
+    get_attachment_url,
+    STORAGE_DIR,
+)
 from core.config import (
+    get_transport_mode,
     WORKSPACE_EXTERNAL_URL,
     WORKSPACE_MCP_BASE_URI,
     WORKSPACE_MCP_PORT,
@@ -56,7 +61,9 @@ from gmail.gmail_helpers import (
     RAW_BODY_TRUNCATE_LIMIT,
     _analyze_thread_ownership_impl,
     _build_forward_content,
+    _fetch_with_retry,
     _is_benign_signature_http_error,
+    _retryable_result_ids,
     _signature_fetch_tool_error,
     _signature_html_to_text,
 )
@@ -64,7 +71,12 @@ from gmail.gmail_helpers import (
 logger = logging.getLogger(__name__)
 
 GMAIL_BATCH_SIZE = 25
+# Smaller chunks for search-result header fetches: the batch endpoint executes
+# every get in a chunk concurrently server-side, and chunks of 25 metadata gets
+# trip Gmail's per-user concurrency limit ("Too many concurrent requests").
+GMAIL_SEARCH_HEADER_BATCH_SIZE = 10
 GMAIL_REQUEST_DELAY = 0.1
+GMAIL_RATE_LIMIT_BACKOFF = 2.0
 HTML_BODY_TRUNCATE_LIMIT = 20000
 LOW_VALUE_TEXT_PLACEHOLDERS = (
     "your client does not support html",
@@ -308,10 +320,12 @@ def _format_message_header_lines(
         content_lines.append(f"In-Reply-To: {in_reply_to}")
     if references:
         content_lines.append(f"References: {references}")
-    if to:
-        content_lines.append(f"To: {to}")
-    if cc:
-        content_lines.append(f"Cc: {cc}")
+    content_lines.append(
+        f"To: {to}" if "To" in headers else "To: [not present in Gmail response]"
+    )
+    content_lines.append(
+        f"Cc: {cc}" if "Cc" in headers else "Cc: [not present in Gmail response]"
+    )
     if list_unsub:
         content_lines.append(f"List-Unsubscribe: {list_unsub}")
     if precedence:
@@ -320,6 +334,169 @@ def _format_message_header_lines(
         content_lines.append(f"List-Id: {list_id}")
 
     return content_lines
+
+
+async def _export_full_message(
+    service,
+    message_id: str,
+    headers: Dict[str, str],
+    body_format: Literal["text", "html", "raw"],
+) -> str:
+    """
+    Return a message's complete, untruncated content: saved to local storage and
+    referenced by download URL (HTTP transport) or file path (stdio transport), or —
+    in stateless mode, where there is no storage — inlined in the response.
+
+    Whenever a file is written the body is kept out of the returned string, which is
+    the point of the export: large messages are handed off out-of-band instead of
+    through the model context. Either way no truncation limit applies.
+
+    Args:
+        service: Authenticated Gmail API service.
+        message_id: The message to export.
+        headers: Already-fetched message headers, used for the summary and filename.
+        body_format: "raw" saves the byte-exact RFC 5322 message as .eml,
+            "html" saves the raw HTML body, "text" saves the plaintext body.
+
+    Returns:
+        str: Header summary plus the saved file's URL or path (or the inline body in
+            stateless mode), or an "Error:" string.
+    """
+    subject = headers.get("Subject", "message") or "message"
+    notes: List[str] = []
+
+    if body_format == "raw":
+        message_raw = await asyncio.to_thread(
+            service.users()
+            .messages()
+            .get(userId="me", id=message_id, format="raw")
+            .execute
+        )
+        raw_data = message_raw.get("raw", "")
+        if not raw_data:
+            return "Error: message has no raw content to export."
+        padded_raw = raw_data + "=" * (-len(raw_data) % 4)
+        try:
+            content_bytes = base64.urlsafe_b64decode(padded_raw)
+        except (binascii.Error, ValueError) as exc:
+            return f"Error: failed to decode raw MIME content: {exc}"
+        mime_type = "message/rfc822"
+        extension = ".eml"
+    else:
+        message_full = await asyncio.to_thread(
+            service.users()
+            .messages()
+            .get(userId="me", id=message_id, format="full")
+            .execute
+        )
+        bodies = _extract_message_bodies(message_full.get("payload", {}))
+        # Preserve the body exactly — the export must be complete — so use .strip()
+        # only to test for emptiness, never to trim the content that gets saved.
+        text_body = bodies.get("text", "")
+        html_body = bodies.get("html", "")
+
+        if body_format == "html":
+            if html_body.strip():
+                content_str = html_body
+                mime_type = "text/html"
+                extension = ".html"
+            elif text_body.strip():
+                # No HTML part; fall back to plaintext and label it honestly.
+                content_str = text_body
+                mime_type = "text/plain"
+                extension = ".txt"
+                notes.append(
+                    "No HTML body present; exported the plaintext body instead."
+                )
+            else:
+                content_str = ""
+                mime_type = "text/html"
+                extension = ".html"
+        else:  # text
+            if text_body.strip():
+                content_str = text_body
+            elif html_body.strip():
+                content_str = _html_to_text(html_body)
+            else:
+                content_str = ""
+            mime_type = "text/plain"
+            extension = ".txt"
+
+        if not content_str.strip():
+            return "Error: message has no readable body content to export."
+        content_bytes = content_str.encode("utf-8")
+
+    # Stateless deployments have no persistent storage to hand a file reference off
+    # from, but the guarantee callers actually want is "complete and untruncated".
+    # Inline delivery satisfies that; it only costs model context.
+    stateless = is_stateless_mode()
+
+    size_bytes = len(content_bytes)
+    size_kb = size_bytes / 1024
+    result_lines = _format_message_header_lines(headers)
+    result_lines.append(
+        "\n--- FULL MESSAGE ---" if stateless else "\n--- FULL MESSAGE EXPORT ---"
+    )
+    result_lines.append(f"Format: {extension.lstrip('.')}")
+    result_lines.append(f"Size: {size_kb:.1f} KB ({size_bytes} bytes)")
+
+    if stateless:
+        for note in notes:
+            result_lines.append(f"Note: {note}")
+        result_lines.append(
+            "\nStateless mode: no file storage available, so the complete message is "
+            "included inline below instead of as a download URL. It is NOT truncated."
+        )
+        result_lines.append(
+            "\n--- BODY (COMPLETE, NOT TRUNCATED) ---\n"
+            f"{content_bytes.decode('utf-8', errors='replace')}"
+        )
+        logger.info(
+            f"[get_gmail_message_content] Returned {size_kb:.1f} KB "
+            f"({extension.lstrip('.')}) inline (stateless mode)"
+        )
+        return "\n".join(result_lines)
+
+    # Encode + write on a worker thread so a large export doesn't block the event loop.
+    # Cap the sender-controlled subject so a pathologically long Subject can't overflow
+    # the filesystem's filename limit, and surface a clean error if the write fails.
+    storage = get_attachment_storage()
+
+    def _save_export():
+        return storage.save_attachment(
+            base64_data=base64.urlsafe_b64encode(content_bytes).decode("ascii"),
+            filename=f"{subject[:80]}{extension}",
+            mime_type=mime_type,
+        )
+
+    try:
+        saved = await asyncio.to_thread(_save_export)
+    except OSError as exc:
+        logger.error(f"[get_gmail_message_content] Failed to save message: {exc}")
+        return f"Error: failed to save message to storage: {exc}"
+
+    result_lines.append(f"Saved filename: {Path(saved.path).name}")
+    for note in notes:
+        result_lines.append(f"Note: {note}")
+
+    if get_transport_mode() == "stdio":
+        result_lines.append(f"\n📎 Saved to: {saved.path}")
+        result_lines.append(
+            "\nThe full message has been written to disk and can be read directly "
+            "from the file path (its content is NOT included above)."
+        )
+    else:
+        result_lines.append(f"\n📎 Download URL: {get_attachment_url(saved.file_id)}")
+        result_lines.append(
+            "\nFetch the full message from the URL above (content is NOT included "
+            "in this response). The file will expire after 1 hour."
+        )
+
+    logger.info(
+        f"[get_gmail_message_content] Exported {size_kb:.1f} KB "
+        f"({extension.lstrip('.')}) to {saved.path}"
+    )
+    return "\n".join(result_lines)
 
 
 def _build_message_get_request(
@@ -352,29 +529,32 @@ async def _fetch_message_with_retry(
     log_prefix: str,
     max_retries: int = 3,
 ):
-    """Fetch a single Gmail message with SSL retry handling."""
-    for attempt in range(max_retries):
-        try:
-            message = await asyncio.to_thread(
-                _build_message_get_request(
-                    service, message_id=message_id, message_format=message_format
-                ).execute
-            )
-            return message_id, message, None
-        except ssl.SSLError as ssl_error:
-            if attempt < max_retries - 1:
-                delay = 2**attempt
-                logger.warning(
-                    f"[{log_prefix}] SSL error for message {message_id} on attempt {attempt + 1}: {ssl_error}. Retrying in {delay}s..."
-                )
-                await asyncio.sleep(delay)
-            else:
-                logger.error(
-                    f"[{log_prefix}] SSL error for message {message_id} on final attempt: {ssl_error}"
-                )
-                return message_id, None, ssl_error
-        except Exception as exc:
-            return message_id, None, exc
+    """Fetch a single Gmail message, retrying transient failures."""
+    return await _fetch_with_retry(
+        lambda: _build_message_get_request(
+            service, message_id=message_id, message_format=message_format
+        ),
+        item_id=message_id,
+        item_label="message",
+        log_prefix=log_prefix,
+        max_retries=max_retries,
+    )
+
+
+async def _fetch_thread_with_retry(
+    service,
+    thread_id: str,
+    log_prefix: str,
+    max_retries: int = 3,
+):
+    """Fetch a single Gmail thread, retrying transient failures."""
+    return await _fetch_with_retry(
+        lambda: service.users().threads().get(userId="me", id=thread_id, format="full"),
+        item_id=thread_id,
+        item_label="thread",
+        log_prefix=log_prefix,
+        max_retries=max_retries,
+    )
 
 
 async def _fetch_raw_message_contents(
@@ -676,7 +856,14 @@ def _extract_headers(payload: dict, header_names: List[str]) -> Dict[str, str]:
         header_name_lower = header["name"].lower()
         if header_name_lower in target_headers:
             # Store using the original requested casing
-            headers[target_headers[header_name_lower]] = header["value"]
+            target_name = target_headers[header_name_lower]
+            value = header["value"]
+            if header_name_lower in {"to", "cc"} and target_name in headers:
+                headers[target_name] = ", ".join(
+                    part for part in (headers[target_name], value) if part
+                )
+            else:
+                headers[target_name] = value
     return headers
 
 
@@ -1259,8 +1446,112 @@ def _generate_gmail_web_url(item_id: str, account_index: int = 0) -> str:
     return f"https://mail.google.com/mail/u/{account_index}/#all/{item_id}"
 
 
+async def _fetch_search_result_headers(
+    service, message_ids: List[str]
+) -> Dict[str, Optional[Dict[str, str]]]:
+    """Fetch metadata headers for search result message IDs.
+
+    Uses the Gmail batch HTTP endpoint (one request per
+    GMAIL_SEARCH_HEADER_BATCH_SIZE chunk, with a delay between chunks),
+    falling back to sequential fetches with a delay if the batch API fails.
+    Messages that fail inside a batch (typically transient per-user
+    concurrency 429s) are retried sequentially afterwards. A message that
+    still cannot be fetched maps to None so the caller can degrade that row
+    instead of failing the whole search.
+    """
+    headers_by_id: Dict[str, Optional[Dict[str, str]]] = {}
+
+    for chunk_start in range(0, len(message_ids), GMAIL_SEARCH_HEADER_BATCH_SIZE):
+        if chunk_start:
+            await asyncio.sleep(GMAIL_REQUEST_DELAY)
+        chunk_ids = message_ids[
+            chunk_start : chunk_start + GMAIL_SEARCH_HEADER_BATCH_SIZE
+        ]
+        results: Dict[str, Dict] = {}
+
+        def _batch_callback(request_id, response, exception):
+            results[request_id] = {"data": response, "error": exception}
+
+        try:
+            batch = service.new_batch_http_request(callback=_batch_callback)
+            for mid in chunk_ids:
+                batch.add(
+                    _build_message_get_request(
+                        service, message_id=mid, message_format="metadata"
+                    ),
+                    request_id=mid,
+                )
+            await asyncio.to_thread(batch.execute)
+        except Exception as batch_error:
+            logger.warning(
+                f"[search_gmail_messages] Batch metadata fetch failed, falling back to sequential processing: {batch_error}"
+            )
+            for mid in chunk_ids:
+                mid_result, msg_data, error = await _fetch_message_with_retry(
+                    service,
+                    message_id=mid,
+                    message_format="metadata",
+                    log_prefix="search_gmail_messages",
+                )
+                results[mid_result] = {"data": msg_data, "error": error}
+                await asyncio.sleep(GMAIL_REQUEST_DELAY)
+
+        for mid in chunk_ids:
+            entry = results.get(mid, {"data": None, "error": "No result"})
+            if entry["error"] or not entry["data"]:
+                if entry["error"]:
+                    logger.debug(
+                        f"[search_gmail_messages] Metadata fetch failed for message {mid}, will retry: {entry['error']}"
+                    )
+                headers_by_id[mid] = None
+            else:
+                try:
+                    headers_by_id[mid] = _extract_headers(
+                        entry["data"].get("payload") or {}, GMAIL_METADATA_HEADERS
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        f"[search_gmail_messages] Invalid metadata for message {mid}, will retry: {exc}"
+                    )
+                    headers_by_id[mid] = None
+
+    # Retry failures one at a time. Batch failures are usually Gmail's
+    # per-user concurrency limit (429), which sequential requests don't hit.
+    failed_ids = [mid for mid in message_ids if headers_by_id.get(mid) is None]
+    if failed_ids:
+        logger.info(
+            f"[search_gmail_messages] Retrying {len(failed_ids)} failed metadata fetches sequentially"
+        )
+        for mid in failed_ids:
+            await asyncio.sleep(GMAIL_REQUEST_DELAY)
+            _, msg_data, error = await _fetch_message_with_retry(
+                service,
+                message_id=mid,
+                message_format="metadata",
+                log_prefix="search_gmail_messages",
+            )
+            if msg_data and not error:
+                try:
+                    headers_by_id[mid] = _extract_headers(
+                        msg_data.get("payload") or {}, GMAIL_METADATA_HEADERS
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        f"[search_gmail_messages] Invalid metadata for message {mid} after retry: {exc}"
+                    )
+            else:
+                logger.warning(
+                    f"[search_gmail_messages] Metadata fetch failed for message {mid} after retry: {error}"
+                )
+
+    return headers_by_id
+
+
 def _format_gmail_results_plain(
-    messages: list, query: str, next_page_token: Optional[str] = None
+    messages: list,
+    query: str,
+    next_page_token: Optional[str] = None,
+    headers_by_id: Optional[Dict[str, Optional[Dict[str, str]]]] = None,
 ) -> str:
     """Format Gmail search results in clean, LLM-friendly plain text."""
     if not messages:
@@ -1304,9 +1595,23 @@ def _format_gmail_results_plain(
         else:
             thread_url = "N/A"
 
+        lines.append(f"  {i}. Message ID: {message_id}")
+
+        if headers_by_id is not None:
+            headers = headers_by_id.get(message_id)
+            if headers is None:
+                lines.append("     Headers: unavailable (metadata fetch failed)")
+            else:
+                lines.extend(
+                    [
+                        f"     Subject: {headers.get('Subject', '(no subject)')}",
+                        f"     From: {headers.get('From', '(unknown sender)')}",
+                        f"     Date: {headers.get('Date', '(unknown date)')}",
+                    ]
+                )
+
         lines.extend(
             [
-                f"  {i}. Message ID: {message_id}",
                 f"     Web Link: {message_url}",
                 f"     Thread ID: {thread_id}",
                 f"     Thread Link: {thread_url}",
@@ -1350,6 +1655,7 @@ async def search_gmail_messages(
     user_google_email: str,
     page_size: int = 10,
     page_token: Optional[str] = None,
+    include_headers: bool = False,
 ) -> str:
     """
     Searches messages in a user's Gmail account based on a query.
@@ -1361,9 +1667,14 @@ async def search_gmail_messages(
         user_google_email (str): The user's Google email address. Required.
         page_size (int): The maximum number of messages to return. Defaults to 10.
         page_token (Optional[str]): Token for retrieving the next page of results. Use the next_page_token from a previous response.
+        include_headers (bool): If True, also fetch each message's metadata and include
+            Subject, From, and Date per result. Costs one metadata get per result,
+            grouped into HTTP batches of up to 10, plus retries for transient failures.
+            Defaults to False (output unchanged from prior versions).
 
     Returns:
         str: LLM-friendly structured results with Message IDs, Thread IDs, and clickable Gmail web interface URLs for each found message.
+        With include_headers=True, each result also includes Subject, From, and Date.
         Includes pagination token if more results are available.
     """
     logger.info(
@@ -1395,7 +1706,26 @@ async def search_gmail_messages(
     # Extract next page token for pagination
     next_page_token = response.get("nextPageToken")
 
-    formatted_output = _format_gmail_results_plain(messages, query, next_page_token)
+    headers_by_id: Optional[Dict[str, Optional[Dict[str, str]]]] = None
+    if include_headers and messages:
+        result_ids = [
+            msg["id"]
+            for msg in messages
+            if msg and isinstance(msg, dict) and msg.get("id")
+        ]
+        try:
+            headers_by_id = await _fetch_search_result_headers(service, result_ids)
+        except Exception as exc:
+            logger.exception(
+                "[search_gmail_messages] Header enrichment failed; "
+                "returning search results without headers: %s",
+                exc,
+            )
+            headers_by_id = dict.fromkeys(result_ids)
+
+    formatted_output = _format_gmail_results_plain(
+        messages, query, next_page_token, headers_by_id
+    )
 
     logger.info(f"[search_gmail_messages] Found {len(messages)} messages")
     if next_page_token:
@@ -1433,9 +1763,29 @@ async def get_gmail_message_content(
             ),
         ),
     ] = "text",
+    full: Annotated[
+        bool,
+        Field(
+            description=(
+                "When True, return the COMPLETE untruncated message: saved to local "
+                "storage and referenced by download URL/file path instead of the body "
+                "text, or inlined in the response when the server has no file storage "
+                "(stateless mode). Use for messages large enough to hit the truncation "
+                "limit, or when byte-exact fidelity is needed (pair with "
+                "body_format='raw' for a .eml export)."
+            ),
+        ),
+    ] = False,
 ) -> str:
     """
     Retrieves the full content (subject, sender, recipients, body) of a specific Gmail message.
+
+    Bodies are returned inline and truncated at 20,000 characters. Set full=True to
+    get the complete, untruncated message instead: it is exported to disk and the
+    response carries a short-lived download URL (HTTP transport) or file path (stdio
+    transport) rather than the body, so large messages never stream through the model
+    context. Stateless deployments have no file storage, so there full=True returns the
+    untruncated body inline.
 
     Args:
         message_id (str): The unique ID of the Gmail message to retrieve.
@@ -1444,15 +1794,24 @@ async def get_gmail_message_content(
             "text" (default) returns plaintext (HTML converted to text as fallback).
             "html" returns the raw HTML body as-is without conversion.
             "raw" fetches the full raw MIME message and returns the base64url-decoded content.
+        full (bool): When True, write the untruncated message to local storage and
+            return its URL/path instead of the body. body_format selects the exported
+            file type: "raw" saves the byte-exact RFC 5322 message as .eml, "html"
+            saves the raw HTML body, "text" saves the plaintext body. The "html"/"text"
+            exports decode as UTF-8 and drop undecodable bytes, so prefer "raw" when
+            byte-exact fidelity matters. In stateless mode there is no storage to write
+            to, so the untruncated content is returned inline instead.
 
     Returns:
-        str: The message details including subject, sender, date, Message-ID, recipients (To, Cc), and body content.
+        str: The message details including subject, sender, date, Message-ID, recipients
+            (To, Cc), and body content — or, when full=True, the saved file's download
+            URL or path in place of the body (the untruncated body itself in stateless
+            mode).
     """
     logger.info(
-        f"[get_gmail_message_content] Invoked. Message ID: '{message_id}', Email: '{user_google_email}'"
+        f"[get_gmail_message_content] Invoked. Message ID: '{message_id}', "
+        f"Email: '{user_google_email}', body_format='{body_format}', full={full}"
     )
-
-    logger.info(f"[get_gmail_message_content] Using service for: {user_google_email}")
 
     # Fetch message metadata first to get headers
     message_metadata = await asyncio.to_thread(
@@ -1470,6 +1829,10 @@ async def get_gmail_message_content(
     headers = _extract_headers(
         message_metadata.get("payload", {}), GMAIL_METADATA_HEADERS
     )
+
+    # Full export: hand back a file reference instead of the (truncated) body.
+    if full:
+        return await _export_full_message(service, message_id, headers, body_format)
 
     # Handle raw format separately - fetch with format="raw" and return decoded MIME
     if body_format == "raw":
@@ -1581,6 +1944,9 @@ async def get_gmail_messages_content_batch(
     _validate_message_batch_options(format, body_format)
 
     output_messages = []
+    message_format: Literal["metadata", "full"] = (
+        "metadata" if format == "metadata" or body_format == "raw" else "full"
+    )
 
     # Process in smaller chunks to prevent SSL connection exhaustion
     for chunk_start in range(0, len(message_ids), GMAIL_BATCH_SIZE):
@@ -1591,23 +1957,21 @@ async def get_gmail_messages_content_batch(
             """Callback for batch requests"""
             results[request_id] = {"data": response, "error": exception}
 
+        batch_completed = False
+
         # Try to use batch API
         try:
             batch = service.new_batch_http_request(callback=_batch_callback)
 
             for mid in chunk_ids:
-                if format == "metadata" or body_format == "raw":
-                    req = _build_message_get_request(
-                        service, message_id=mid, message_format="metadata"
-                    )
-                else:
-                    req = _build_message_get_request(
-                        service, message_id=mid, message_format="full"
-                    )
+                req = _build_message_get_request(
+                    service, message_id=mid, message_format=message_format
+                )
                 batch.add(req, request_id=mid)
 
             # Execute batch request
             await asyncio.to_thread(batch.execute)
+            batch_completed = True
 
         except Exception as batch_error:
             # Fallback to sequential processing instead of parallel to prevent SSL exhaustion
@@ -1617,11 +1981,6 @@ async def get_gmail_messages_content_batch(
 
             # Process messages sequentially with small delays to prevent connection exhaustion
             for mid in chunk_ids:
-                message_format: Literal["metadata", "full"] = (
-                    "metadata"
-                    if format == "metadata" or body_format == "raw"
-                    else "full"
-                )
                 mid_result, msg_data, error = await _fetch_message_with_retry(
                     service,
                     message_id=mid,
@@ -1630,6 +1989,29 @@ async def get_gmail_messages_content_batch(
                 )
                 results[mid_result] = {"data": msg_data, "error": error}
                 # Brief delay between requests to allow connection cleanup
+                await asyncio.sleep(GMAIL_REQUEST_DELAY)
+
+        # Sub-requests that failed with a transient error (e.g. 429 rate limit)
+        # inside an otherwise successful batch response: re-fetch only those IDs
+        # and merge. The sequential fallback has already exhausted its retries.
+        retryable_ids = (
+            _retryable_result_ids(results, chunk_ids) if batch_completed else []
+        )
+        if retryable_ids:
+            logger.warning(
+                f"[get_gmail_messages_content_batch] {len(retryable_ids)}/{len(chunk_ids)} "
+                f"messages failed with retryable errors; re-fetching: {retryable_ids}"
+            )
+            # Backoff briefly so the rate limit has time to reset.
+            await asyncio.sleep(GMAIL_RATE_LIMIT_BACKOFF)
+            for mid in retryable_ids:
+                mid_result, msg_data, error = await _fetch_message_with_retry(
+                    service,
+                    message_id=mid,
+                    message_format=message_format,
+                    log_prefix="get_gmail_messages_content_batch",
+                )
+                results[mid_result] = {"data": msg_data, "error": error}
                 await asyncio.sleep(GMAIL_REQUEST_DELAY)
 
         raw_contents: Optional[Dict[str, str]] = None
@@ -1712,6 +2094,17 @@ async def get_gmail_messages_content_batch(
     final_output += "\n---\n\n".join(output_messages)
 
     return final_output
+
+
+def _attachment_metadata_fields(depth: int) -> str:
+    """Build a metadata-only fields mask for a MIME tree of the given depth."""
+    node = "filename,mimeType,body(attachmentId,size)"
+    for _ in range(depth):
+        node = f"filename,mimeType,body(attachmentId,size),parts({node})"
+    return f"payload({node})"
+
+
+_ATTACHMENT_METADATA_FIELDS = _attachment_metadata_fields(6)
 
 
 @server.tool(
@@ -1820,7 +2213,6 @@ async def get_gmail_attachment_content(
         filename = None
         mime_type = None
         try:
-            # Use format="full" with fields to limit response to attachment metadata only
             message_full = await asyncio.to_thread(
                 service.users()
                 .messages()
@@ -1828,7 +2220,7 @@ async def get_gmail_attachment_content(
                     userId="me",
                     id=message_id,
                     format="full",
-                    fields="payload(parts(filename,mimeType,body(attachmentId,size)),body(attachmentId,size),filename,mimeType)",
+                    fields=_ATTACHMENT_METADATA_FIELDS,
                 )
                 .execute
             )
@@ -2657,10 +3049,7 @@ def _format_thread_content(
 
     # Extract thread subject from the first message
     first_message = messages[0]
-    first_headers = {
-        h["name"]: h["value"]
-        for h in first_message.get("payload", {}).get("headers", [])
-    }
+    first_headers = _extract_headers(first_message.get("payload", {}), ["Subject"])
     thread_subject = first_headers.get("Subject", "(no subject)")
 
     # Build the thread content
@@ -2675,11 +3064,13 @@ def _format_thread_content(
     for i, message in enumerate(messages, 1):
         payload = message.get("payload", {})
         # Extract headers
-        headers = {h["name"]: h["value"] for h in payload.get("headers", [])}
+        headers = _extract_headers(payload, GMAIL_METADATA_HEADERS)
 
         sender = headers.get("From", "(unknown sender)")
         date = headers.get("Date", "(unknown date)")
         subject = headers.get("Subject", "(no subject)")
+        to = headers.get("To", "")
+        cc = headers.get("Cc", "")
         rfc822_message_id = headers.get("Message-ID", "")
         in_reply_to = headers.get("In-Reply-To", "")
         references = headers.get("References", "")
@@ -2712,6 +3103,12 @@ def _format_thread_content(
                 f"From: {sender}",
                 f"Date: {date}",
             ]
+        )
+        content_lines.append(
+            f"To: {to}" if "To" in headers else "To: [not present in Gmail response]"
+        )
+        content_lines.append(
+            f"Cc: {cc}" if "Cc" in headers else "Cc: [not present in Gmail response]"
         )
 
         if rfc822_message_id:
@@ -2914,6 +3311,8 @@ async def get_gmail_threads_content_batch(
         chunk_ids = thread_ids[chunk_start : chunk_start + GMAIL_BATCH_SIZE]
         results: Dict[str, Dict] = {}
 
+        batch_completed = False
+
         # Try to use batch API
         try:
             batch = service.new_batch_http_request(callback=_batch_callback)
@@ -2924,6 +3323,7 @@ async def get_gmail_threads_content_batch(
 
             # Execute batch request
             await asyncio.to_thread(batch.execute)
+            batch_completed = True
 
         except Exception as batch_error:
             # Fallback to sequential processing instead of parallel to prevent SSL exhaustion
@@ -2931,38 +3331,36 @@ async def get_gmail_threads_content_batch(
                 f"[get_gmail_threads_content_batch] Batch API failed, falling back to sequential processing: {batch_error}"
             )
 
-            async def fetch_thread_with_retry(tid: str, max_retries: int = 3):
-                """Fetch a single thread with exponential backoff retry for SSL errors"""
-                for attempt in range(max_retries):
-                    try:
-                        thread = await asyncio.to_thread(
-                            service.users()
-                            .threads()
-                            .get(userId="me", id=tid, format="full")
-                            .execute
-                        )
-                        return tid, thread, None
-                    except ssl.SSLError as ssl_error:
-                        if attempt < max_retries - 1:
-                            # Exponential backoff: 1s, 2s, 4s
-                            delay = 2**attempt
-                            logger.warning(
-                                f"[get_gmail_threads_content_batch] SSL error for thread {tid} on attempt {attempt + 1}: {ssl_error}. Retrying in {delay}s..."
-                            )
-                            await asyncio.sleep(delay)
-                        else:
-                            logger.error(
-                                f"[get_gmail_threads_content_batch] SSL error for thread {tid} on final attempt: {ssl_error}"
-                            )
-                            return tid, None, ssl_error
-                    except Exception as e:
-                        return tid, None, e
-
             # Process threads sequentially with small delays to prevent connection exhaustion
             for tid in chunk_ids:
-                tid_result, thread_data, error = await fetch_thread_with_retry(tid)
+                tid_result, thread_data, error = await _fetch_thread_with_retry(
+                    service,
+                    thread_id=tid,
+                    log_prefix="get_gmail_threads_content_batch",
+                )
                 results[tid_result] = {"data": thread_data, "error": error}
                 # Brief delay between requests to allow connection cleanup
+                await asyncio.sleep(GMAIL_REQUEST_DELAY)
+
+        # Sub-requests that failed with a transient error (e.g. 429 rate limit)
+        # inside an otherwise successful batch response: re-fetch only those IDs
+        # and merge. The sequential fallback has already exhausted its retries.
+        retryable_ids = (
+            _retryable_result_ids(results, chunk_ids) if batch_completed else []
+        )
+        if retryable_ids:
+            logger.warning(
+                f"[get_gmail_threads_content_batch] {len(retryable_ids)}/{len(chunk_ids)} "
+                f"threads failed with retryable errors; re-fetching: {retryable_ids}"
+            )
+            await asyncio.sleep(GMAIL_RATE_LIMIT_BACKOFF)
+            for tid in retryable_ids:
+                tid_result, thread_data, error = await _fetch_thread_with_retry(
+                    service,
+                    thread_id=tid,
+                    log_prefix="get_gmail_threads_content_batch",
+                )
+                results[tid_result] = {"data": thread_data, "error": error}
                 await asyncio.sleep(GMAIL_REQUEST_DELAY)
 
         # Process results for this chunk
