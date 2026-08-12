@@ -197,6 +197,98 @@ def _parse_date_header(
     return None, None
 
 
+def _parse_message_id_chain(header_value: Optional[str]) -> list[str]:
+    """Extract Message-IDs from a reply header value."""
+    if not header_value:
+        return []
+
+    message_ids = re.findall(r"<[^>]+>", header_value)
+    if message_ids:
+        return message_ids
+
+    return header_value.split()
+
+
+def _derive_reply_headers(
+    thread_message_ids: list[str],
+    in_reply_to: Optional[str],
+    references: Optional[str],
+) -> tuple[Optional[str], Optional[str]]:
+    """Fill missing reply headers while preserving caller intent."""
+    derived_in_reply_to = in_reply_to
+    derived_references = references
+
+    if not thread_message_ids:
+        return derived_in_reply_to, derived_references
+
+    if not derived_in_reply_to:
+        reference_chain = _parse_message_id_chain(derived_references)
+        derived_in_reply_to = (
+            reference_chain[-1] if reference_chain else thread_message_ids[-1]
+        )
+
+    if not derived_references:
+        if derived_in_reply_to and derived_in_reply_to in thread_message_ids:
+            reply_index = thread_message_ids.index(derived_in_reply_to)
+            derived_references = " ".join(thread_message_ids[: reply_index + 1])
+        elif derived_in_reply_to:
+            derived_references = derived_in_reply_to
+        else:
+            derived_references = " ".join(thread_message_ids)
+
+    return derived_in_reply_to, derived_references
+
+
+def _derive_reply_all_recipients(
+    target: Mapping[str, Any],
+    exclude: set[str],
+    to: Optional[str],
+    cc: Optional[str],
+) -> tuple[Optional[str], Optional[str]]:
+    """Fill missing reply-all recipients from the message being answered.
+
+    To = whoever sent it (Reply-To when set, else From). Cc = every other
+    participant, minus `exclude` and minus anyone already in To. Caller-supplied
+    values win, mirroring _derive_reply_headers.
+
+    `exclude` applies to To as well as Cc, so replying to a message the account
+    sent itself derives no recipient rather than addressing the account; the
+    caller passes `to` explicitly for that case.
+
+    Only the authenticated address and the selected Send As alias can be excluded
+    reliably: a caller sending under several aliases still has to post-filter,
+    which is why this is opt-in rather than applied to every threaded send.
+    """
+    excluded = {addr.lower() for addr in exclude if addr}
+    sender = target.get("reply_to") or target.get("from") or ""
+
+    derived_to = to
+    if not derived_to:
+        derived_to = ", ".join(
+            addr
+            for _name, addr in getaddresses([sender])
+            if addr and addr.lower() not in excluded
+        )
+
+    derived_cc = cc
+    if not derived_cc:
+        seen = {addr.lower() for _n, addr in getaddresses([derived_to or ""]) if addr}
+        seen |= excluded
+        others = []
+        # The sender leads the Cc candidates so an explicit `to` that redirects the
+        # reply still keeps the person being replied to on it. When To was derived
+        # from the sender they are already in `seen`, so this is a no-op there.
+        for _name, addr in getaddresses(
+            [sender, target.get("to", ""), target.get("cc", "")]
+        ):
+            if addr and addr.lower() not in seen:
+                seen.add(addr.lower())
+                others.append(addr)
+        derived_cc = ", ".join(others) or None
+
+    return derived_to or None, derived_cc
+
+
 def _analyze_thread_ownership_impl(
     thread_response: dict,
     user_google_email: str,
