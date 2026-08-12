@@ -61,7 +61,7 @@
       },
       "font_size": {
         "default": null,
-        "type": "integer",
+        "type": "number",
         "description": "Font size in points"
       },
       "font_family": {
@@ -606,7 +606,7 @@
           "font_size": {
             "anyOf": [
               {
-                "type": "integer"
+                "type": "number"
               },
               {
                 "type": "null"
@@ -1752,6 +1752,64 @@
               }
             ],
             "default": null
+          },
+          "border_edges": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "border_color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "border_width": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "border_padding": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "border_dash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "required": [
@@ -2092,6 +2150,20 @@
             "anyOf": [
               {
                 "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "border_edges": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
               },
               {
                 "type": "null"
