@@ -65,6 +65,7 @@ from gmail.gmail_helpers import (
     _is_benign_signature_http_error,
     _retryable_result_ids,
     _signature_fetch_tool_error,
+    _signature_html_to_text,
 )
 
 logger = logging.getLogger(__name__)
@@ -589,7 +590,7 @@ def _append_signature_to_body(
         separator = "<br><br>" if body.strip() else ""
         return f"{body}{separator}{signature_html}"
 
-    signature_text = _html_to_text(signature_html).strip()
+    signature_text = _signature_html_to_text(signature_html).strip()
     if not signature_text:
         return body
     separator = "\n\n" if body.strip() else ""
@@ -666,7 +667,7 @@ def _build_quoted_reply_body(
     # Plain text path
     sig_block = ""
     if signature_html and signature_html.strip():
-        sig_text = _html_to_text(signature_html).strip()
+        sig_text = _signature_html_to_text(signature_html).strip()
         if sig_text:
             sig_block = f"\n\n{sig_text}"
 
@@ -965,7 +966,13 @@ async def _fetch_thread_reply_context(
             if msg.get("message_id") == in_reply_to:
                 target = msg
                 break
-    if target is None:
+    if target is None and message_contexts:
+        # message_contexts can be empty even though the thread itself has
+        # messages, if every message in it is trashed (see the TRASH skip
+        # above) -- message_contexts[-1] would then raise IndexError.
+        # Leaving target as None is safe: callers already treat a missing
+        # target as "no reply context available" and degrade gracefully
+        # (e.g. draft_gmail_message falls back to an unthreaded draft).
         target = message_contexts[-1]
 
     return {

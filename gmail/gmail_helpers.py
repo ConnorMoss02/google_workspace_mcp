@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
+import re
 import ssl
 from collections import Counter
 from datetime import datetime, timezone
 from email.utils import getaddresses, parseaddr, parsedate_to_datetime
+from html.parser import HTMLParser
 from typing import Any, Callable, Iterable, Literal, Mapping, Optional
 
 from fastmcp.exceptions import ToolError as ToolExecutionError
@@ -399,3 +401,89 @@ def _build_forward_content(
         subject = f"Fwd: {original_subject}"
 
     return subject, forward_body, body_format
+
+
+class _HTMLSignatureExtractor(HTMLParser):
+    """Extract text from signature HTML, preserving block-level line breaks.
+
+    _HTMLTextExtractor (in gmail_tools.py) is tuned for reading arbitrary
+    message bodies, where flowing single-line text is preferred -- it inserts
+    no separator at all between block elements (</div><div> etc.), and its
+    get_text() collapses every whitespace run, including newlines, to a
+    single space. Gmail signatures are structured line-by-line (name /
+    title / phone / ...) using <br> or one <div>/<p> per line; run through
+    the general extractor, adjacent lines end up concatenated with zero
+    whitespace between them (e.g. "-Erik" immediately followed by
+    "Erik Holzhauer" with no break at all), which no amount of whitespace
+    collapsing afterward can repair since there was never a separating
+    character to begin with. This extractor treats block boundaries as
+    real newlines and only collapses horizontal whitespace within a line.
+    """
+
+    _BLOCK_TAGS = ("div", "p", "tr", "li")
+
+    def __init__(self):
+        super().__init__()
+        self._text = []
+        self._skip = False
+
+    def _append_line_break(self, *, force: bool = False) -> None:
+        """Append a structural break, optionally preserving an empty line."""
+        if not self._text:
+            return
+        if force or self._text[-1] != "\n":
+            self._text.append("\n")
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("script", "style"):
+            self._skip = True
+            return
+        if self._skip:
+            return
+        if tag == "br":
+            # Unlike a block boundary, consecutive <br> tags intentionally
+            # represent empty lines.
+            self._append_line_break(force=True)
+        elif tag in self._BLOCK_TAGS:
+            # A nested block starts a new visual line even when its parent
+            # already contains text (for example, Name<div>Title</div>).
+            self._append_line_break()
+
+    def handle_endtag(self, tag):
+        # Closing a block ends its visual line. _append_line_break avoids a
+        # duplicate when the block already ended with a nested block or <br>.
+        if tag in ("script", "style"):
+            self._skip = False
+        elif tag in self._BLOCK_TAGS and not self._skip:
+            self._append_line_break()
+
+    def handle_data(self, data):
+        if not self._skip:
+            # HTML collapses source whitespace. Convert it here so formatting
+            # newlines in pretty-printed markup cannot become visible breaks;
+            # only the structural delimiters above emit "\n".
+            normalized = re.sub(r"\s+", " ", data)
+            if normalized == " " and (not self._text or self._text[-1] == "\n"):
+                return
+            self._text.append(normalized)
+
+    def get_text(self) -> str:
+        raw = "".join(self._text)
+        # Collapse horizontal whitespace within each line, but keep the
+        # newlines that mark real line/paragraph breaks. Adjacent block
+        # boundaries (e.g. </div><div>) produce back-to-back newlines,
+        # which the re.sub below caps at one blank line.
+        lines = [" ".join(line.split()) for line in raw.splitlines()]
+        text = "\n".join(lines)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
+
+
+def _signature_html_to_text(signature_html: str) -> str:
+    """Convert Gmail signature HTML to plain text, preserving line breaks."""
+    try:
+        parser = _HTMLSignatureExtractor()
+        parser.feed(signature_html)
+        return parser.get_text()
+    except Exception:
+        return signature_html

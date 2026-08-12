@@ -690,6 +690,41 @@ async def test_draft_gmail_message_gracefully_degrades_when_thread_has_no_messag
     assert "threadId" not in create_kwargs["body"]["message"]
 
 
+@pytest.mark.asyncio
+async def test_draft_gmail_message_gracefully_degrades_when_all_messages_trashed():
+    mock_service = Mock()
+    mock_service.users().drafts().create().execute.return_value = {"id": "draft_reply"}
+    trashed_messages = [
+        _thread_message("<msg1@example.com>"),
+        _thread_message("<msg2@example.com>"),
+    ]
+    for message in trashed_messages:
+        message["labelIds"] = ["TRASH"]
+    mock_service.users().threads().get().execute.return_value = {
+        "messages": trashed_messages
+    }
+
+    result = await _unwrap(draft_gmail_message)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        to="recipient@example.com",
+        subject="Meeting tomorrow",
+        body="Thanks for the update.",
+        thread_id="thread123",
+        include_signature=False,
+    )
+
+    assert "Draft created! Draft ID: draft_reply" in result
+    create_kwargs = (
+        mock_service.users.return_value.drafts.return_value.create.call_args.kwargs
+    )
+    parsed = _parse_raw_message(create_kwargs["body"]["message"]["raw"])
+
+    assert parsed["In-Reply-To"] is None
+    assert parsed["References"] is None
+    assert "threadId" not in create_kwargs["body"]["message"]
+
+
 # ---------------------------------------------------------------------------
 # URL-based attachment tests
 # ---------------------------------------------------------------------------
