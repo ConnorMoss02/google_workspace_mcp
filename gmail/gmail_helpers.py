@@ -427,6 +427,13 @@ class _HTMLSignatureExtractor(HTMLParser):
         self._text = []
         self._skip = False
 
+    def _append_line_break(self, *, force: bool = False) -> None:
+        """Append a structural break, optionally preserving an empty line."""
+        if not self._text:
+            return
+        if force or self._text[-1] != "\n":
+            self._text.append("\n")
+
     def handle_starttag(self, tag, attrs):
         if tag in ("script", "style"):
             self._skip = True
@@ -434,22 +441,33 @@ class _HTMLSignatureExtractor(HTMLParser):
         if self._skip:
             return
         if tag == "br":
-            self._text.append("\n")
+            # Unlike a block boundary, consecutive <br> tags intentionally
+            # represent empty lines.
+            self._append_line_break(force=True)
+        elif tag in self._BLOCK_TAGS:
+            # A nested block starts a new visual line even when its parent
+            # already contains text (for example, Name<div>Title</div>).
+            self._append_line_break()
 
     def handle_endtag(self, tag):
-        # Break only on the closing tag of a block container (not also on
-        # its opening tag) so ordinary consecutive lines get a single
-        # newline between them rather than a blank line; a genuinely empty
-        # paragraph (e.g. "<p><br></p>" used as an intentional spacer)
-        # still produces a blank line via its own <br>.
+        # Closing a block ends its visual line. _append_line_break avoids a
+        # duplicate when the block already ended with a nested block or <br>.
         if tag in ("script", "style"):
             self._skip = False
         elif tag in self._BLOCK_TAGS and not self._skip:
-            self._text.append("\n")
+            self._append_line_break()
 
     def handle_data(self, data):
         if not self._skip:
-            self._text.append(data)
+            # HTML collapses source whitespace. Convert it here so formatting
+            # newlines in pretty-printed markup cannot become visible breaks;
+            # only the structural delimiters above emit "\n".
+            normalized = re.sub(r"\s+", " ", data)
+            if normalized == " " and (
+                not self._text or self._text[-1] == "\n"
+            ):
+                return
+            self._text.append(normalized)
 
     def get_text(self) -> str:
         raw = "".join(self._text)
