@@ -9,7 +9,6 @@ import asyncio
 import base64
 import binascii
 import re
-import ssl
 import mimetypes
 import html
 from html.parser import HTMLParser
@@ -62,7 +61,9 @@ from gmail.gmail_helpers import (
     RAW_BODY_TRUNCATE_LIMIT,
     _analyze_thread_ownership_impl,
     _build_forward_content,
+    _fetch_with_retry,
     _is_benign_signature_http_error,
+    _retryable_result_ids,
     _signature_fetch_tool_error,
 )
 
@@ -74,6 +75,7 @@ GMAIL_BATCH_SIZE = 25
 # trip Gmail's per-user concurrency limit ("Too many concurrent requests").
 GMAIL_SEARCH_HEADER_BATCH_SIZE = 10
 GMAIL_REQUEST_DELAY = 0.1
+GMAIL_RATE_LIMIT_BACKOFF = 2.0
 HTML_BODY_TRUNCATE_LIMIT = 20000
 LOW_VALUE_TEXT_PLACEHOLDERS = (
     "your client does not support html",
@@ -526,29 +528,32 @@ async def _fetch_message_with_retry(
     log_prefix: str,
     max_retries: int = 3,
 ):
-    """Fetch a single Gmail message with SSL retry handling."""
-    for attempt in range(max_retries):
-        try:
-            message = await asyncio.to_thread(
-                _build_message_get_request(
-                    service, message_id=message_id, message_format=message_format
-                ).execute
-            )
-            return message_id, message, None
-        except ssl.SSLError as ssl_error:
-            if attempt < max_retries - 1:
-                delay = 2**attempt
-                logger.warning(
-                    f"[{log_prefix}] SSL error for message {message_id} on attempt {attempt + 1}: {ssl_error}. Retrying in {delay}s..."
-                )
-                await asyncio.sleep(delay)
-            else:
-                logger.error(
-                    f"[{log_prefix}] SSL error for message {message_id} on final attempt: {ssl_error}"
-                )
-                return message_id, None, ssl_error
-        except Exception as exc:
-            return message_id, None, exc
+    """Fetch a single Gmail message, retrying transient failures."""
+    return await _fetch_with_retry(
+        lambda: _build_message_get_request(
+            service, message_id=message_id, message_format=message_format
+        ),
+        item_id=message_id,
+        item_label="message",
+        log_prefix=log_prefix,
+        max_retries=max_retries,
+    )
+
+
+async def _fetch_thread_with_retry(
+    service,
+    thread_id: str,
+    log_prefix: str,
+    max_retries: int = 3,
+):
+    """Fetch a single Gmail thread, retrying transient failures."""
+    return await _fetch_with_retry(
+        lambda: service.users().threads().get(userId="me", id=thread_id, format="full"),
+        item_id=thread_id,
+        item_label="thread",
+        log_prefix=log_prefix,
+        max_retries=max_retries,
+    )
 
 
 async def _fetch_raw_message_contents(
@@ -1932,6 +1937,9 @@ async def get_gmail_messages_content_batch(
     _validate_message_batch_options(format, body_format)
 
     output_messages = []
+    message_format: Literal["metadata", "full"] = (
+        "metadata" if format == "metadata" or body_format == "raw" else "full"
+    )
 
     # Process in smaller chunks to prevent SSL connection exhaustion
     for chunk_start in range(0, len(message_ids), GMAIL_BATCH_SIZE):
@@ -1942,23 +1950,21 @@ async def get_gmail_messages_content_batch(
             """Callback for batch requests"""
             results[request_id] = {"data": response, "error": exception}
 
+        batch_completed = False
+
         # Try to use batch API
         try:
             batch = service.new_batch_http_request(callback=_batch_callback)
 
             for mid in chunk_ids:
-                if format == "metadata" or body_format == "raw":
-                    req = _build_message_get_request(
-                        service, message_id=mid, message_format="metadata"
-                    )
-                else:
-                    req = _build_message_get_request(
-                        service, message_id=mid, message_format="full"
-                    )
+                req = _build_message_get_request(
+                    service, message_id=mid, message_format=message_format
+                )
                 batch.add(req, request_id=mid)
 
             # Execute batch request
             await asyncio.to_thread(batch.execute)
+            batch_completed = True
 
         except Exception as batch_error:
             # Fallback to sequential processing instead of parallel to prevent SSL exhaustion
@@ -1968,11 +1974,6 @@ async def get_gmail_messages_content_batch(
 
             # Process messages sequentially with small delays to prevent connection exhaustion
             for mid in chunk_ids:
-                message_format: Literal["metadata", "full"] = (
-                    "metadata"
-                    if format == "metadata" or body_format == "raw"
-                    else "full"
-                )
                 mid_result, msg_data, error = await _fetch_message_with_retry(
                     service,
                     message_id=mid,
@@ -1981,6 +1982,29 @@ async def get_gmail_messages_content_batch(
                 )
                 results[mid_result] = {"data": msg_data, "error": error}
                 # Brief delay between requests to allow connection cleanup
+                await asyncio.sleep(GMAIL_REQUEST_DELAY)
+
+        # Sub-requests that failed with a transient error (e.g. 429 rate limit)
+        # inside an otherwise successful batch response: re-fetch only those IDs
+        # and merge. The sequential fallback has already exhausted its retries.
+        retryable_ids = (
+            _retryable_result_ids(results, chunk_ids) if batch_completed else []
+        )
+        if retryable_ids:
+            logger.warning(
+                f"[get_gmail_messages_content_batch] {len(retryable_ids)}/{len(chunk_ids)} "
+                f"messages failed with retryable errors; re-fetching: {retryable_ids}"
+            )
+            # Backoff briefly so the rate limit has time to reset.
+            await asyncio.sleep(GMAIL_RATE_LIMIT_BACKOFF)
+            for mid in retryable_ids:
+                mid_result, msg_data, error = await _fetch_message_with_retry(
+                    service,
+                    message_id=mid,
+                    message_format=message_format,
+                    log_prefix="get_gmail_messages_content_batch",
+                )
+                results[mid_result] = {"data": msg_data, "error": error}
                 await asyncio.sleep(GMAIL_REQUEST_DELAY)
 
         raw_contents: Optional[Dict[str, str]] = None
@@ -3270,6 +3294,8 @@ async def get_gmail_threads_content_batch(
         chunk_ids = thread_ids[chunk_start : chunk_start + GMAIL_BATCH_SIZE]
         results: Dict[str, Dict] = {}
 
+        batch_completed = False
+
         # Try to use batch API
         try:
             batch = service.new_batch_http_request(callback=_batch_callback)
@@ -3280,6 +3306,7 @@ async def get_gmail_threads_content_batch(
 
             # Execute batch request
             await asyncio.to_thread(batch.execute)
+            batch_completed = True
 
         except Exception as batch_error:
             # Fallback to sequential processing instead of parallel to prevent SSL exhaustion
@@ -3287,38 +3314,36 @@ async def get_gmail_threads_content_batch(
                 f"[get_gmail_threads_content_batch] Batch API failed, falling back to sequential processing: {batch_error}"
             )
 
-            async def fetch_thread_with_retry(tid: str, max_retries: int = 3):
-                """Fetch a single thread with exponential backoff retry for SSL errors"""
-                for attempt in range(max_retries):
-                    try:
-                        thread = await asyncio.to_thread(
-                            service.users()
-                            .threads()
-                            .get(userId="me", id=tid, format="full")
-                            .execute
-                        )
-                        return tid, thread, None
-                    except ssl.SSLError as ssl_error:
-                        if attempt < max_retries - 1:
-                            # Exponential backoff: 1s, 2s, 4s
-                            delay = 2**attempt
-                            logger.warning(
-                                f"[get_gmail_threads_content_batch] SSL error for thread {tid} on attempt {attempt + 1}: {ssl_error}. Retrying in {delay}s..."
-                            )
-                            await asyncio.sleep(delay)
-                        else:
-                            logger.error(
-                                f"[get_gmail_threads_content_batch] SSL error for thread {tid} on final attempt: {ssl_error}"
-                            )
-                            return tid, None, ssl_error
-                    except Exception as e:
-                        return tid, None, e
-
             # Process threads sequentially with small delays to prevent connection exhaustion
             for tid in chunk_ids:
-                tid_result, thread_data, error = await fetch_thread_with_retry(tid)
+                tid_result, thread_data, error = await _fetch_thread_with_retry(
+                    service,
+                    thread_id=tid,
+                    log_prefix="get_gmail_threads_content_batch",
+                )
                 results[tid_result] = {"data": thread_data, "error": error}
                 # Brief delay between requests to allow connection cleanup
+                await asyncio.sleep(GMAIL_REQUEST_DELAY)
+
+        # Sub-requests that failed with a transient error (e.g. 429 rate limit)
+        # inside an otherwise successful batch response: re-fetch only those IDs
+        # and merge. The sequential fallback has already exhausted its retries.
+        retryable_ids = (
+            _retryable_result_ids(results, chunk_ids) if batch_completed else []
+        )
+        if retryable_ids:
+            logger.warning(
+                f"[get_gmail_threads_content_batch] {len(retryable_ids)}/{len(chunk_ids)} "
+                f"threads failed with retryable errors; re-fetching: {retryable_ids}"
+            )
+            await asyncio.sleep(GMAIL_RATE_LIMIT_BACKOFF)
+            for tid in retryable_ids:
+                tid_result, thread_data, error = await _fetch_thread_with_retry(
+                    service,
+                    thread_id=tid,
+                    log_prefix="get_gmail_threads_content_batch",
+                )
+                results[tid_result] = {"data": thread_data, "error": error}
                 await asyncio.sleep(GMAIL_REQUEST_DELAY)
 
         # Process results for this chunk
