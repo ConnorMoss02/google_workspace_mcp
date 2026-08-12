@@ -18,6 +18,7 @@ from googleapiclient.errors import HttpError
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from gmail.gmail_tools import (
+    _fetch_message_with_retry,
     _is_retryable_error,
     get_gmail_messages_content_batch,
     get_gmail_threads_content_batch,
@@ -238,3 +239,114 @@ async def test_thread_batch_refetches_rate_limited_thread(monkeypatch):
     assert "Subject thread-1" in result
     assert "Subject thread-2" in result
     assert calls == {"thread-1": 1, "thread-2": 2}
+
+
+@pytest.mark.asyncio
+async def test_message_retry_uses_three_backoffs(monkeypatch):
+    """Three retries use the documented 1s/2s/4s exponential backoff."""
+    attempts = 0
+    sleeps = []
+
+    def message_get(**kwargs):
+        request = Mock()
+
+        def execute():
+            nonlocal attempts
+            attempts += 1
+            if attempts <= 3:
+                raise HttpError(_FakeResp(429), b"{}")
+            return _message_response(kwargs["id"])
+
+        request.execute.side_effect = execute
+        return request
+
+    async def record_sleep(delay):
+        sleeps.append(delay)
+
+    service = Mock()
+    service.users().messages().get.side_effect = message_get
+    monkeypatch.setattr("gmail.gmail_tools.asyncio.sleep", record_sleep)
+
+    _, message, error = await _fetch_message_with_retry(
+        service,
+        message_id="msg-1",
+        message_format="full",
+        log_prefix="test",
+    )
+
+    assert error is None
+    assert message["id"] == "msg-1"
+    assert attempts == 4
+    assert sleeps == [1, 2, 4]
+
+
+@pytest.mark.asyncio
+async def test_message_batch_failure_does_not_restart_exhausted_retries(monkeypatch):
+    """A global batch failure gets one sequential retry cycle, not two."""
+    attempts = 0
+
+    def message_get(**kwargs):
+        request = Mock()
+
+        def execute():
+            nonlocal attempts
+            attempts += 1
+            raise HttpError(_FakeResp(429), b"{}")
+
+        request.execute.side_effect = execute
+        return request
+
+    async def no_sleep(_delay):
+        return None
+
+    batch = Mock()
+    batch.execute.side_effect = RuntimeError("batch transport failed")
+    service = Mock()
+    service.users().messages().get.side_effect = message_get
+    service.new_batch_http_request.return_value = batch
+    monkeypatch.setattr("gmail.gmail_tools.asyncio.sleep", no_sleep)
+
+    result = await _unwrap(get_gmail_messages_content_batch)(
+        service=service,
+        message_ids=["msg-1"],
+        user_google_email="user@example.com",
+    )
+
+    assert "⚠️ Message msg-1" in result
+    assert attempts == 4
+
+
+@pytest.mark.asyncio
+async def test_thread_batch_failure_does_not_restart_exhausted_retries(monkeypatch):
+    """Thread fallback also gets only one sequential retry cycle."""
+    attempts = 0
+
+    def thread_get(**_kwargs):
+        request = Mock()
+
+        def execute():
+            nonlocal attempts
+            attempts += 1
+            raise HttpError(_FakeResp(429), b"{}")
+
+        request.execute.side_effect = execute
+        return request
+
+    async def no_sleep(_delay):
+        return None
+
+    batch = Mock()
+    batch.execute.side_effect = RuntimeError("batch transport failed")
+    service = Mock()
+    service.users().threads().get.side_effect = thread_get
+    service.new_batch_http_request.return_value = batch
+    monkeypatch.setattr("gmail.gmail_tools.asyncio.sleep", no_sleep)
+
+    result = await _unwrap(get_gmail_threads_content_batch)(
+        service=service,
+        thread_ids=["thread-1"],
+        user_google_email="user@example.com",
+    )
+
+    assert "⚠️ Thread thread-1" in result
+    assert attempts == 4
