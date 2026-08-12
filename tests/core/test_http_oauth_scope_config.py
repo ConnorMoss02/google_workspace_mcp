@@ -140,7 +140,7 @@ def test_configure_server_for_http_rejects_google_provider_without_client_secret
         server_module.configure_server_for_http()
 
 
-def test_configure_server_for_http_rejects_public_client_without_jwt_key(
+def test_configure_server_for_http_rejects_external_provider_without_jwt_key(
     monkeypatch,
 ):
     monkeypatch.delenv("FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY", raising=False)
