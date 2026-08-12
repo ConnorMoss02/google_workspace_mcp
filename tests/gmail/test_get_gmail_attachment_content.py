@@ -60,82 +60,6 @@ def _build_mock_service(
     return mock_service
 
 
-def _build_mock_service_nested(
-    payload: bytes,
-    *,
-    filename: str,
-    mime_type: str,
-    attachment_id: str,
-) -> Mock:
-    """Build a Mock service whose payload mirrors an S/MIME-signed message:
-    multipart/signed -> [multipart/mixed -> [the real attachment], smime.p7s].
-    The real attachment sits two levels deep, and the sibling signature part
-    is itself named ``smime.p7s`` with its own attachmentId.
-
-    A real Gmail API `fields` mask is not recursive: `parts(...)` nested `n`
-    levels deep in the mask string only returns `n` levels of `parts` in the
-    response, silently dropping anything nested deeper. The mock's `.get()`
-    reproduces that truncation for whatever depth the `fields` kwarg actually
-    asks for (parsed by counting `parts(` occurrences), rather than
-    hardcoding one depth — so this test stays meaningful against the real
-    mask's depth, not just a mock frozen to the old, buggy depth. A plain
-    ``Mock(return_value=...)`` would ignore the kwarg entirely and couldn't
-    catch this class of regression at all.
-    """
-    urlsafe_b64 = base64.urlsafe_b64encode(payload).decode("ascii")
-
-    full_payload = {
-        "mimeType": "multipart/signed",
-        "parts": [
-            {
-                "mimeType": "multipart/mixed",
-                "parts": [
-                    {
-                        "filename": filename,
-                        "mimeType": mime_type,
-                        "body": {
-                            "attachmentId": attachment_id,
-                            "size": len(payload),
-                        },
-                    }
-                ],
-            },
-            {
-                "filename": "smime.p7s",
-                "mimeType": "application/pkcs7-signature",
-                "body": {"attachmentId": "sig-456", "size": 4771},
-            },
-        ],
-    }
-
-    def truncate_to_depth(part: dict, remaining_depth: int) -> dict:
-        if remaining_depth <= 0:
-            return {k: v for k, v in part.items() if k != "parts"}
-        truncated = {k: v for k, v in part.items() if k != "parts"}
-        if "parts" in part:
-            truncated["parts"] = [
-                truncate_to_depth(child, remaining_depth - 1) for child in part["parts"]
-            ]
-        return truncated
-
-    def messages_get(**kwargs):
-        fields = kwargs.get("fields")
-        if fields:
-            depth = fields.count("parts(")
-            result = {"payload": truncate_to_depth(full_payload, depth)}
-        else:
-            result = {"payload": full_payload}
-        return Mock(execute=Mock(return_value=result))
-
-    mock_service = Mock()
-    mock_service.users().messages().attachments().get().execute.return_value = {
-        "size": len(payload),
-        "data": urlsafe_b64,
-    }
-    mock_service.users().messages().get = Mock(side_effect=messages_get)
-    return mock_service
-
-
 @pytest.fixture
 def isolated_attachment_env(tmp_path, monkeypatch):
     """Route attachment storage to a temp dir and force HTTP (not stateless) mode."""
@@ -309,21 +233,43 @@ async def test_return_base64_preserves_file_save_behavior(isolated_attachment_en
 async def test_resolves_correct_filename_for_nested_smime_attachment(
     isolated_attachment_env,
 ):
-    """Regression test: on S/MIME-signed messages the real attachment is
-    nested two levels deep (multipart/signed -> multipart/mixed -> file),
-    while the sibling smime.p7s signature part sits at the top level. The
-    metadata re-fetch used to request a `fields` mask that only covered one
-    level of `parts`, so the nested attachment was invisible and the
-    "only one attachment visible" fallback mislabeled every download as
-    smime.p7s regardless of which attachment was actually requested.
-    """
+    """Resolve a nested attachment instead of its top-level S/MIME signature."""
     payload = b"%PDF-1.4 fake pdf bytes" + bytes(range(200))
-    mock_service = _build_mock_service_nested(
-        payload,
-        filename="statement.pdf",
-        mime_type="application/pdf",
-        attachment_id="att-pdf-123",
-    )
+    mock_service = _build_mock_service(payload)
+
+    def messages_get(**kwargs):
+        mixed_part = {"mimeType": "multipart/mixed"}
+        if kwargs["fields"].count("parts(") >= 2:
+            mixed_part["parts"] = [
+                {
+                    "filename": "statement.pdf",
+                    "mimeType": "application/pdf",
+                    "body": {
+                        "attachmentId": "att-pdf-123",
+                        "size": len(payload),
+                    },
+                }
+            ]
+        return Mock(
+            execute=Mock(
+                return_value={
+                    "payload": {
+                        "mimeType": "multipart/signed",
+                        "parts": [
+                            mixed_part,
+                            {
+                                "filename": "smime.p7s",
+                                "mimeType": "application/pkcs7-signature",
+                                "body": {"attachmentId": "sig-456", "size": 4771},
+                            },
+                        ],
+                    }
+                }
+            )
+        )
+
+    metadata_get = Mock(side_effect=messages_get)
+    mock_service.users().messages().get = metadata_get
 
     result = await _unwrap(get_gmail_attachment_content)(
         service=mock_service,
@@ -334,6 +280,9 @@ async def test_resolves_correct_filename_for_nested_smime_attachment(
 
     assert "Filename: statement.pdf" in result
     assert "smime.p7s" not in result
+    fields = metadata_get.call_args.kwargs["fields"]
+    assert fields.count("parts(") == 6
+    assert "data" not in fields
 
     saved_files = list(isolated_attachment_env.iterdir())
     assert len(saved_files) == 1

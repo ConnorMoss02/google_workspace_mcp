@@ -2090,24 +2090,7 @@ async def get_gmail_messages_content_batch(
 
 
 def _attachment_metadata_fields(depth: int) -> str:
-    """Build a `fields` mask for messages.get() that mirrors a MIME part tree
-    down to `depth` levels of nesting, keeping only filename/mimeType/
-    attachmentId/size at every level (never `body.data`).
-
-    Gmail's partial-response field masks are not recursive: a bare
-    `parts(filename,mimeType,body(attachmentId,size))` only covers one level,
-    so any attachment nested deeper (e.g. multipart/signed S/MIME messages,
-    where the real attachment sits inside a nested multipart/mixed part and
-    only the top-level pkcs7-signature part is visible at depth 1) silently
-    disappears from the response — see the regression this guards against.
-    The mask still exists to keep the response small: an unrestricted
-    format="full" fetch inlines the full base64 body.data for every
-    text/plain and text/html part, which can be tens to hundreds of KB for
-    image-heavy HTML mail, none of which is needed just to resolve a
-    filename. depth=6 comfortably covers real-world MIME nesting (signed,
-    forwarded, multipart/related, etc.); anything deeper falls back to the
-    same size/last-resort matching used when the fields mask doesn't help.
-    """
+    """Build a metadata-only fields mask for a MIME tree of the given depth."""
     node = "filename,mimeType,body(attachmentId,size)"
     for _ in range(depth):
         node = f"filename,mimeType,body(attachmentId,size),parts({node})"
