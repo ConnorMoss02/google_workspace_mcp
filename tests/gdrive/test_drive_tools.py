@@ -2580,5 +2580,15 @@ async def test_check_drive_file_public_access_shared_drive(mock_resolve):
         drive_id="0ASharedDriveId",
     )
 
+    get_kwargs = mock_service.files.return_value.get.call_args.kwargs
+    assert "driveId" in get_kwargs["fields"]
+    assert get_kwargs["supportsAllDrives"] is True
+
+    permissions_list_kwargs = (
+        mock_service.permissions.return_value.list.call_args.kwargs
+    )
+    assert "fileId" in permissions_list_kwargs
+    assert permissions_list_kwargs["supportsAllDrives"] is True
+
     assert "PUBLIC ACCESS ENABLED" in result
     assert "Shared: True" in result
