@@ -2089,6 +2089,17 @@ async def get_gmail_messages_content_batch(
     return final_output
 
 
+def _attachment_metadata_fields(depth: int) -> str:
+    """Build a metadata-only fields mask for a MIME tree of the given depth."""
+    node = "filename,mimeType,body(attachmentId,size)"
+    for _ in range(depth):
+        node = f"filename,mimeType,body(attachmentId,size),parts({node})"
+    return f"payload({node})"
+
+
+_ATTACHMENT_METADATA_FIELDS = _attachment_metadata_fields(6)
+
+
 @server.tool(
     title="Get Gmail Attachment Content",
     annotations=ToolAnnotations(
@@ -2195,7 +2206,6 @@ async def get_gmail_attachment_content(
         filename = None
         mime_type = None
         try:
-            # Use format="full" with fields to limit response to attachment metadata only
             message_full = await asyncio.to_thread(
                 service.users()
                 .messages()
@@ -2203,7 +2213,7 @@ async def get_gmail_attachment_content(
                     userId="me",
                     id=message_id,
                     format="full",
-                    fields="payload(parts(filename,mimeType,body(attachmentId,size)),body(attachmentId,size),filename,mimeType)",
+                    fields=_ATTACHMENT_METADATA_FIELDS,
                 )
                 .execute
             )
