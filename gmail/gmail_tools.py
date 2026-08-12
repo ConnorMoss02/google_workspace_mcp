@@ -1493,9 +1493,15 @@ async def _fetch_search_result_headers(
                     )
                 headers_by_id[mid] = None
             else:
-                headers_by_id[mid] = _extract_headers(
-                    entry["data"].get("payload", {}), GMAIL_METADATA_HEADERS
-                )
+                try:
+                    headers_by_id[mid] = _extract_headers(
+                        entry["data"].get("payload") or {}, GMAIL_METADATA_HEADERS
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        f"[search_gmail_messages] Invalid metadata for message {mid}, will retry: {exc}"
+                    )
+                    headers_by_id[mid] = None
 
     # Retry failures one at a time. Batch failures are usually Gmail's
     # per-user concurrency limit (429), which sequential requests don't hit.
@@ -1513,9 +1519,14 @@ async def _fetch_search_result_headers(
                 log_prefix="search_gmail_messages",
             )
             if msg_data and not error:
-                headers_by_id[mid] = _extract_headers(
-                    msg_data.get("payload", {}), GMAIL_METADATA_HEADERS
-                )
+                try:
+                    headers_by_id[mid] = _extract_headers(
+                        msg_data.get("payload") or {}, GMAIL_METADATA_HEADERS
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        f"[search_gmail_messages] Invalid metadata for message {mid} after retry: {exc}"
+                    )
             else:
                 logger.warning(
                     f"[search_gmail_messages] Metadata fetch failed for message {mid} after retry: {error}"
@@ -1645,8 +1656,9 @@ async def search_gmail_messages(
         page_size (int): The maximum number of messages to return. Defaults to 10.
         page_token (Optional[str]): Token for retrieving the next page of results. Use the next_page_token from a previous response.
         include_headers (bool): If True, also fetch each message's metadata and include
-            Subject, From, and Date per result. Costs one extra batched metadata fetch
-            per page. Defaults to False (output unchanged from prior versions).
+            Subject, From, and Date per result. Costs one metadata get per result,
+            grouped into HTTP batches of up to 10, plus retries for transient failures.
+            Defaults to False (output unchanged from prior versions).
 
     Returns:
         str: LLM-friendly structured results with Message IDs, Thread IDs, and clickable Gmail web interface URLs for each found message.
@@ -1689,7 +1701,15 @@ async def search_gmail_messages(
             for msg in messages
             if msg and isinstance(msg, dict) and msg.get("id")
         ]
-        headers_by_id = await _fetch_search_result_headers(service, result_ids)
+        try:
+            headers_by_id = await _fetch_search_result_headers(service, result_ids)
+        except Exception as exc:
+            logger.exception(
+                "[search_gmail_messages] Header enrichment failed; "
+                "returning search results without headers: %s",
+                exc,
+            )
+            headers_by_id = dict.fromkeys(result_ids)
 
     formatted_output = _format_gmail_results_plain(
         messages, query, next_page_token, headers_by_id

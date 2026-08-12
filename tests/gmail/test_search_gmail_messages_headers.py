@@ -84,7 +84,9 @@ def _build_service(*, list_response, message_responses=None, batch_factory=None)
 
     service.users().messages().list.side_effect = message_list
     service.users().messages().get.side_effect = message_get
-    service.new_batch_http_request.side_effect = batch_factory or recording_batch_factory
+    service.new_batch_http_request.side_effect = (
+        batch_factory or recording_batch_factory
+    )
     # Batches created during the call, in order, for batch-boundary assertions.
     service.created_batches = batches
     return service
@@ -100,9 +102,7 @@ def _get_call_kwargs(service):
 
 def _list_response(message_ids, next_page_token=None):
     response = {
-        "messages": [
-            {"id": mid, "threadId": f"thread-{mid}"} for mid in message_ids
-        ]
+        "messages": [{"id": mid, "threadId": f"thread-{mid}"} for mid in message_ids]
     }
     if next_page_token:
         response["nextPageToken"] = next_page_token
@@ -315,6 +315,43 @@ async def test_missing_headers_use_placeholders():
 
 
 @pytest.mark.asyncio
+async def test_malformed_metadata_degrades_per_row(monkeypatch):
+    import gmail.gmail_tools as gmail_tools
+
+    monkeypatch.setattr(gmail_tools, "GMAIL_REQUEST_DELAY", 0)
+    service = _build_service(
+        list_response=_list_response(["msg-1"]),
+        message_responses={
+            ("msg-1", "metadata"): {"id": "msg-1", "payload": None},
+        },
+    )
+
+    result = await _run_search(service, include_headers=True)
+
+    assert "Subject: (no subject)" in result
+    assert "From: (unknown sender)" in result
+    assert "Date: (unknown date)" in result
+    assert "Message ID: msg-1" in result
+
+
+@pytest.mark.asyncio
+async def test_unexpected_enrichment_failure_preserves_search_results(monkeypatch):
+    import gmail.gmail_tools as gmail_tools
+
+    async def fail_enrichment(service, message_ids):
+        raise RuntimeError("unexpected enrichment failure")
+
+    monkeypatch.setattr(gmail_tools, "_fetch_search_result_headers", fail_enrichment)
+    service = _build_service(list_response=_list_response(["msg-1"]))
+
+    result = await _run_search(service, include_headers=True)
+
+    assert "Headers: unavailable (metadata fetch failed)" in result
+    assert "Message ID: msg-1" in result
+    assert "Thread ID: thread-msg-1" in result
+
+
+@pytest.mark.asyncio
 async def test_pagination_preserved_with_include_headers():
     service = _build_service(
         list_response=_list_response(["msg-1"], next_page_token="tok-123"),
@@ -327,9 +364,7 @@ async def test_pagination_preserved_with_include_headers():
 
     assert "page_token='tok-123'" in result
     assert "Subject: Example subject" in result
-    list_kwargs = (
-        service.users.return_value.messages.return_value.list.call_args.kwargs
-    )
+    list_kwargs = service.users.return_value.messages.return_value.list.call_args.kwargs
     assert list_kwargs["pageToken"] == "tok-000"
 
 
