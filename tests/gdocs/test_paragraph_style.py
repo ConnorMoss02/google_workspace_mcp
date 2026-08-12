@@ -72,9 +72,7 @@ class TestBuildParagraphStyle:
 
         assert fields == ["borderLeft"]
         assert style["borderLeft"] == {
-            "color": {
-                "color": {"rgbColor": {"red": 1.0, "green": 0.0, "blue": 0.0}}
-            },
+            "color": {"color": {"rgbColor": {"red": 1.0, "green": 0.0, "blue": 0.0}}},
             "width": {"magnitude": 2.5, "unit": "PT"},
             "padding": {"magnitude": 4, "unit": "PT"},
             "dashStyle": "DASH",

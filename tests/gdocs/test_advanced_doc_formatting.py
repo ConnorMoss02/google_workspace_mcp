@@ -95,11 +95,7 @@ class TestAdvancedRequestBuilders:
         assert inner["tabId"] == "tab-123"
         assert inner["documentStyle"]["marginTop"] == {"magnitude": 72, "unit": "PT"}
         assert inner["documentStyle"]["background"] == {
-            "color": {
-                "color": {
-                    "rgbColor": {"red": 1.0, "green": 1.0, "blue": 1.0}
-                }
-            }
+            "color": {"color": {"rgbColor": {"red": 1.0, "green": 1.0, "blue": 1.0}}}
         }
         assert inner["documentStyle"]["pageSize"]["width"] == {
             "magnitude": 612,
