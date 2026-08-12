@@ -463,9 +463,7 @@ class _HTMLSignatureExtractor(HTMLParser):
             # newlines in pretty-printed markup cannot become visible breaks;
             # only the structural delimiters above emit "\n".
             normalized = re.sub(r"\s+", " ", data)
-            if normalized == " " and (
-                not self._text or self._text[-1] == "\n"
-            ):
+            if normalized == " " and (not self._text or self._text[-1] == "\n"):
                 return
             self._text.append(normalized)
 
