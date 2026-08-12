@@ -17,9 +17,9 @@ from googleapiclient.errors import HttpError
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
+from gmail.gmail_helpers import _is_retryable_error
 from gmail.gmail_tools import (
     _fetch_message_with_retry,
-    _is_retryable_error,
     get_gmail_messages_content_batch,
     get_gmail_threads_content_batch,
 )
@@ -207,9 +207,9 @@ async def test_batch_does_not_refetch_non_retryable_errors(monkeypatch):
 async def test_thread_batch_refetches_rate_limited_thread(monkeypatch):
     """Regression: a 429 on one thread sub-request (batch succeeds) is re-fetched.
 
-    The redo loop references fetch_thread_with_retry even when batch.execute()
-    succeeds, so that helper must be defined outside the batch-exception
-    handler (previously it was nested in `except`, causing UnboundLocalError).
+    The redo loop runs even when batch.execute() succeeds, so the per-thread
+    fetch helper must live outside the batch-exception handler (previously it
+    was nested in `except`, causing UnboundLocalError).
     """
     calls = {"thread-1": 0, "thread-2": 0}
 
@@ -265,7 +265,7 @@ async def test_message_retry_uses_three_backoffs(monkeypatch):
 
     service = Mock()
     service.users().messages().get.side_effect = message_get
-    monkeypatch.setattr("gmail.gmail_tools.asyncio.sleep", record_sleep)
+    monkeypatch.setattr("asyncio.sleep", record_sleep)
 
     _, message, error = await _fetch_message_with_retry(
         service,
@@ -304,7 +304,7 @@ async def test_message_batch_failure_does_not_restart_exhausted_retries(monkeypa
     service = Mock()
     service.users().messages().get.side_effect = message_get
     service.new_batch_http_request.return_value = batch
-    monkeypatch.setattr("gmail.gmail_tools.asyncio.sleep", no_sleep)
+    monkeypatch.setattr("asyncio.sleep", no_sleep)
 
     result = await _unwrap(get_gmail_messages_content_batch)(
         service=service,
@@ -340,7 +340,7 @@ async def test_thread_batch_failure_does_not_restart_exhausted_retries(monkeypat
     service = Mock()
     service.users().threads().get.side_effect = thread_get
     service.new_batch_http_request.return_value = batch
-    monkeypatch.setattr("gmail.gmail_tools.asyncio.sleep", no_sleep)
+    monkeypatch.setattr("asyncio.sleep", no_sleep)
 
     result = await _unwrap(get_gmail_threads_content_batch)(
         service=service,
