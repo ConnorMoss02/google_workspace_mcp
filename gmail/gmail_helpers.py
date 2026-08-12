@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import html
 import logging
+import re
+import ssl
 from collections import Counter
 from datetime import datetime, timezone
 from email.utils import getaddresses, parseaddr, parsedate_to_datetime
-from typing import Any, Literal, Optional
+from html.parser import HTMLParser
+from typing import Any, Callable, Iterable, Literal, Mapping, Optional
 
 from fastmcp.exceptions import ToolError as ToolExecutionError
 from googleapiclient.errors import HttpError
@@ -81,6 +85,72 @@ def _is_benign_signature_http_error(error: HttpError) -> bool:
 
 def _signature_fetch_tool_error(error: Exception) -> ToolExecutionError:
     return ToolExecutionError(f"Failed to fetch Gmail send-as signatures: {error}")
+
+
+def _is_retryable_error(error: Any) -> bool:
+    """Whether an error is transient and safe to retry.
+
+    Covers SSL errors, HTTP 429 (rate limit), 5xx, and quota/rate-limit markers
+    in the error body. Reads are idempotent so retrying these is safe.
+    """
+    if isinstance(error, ssl.SSLError):
+        return True
+    if isinstance(error, HttpError):
+        status = _http_error_status(error)
+        if status is not None and (status == 429 or status >= 500):
+            return True
+        return _is_quota_or_rate_limit_error(error)
+    return False
+
+
+async def _fetch_with_retry(
+    build_request: Callable[[], Any],
+    item_id: str,
+    item_label: str,
+    log_prefix: str,
+    max_retries: int = 3,
+) -> tuple[str, Optional[dict], Optional[Exception]]:
+    """Execute a Gmail read request, retrying transient failures.
+
+    `build_request` is re-invoked per attempt so each retry gets a fresh
+    request object. Backs off exponentially (1s, 2s, 4s) on retryable errors;
+    anything else is returned to the caller immediately. Returns
+    `(item_id, response, error)` with exactly one of response/error set.
+    """
+    last_error: Optional[Exception] = None
+    for attempt in range(max_retries + 1):
+        try:
+            response = await asyncio.to_thread(build_request().execute)
+            return item_id, response, None
+        except Exception as error:
+            last_error = error
+            if not _is_retryable_error(error) or attempt == max_retries:
+                break
+            delay = 2**attempt
+            logger.warning(
+                f"[{log_prefix}] Retryable error for {item_label} {item_id} on "
+                f"attempt {attempt + 1}: {error}. Retrying in {delay}s..."
+            )
+            await asyncio.sleep(delay)
+
+    logger.error(f"[{log_prefix}] Failed to fetch {item_label} {item_id}: {last_error}")
+    return item_id, None, last_error
+
+
+def _retryable_result_ids(
+    results: Mapping[str, Mapping[str, Any]], item_ids: Iterable[str]
+) -> list[str]:
+    """IDs whose batch sub-request failed with a transient, retryable error.
+
+    The batch API reports per-sub-request errors inside an otherwise successful
+    response, so these are invisible to any client-side retry and have to be
+    re-fetched individually.
+    """
+    return [
+        item_id
+        for item_id in item_ids
+        if _is_retryable_error(results.get(item_id, {}).get("error"))
+    ]
 
 
 def _parse_date_header(
@@ -331,3 +401,89 @@ def _build_forward_content(
         subject = f"Fwd: {original_subject}"
 
     return subject, forward_body, body_format
+
+
+class _HTMLSignatureExtractor(HTMLParser):
+    """Extract text from signature HTML, preserving block-level line breaks.
+
+    _HTMLTextExtractor (in gmail_tools.py) is tuned for reading arbitrary
+    message bodies, where flowing single-line text is preferred -- it inserts
+    no separator at all between block elements (</div><div> etc.), and its
+    get_text() collapses every whitespace run, including newlines, to a
+    single space. Gmail signatures are structured line-by-line (name /
+    title / phone / ...) using <br> or one <div>/<p> per line; run through
+    the general extractor, adjacent lines end up concatenated with zero
+    whitespace between them (e.g. "-Erik" immediately followed by
+    "Erik Holzhauer" with no break at all), which no amount of whitespace
+    collapsing afterward can repair since there was never a separating
+    character to begin with. This extractor treats block boundaries as
+    real newlines and only collapses horizontal whitespace within a line.
+    """
+
+    _BLOCK_TAGS = ("div", "p", "tr", "li")
+
+    def __init__(self):
+        super().__init__()
+        self._text = []
+        self._skip = False
+
+    def _append_line_break(self, *, force: bool = False) -> None:
+        """Append a structural break, optionally preserving an empty line."""
+        if not self._text:
+            return
+        if force or self._text[-1] != "\n":
+            self._text.append("\n")
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("script", "style"):
+            self._skip = True
+            return
+        if self._skip:
+            return
+        if tag == "br":
+            # Unlike a block boundary, consecutive <br> tags intentionally
+            # represent empty lines.
+            self._append_line_break(force=True)
+        elif tag in self._BLOCK_TAGS:
+            # A nested block starts a new visual line even when its parent
+            # already contains text (for example, Name<div>Title</div>).
+            self._append_line_break()
+
+    def handle_endtag(self, tag):
+        # Closing a block ends its visual line. _append_line_break avoids a
+        # duplicate when the block already ended with a nested block or <br>.
+        if tag in ("script", "style"):
+            self._skip = False
+        elif tag in self._BLOCK_TAGS and not self._skip:
+            self._append_line_break()
+
+    def handle_data(self, data):
+        if not self._skip:
+            # HTML collapses source whitespace. Convert it here so formatting
+            # newlines in pretty-printed markup cannot become visible breaks;
+            # only the structural delimiters above emit "\n".
+            normalized = re.sub(r"\s+", " ", data)
+            if normalized == " " and (not self._text or self._text[-1] == "\n"):
+                return
+            self._text.append(normalized)
+
+    def get_text(self) -> str:
+        raw = "".join(self._text)
+        # Collapse horizontal whitespace within each line, but keep the
+        # newlines that mark real line/paragraph breaks. Adjacent block
+        # boundaries (e.g. </div><div>) produce back-to-back newlines,
+        # which the re.sub below caps at one blank line.
+        lines = [" ".join(line.split()) for line in raw.splitlines()]
+        text = "\n".join(lines)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
+
+
+def _signature_html_to_text(signature_html: str) -> str:
+    """Convert Gmail signature HTML to plain text, preserving line breaks."""
+    try:
+        parser = _HTMLSignatureExtractor()
+        parser.feed(signature_html)
+        return parser.get_text()
+    except Exception:
+        return signature_html
