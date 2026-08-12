@@ -13,7 +13,7 @@ import mimetypes
 import html
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Annotated, Optional, List, Dict, Literal, Any
+from typing import Annotated, Optional, List, Dict, Literal, Any, Set
 from urllib.parse import unquote, urlparse, urlunsplit
 
 from email.message import EmailMessage
@@ -911,29 +911,29 @@ def _derive_reply_headers(
 
 def _derive_reply_all_recipients(
     target: Dict[str, Any],
-    exclude: set,
+    exclude: Set[str],
     to: Optional[str],
     cc: Optional[str],
 ) -> tuple[Optional[str], Optional[str]]:
     """Fill missing reply-all recipients from the message being answered.
 
-    To = whoever sent it (Reply-To when set, else From). Cc = everyone else it
-    reached, minus `exclude` and minus anyone already in To. Caller-supplied
+    To = whoever sent it (Reply-To when set, else From). Cc = every other
+    participant, minus `exclude` and minus anyone already in To. Caller-supplied
     values win, mirroring _derive_reply_headers.
 
     `exclude` applies to To as well as Cc, so replying to a message the account
     sent itself derives no recipient rather than addressing the account; the
     caller passes `to` explicitly for that case.
 
-    Only the authenticated address can be excluded reliably: a caller sending
-    under several aliases still has to post-filter, which is why this is opt-in
-    rather than applied to every threaded send.
+    Only the authenticated address and the selected Send As alias can be excluded
+    reliably: a caller sending under several aliases still has to post-filter,
+    which is why this is opt-in rather than applied to every threaded send.
     """
     excluded = {addr.lower() for addr in exclude if addr}
+    sender = target.get("reply_to") or target.get("from") or ""
 
     derived_to = to
     if not derived_to:
-        sender = target.get("reply_to") or target.get("from") or ""
         derived_to = ", ".join(
             addr
             for _name, addr in getaddresses([sender])
@@ -945,7 +945,12 @@ def _derive_reply_all_recipients(
         seen = {addr.lower() for _n, addr in getaddresses([derived_to or ""]) if addr}
         seen |= excluded
         others = []
-        for _name, addr in getaddresses([target.get("to", ""), target.get("cc", "")]):
+        # The sender leads the Cc candidates so an explicit `to` that redirects the
+        # reply still keeps the person being replied to on it. When To was derived
+        # from the sender they are already in `seen`, so this is a no-op there.
+        for _name, addr in getaddresses(
+            [sender, target.get("to", ""), target.get("cc", "")]
+        ):
             if addr and addr.lower() not in seen:
                 seen.add(addr.lower())
                 others.append(addr)
@@ -2515,7 +2520,8 @@ async def send_gmail_message(
             original. Only has an effect when thread_id is provided.
         reply_all (bool): Whether to derive reply-all recipients from the thread: To = the
             sender being replied to, Cc = the other participants, excluding the authenticated
-            account. Requires thread_id. Explicit to/cc win over the derived values.
+            account. Requires thread_id. Explicit to/cc win over the derived values; an
+            explicit 'to' moves the sender being replied to into the derived Cc.
 
     Returns:
         str: Confirmation message with the sent email's message ID.
@@ -2611,6 +2617,12 @@ async def send_gmail_message(
     # Forwarding reuses the original message's content, so it follows a dedicated
     # path that fetches and quotes the source message.
     if forward_message_id:
+        # 'to' is optional on the signature only so a reply_all send can derive it;
+        # a forward has no thread to derive from, so it still requires one.
+        if not to:
+            raise UserInputError(
+                "'to' is required when forwarding via 'forward_message_id'."
+            )
         logger.info(
             f"[send_gmail_message] Forwarding message '{forward_message_id}' to '{to}' for '{user_google_email}'"
         )

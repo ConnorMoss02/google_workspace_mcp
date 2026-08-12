@@ -1146,6 +1146,41 @@ async def test_send_gmail_message_reply_all_prefers_reply_to_and_explicit_cc():
 
 
 @pytest.mark.asyncio
+async def test_send_gmail_message_reply_all_moves_sender_to_cc_when_to_is_explicit():
+    mock_service = Mock()
+    mock_service.users().messages().send().execute.return_value = {"id": "sent_reply"}
+    mock_service.users().threads().get().execute.return_value = {
+        "messages": [
+            _thread_message(
+                "<msg1@example.com>",
+                from_value="Alice Example <alice@example.com>",
+                to_value="user@example.com, bob@example.com",
+                cc_value="carol@example.com",
+            )
+        ]
+    }
+
+    await _unwrap(send_gmail_message)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        to="dave@example.com",
+        subject="Re: Meeting tomorrow",
+        body="Looping in Dave.",
+        thread_id="thread123",
+        reply_all=True,
+        include_signature=False,
+    )
+
+    send_kwargs = (
+        mock_service.users.return_value.messages.return_value.send.call_args.kwargs
+    )
+    parsed = _parse_raw_message(send_kwargs["body"]["raw"])
+    assert parsed["To"] == "dave@example.com"
+    # Redirecting To must not drop Alice from the reply-all entirely.
+    assert parsed["Cc"] == "alice@example.com, bob@example.com, carol@example.com"
+
+
+@pytest.mark.asyncio
 async def test_send_gmail_message_reply_all_never_addresses_the_account_itself():
     mock_service = Mock()
     mock_service.users().messages().send().execute.return_value = {"id": "sent_reply"}
@@ -1164,7 +1199,7 @@ async def test_send_gmail_message_reply_all_never_addresses_the_account_itself()
 
     # The message being replied to was sent by the account, so there is no
     # sender to reply to; deriving one would address the account itself.
-    with pytest.raises((UserInputError, ToolError)):
+    with pytest.raises(UserInputError, match="Could not derive a recipient"):
         await _unwrap(send_gmail_message)(
             service=mock_service,
             user_google_email="user@example.com",
@@ -1195,7 +1230,7 @@ async def test_send_gmail_message_reply_all_excludes_the_send_as_alias_from_to()
 
     mock_service.users.return_value.messages.return_value.send.reset_mock()
 
-    with pytest.raises((UserInputError, ToolError)):
+    with pytest.raises(UserInputError, match="Could not derive a recipient"):
         await _unwrap(send_gmail_message)(
             service=mock_service,
             user_google_email="user@example.com",
@@ -1214,7 +1249,7 @@ async def test_send_gmail_message_reply_all_excludes_the_send_as_alias_from_to()
 async def test_send_gmail_message_reply_all_requires_a_thread_id():
     mock_service = Mock()
 
-    with pytest.raises((UserInputError, ToolError)):
+    with pytest.raises(UserInputError, match="'reply_all' requires a thread_id"):
         await _unwrap(send_gmail_message)(
             service=mock_service,
             user_google_email="user@example.com",
@@ -1234,13 +1269,31 @@ async def test_send_gmail_message_reply_all_requires_a_thread_id():
 async def test_send_gmail_message_requires_to_without_reply_all():
     mock_service = Mock()
 
-    with pytest.raises((UserInputError, ToolError)):
+    with pytest.raises(UserInputError, match="'to' is required"):
         await _unwrap(send_gmail_message)(
             service=mock_service,
             user_google_email="user@example.com",
             subject="Hello",
             body="Hi there!",
         )
+
+
+@pytest.mark.asyncio
+async def test_send_gmail_message_requires_to_when_forwarding():
+    mock_service = Mock()
+
+    # 'to' is optional on the signature only so reply_all can derive it; a
+    # forward has no thread to derive from and must still be rejected here
+    # rather than by Gmail's API.
+    with pytest.raises(UserInputError, match="'to' is required when forwarding"):
+        await _unwrap(send_gmail_message)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            body="FYI - see below.",
+            forward_message_id="abc123",
+        )
+
+    mock_service.users.return_value.messages.return_value.get.assert_not_called()
 
 
 @pytest.mark.asyncio
