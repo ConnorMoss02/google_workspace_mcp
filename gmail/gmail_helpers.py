@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import html
 import logging
+import ssl
 from collections import Counter
 from datetime import datetime, timezone
 from email.utils import getaddresses, parseaddr, parsedate_to_datetime
-from typing import Any, Literal, Optional
+from typing import Any, Callable, Iterable, Literal, Mapping, Optional
 
 from fastmcp.exceptions import ToolError as ToolExecutionError
 from googleapiclient.errors import HttpError
@@ -81,6 +83,72 @@ def _is_benign_signature_http_error(error: HttpError) -> bool:
 
 def _signature_fetch_tool_error(error: Exception) -> ToolExecutionError:
     return ToolExecutionError(f"Failed to fetch Gmail send-as signatures: {error}")
+
+
+def _is_retryable_error(error: Any) -> bool:
+    """Whether an error is transient and safe to retry.
+
+    Covers SSL errors, HTTP 429 (rate limit), 5xx, and quota/rate-limit markers
+    in the error body. Reads are idempotent so retrying these is safe.
+    """
+    if isinstance(error, ssl.SSLError):
+        return True
+    if isinstance(error, HttpError):
+        status = _http_error_status(error)
+        if status is not None and (status == 429 or status >= 500):
+            return True
+        return _is_quota_or_rate_limit_error(error)
+    return False
+
+
+async def _fetch_with_retry(
+    build_request: Callable[[], Any],
+    item_id: str,
+    item_label: str,
+    log_prefix: str,
+    max_retries: int = 3,
+) -> tuple[str, Optional[dict], Optional[Exception]]:
+    """Execute a Gmail read request, retrying transient failures.
+
+    `build_request` is re-invoked per attempt so each retry gets a fresh
+    request object. Backs off exponentially (1s, 2s, 4s) on retryable errors;
+    anything else is returned to the caller immediately. Returns
+    `(item_id, response, error)` with exactly one of response/error set.
+    """
+    last_error: Optional[Exception] = None
+    for attempt in range(max_retries + 1):
+        try:
+            response = await asyncio.to_thread(build_request().execute)
+            return item_id, response, None
+        except Exception as error:
+            last_error = error
+            if not _is_retryable_error(error) or attempt == max_retries:
+                break
+            delay = 2**attempt
+            logger.warning(
+                f"[{log_prefix}] Retryable error for {item_label} {item_id} on "
+                f"attempt {attempt + 1}: {error}. Retrying in {delay}s..."
+            )
+            await asyncio.sleep(delay)
+
+    logger.error(f"[{log_prefix}] Failed to fetch {item_label} {item_id}: {last_error}")
+    return item_id, None, last_error
+
+
+def _retryable_result_ids(
+    results: Mapping[str, Mapping[str, Any]], item_ids: Iterable[str]
+) -> list[str]:
+    """IDs whose batch sub-request failed with a transient, retryable error.
+
+    The batch API reports per-sub-request errors inside an otherwise successful
+    response, so these are invisible to any client-side retry and have to be
+    re-fetched individually.
+    """
+    return [
+        item_id
+        for item_id in item_ids
+        if _is_retryable_error(results.get(item_id, {}).get("error"))
+    ]
 
 
 def _parse_date_header(

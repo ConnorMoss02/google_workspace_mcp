@@ -6,6 +6,7 @@ Tests create_drive_folder with mocked API responses, plus coverage for
 and `file_type` filtering behaviors.
 """
 
+import asyncio
 import base64
 import pytest
 from unittest.mock import Mock, AsyncMock, patch
@@ -2031,21 +2032,248 @@ async def test_update_drive_file_replaces_sheet_content_with_sheet_formats(
 
 @pytest.mark.asyncio
 @patch("gdrive.drive_tools.resolve_drive_item", new_callable=AsyncMock)
-async def test_update_drive_file_rejects_content_replacement_for_unsupported_targets(
+async def test_update_drive_file_replaces_raw_markdown_without_conversion(
     mock_resolve_item,
 ):
-    """Non-Google Apps files fail before an ambiguous conversion upload."""
+    """A raw .md file is updated in place: bytes stream back under the same MIME type."""
+    mock_resolve_item.return_value = (
+        "md123",
+        {"name": "note.md", "mimeType": "text/markdown"},
+    )
+    mock_service = Mock()
+    mock_service.files().update().execute.return_value = {
+        "id": "md123",
+        "name": "note.md",
+        "mimeType": "text/markdown",
+        "webViewLink": "https://drive.google.com/file/d/md123",
+    }
+
+    result = await _unwrap(update_drive_file)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        file_id="md123",
+        content="# Note\n\nAppended section",
+    )
+
+    update_kwargs = mock_service.files.return_value.update.call_args.kwargs
+    assert update_kwargs["fileId"] == "md123"
+    assert update_kwargs["media_body"].mimetype() == "text/markdown"
+    assert "written as text/markdown" in result
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools._download_file_bytes", new_callable=AsyncMock)
+@patch("gdrive.drive_tools.resolve_drive_item", new_callable=AsyncMock)
+async def test_update_drive_file_appends_without_resending_the_file(
+    mock_resolve_item, mock_download
+):
+    """Append splices onto the current text server-side, uploading the merged result."""
+    mock_resolve_item.return_value = (
+        "md123",
+        {"name": "note.md", "mimeType": "text/markdown"},
+    )
+    mock_download.return_value = b"# Note\n\nExisting body"
+    mock_service = Mock()
+    mock_service.files().update().execute.return_value = {
+        "id": "md123",
+        "name": "note.md",
+        "mimeType": "text/markdown",
+        "webViewLink": "https://drive.google.com/file/d/md123",
+    }
+
+    result = await _unwrap(update_drive_file)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        file_id="md123",
+        content="## Appended section",
+        mode="append",
+    )
+
+    media = mock_service.files.return_value.update.call_args.kwargs["media_body"]
+    uploaded = media.getbytes(0, media.size()).decode("utf-8")
+    assert uploaded == "# Note\n\nExisting body\n## Appended section"
+    assert "Appended text" in result
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools._download_file_bytes", new_callable=AsyncMock)
+@patch("gdrive.drive_tools.resolve_drive_item", new_callable=AsyncMock)
+async def test_update_drive_file_prepend_keeps_existing_seam(
+    mock_resolve_item, mock_download
+):
+    """Prepend puts new text first and does not double up newlines at the seam."""
+    mock_resolve_item.return_value = (
+        "md123",
+        {"name": "log.md", "mimeType": "text/markdown"},
+    )
+    mock_download.return_value = b"## Older entry\n"
+    mock_service = Mock()
+    mock_service.files().update().execute.return_value = {
+        "id": "md123",
+        "name": "log.md",
+        "mimeType": "text/markdown",
+        "webViewLink": "https://drive.google.com/file/d/md123",
+    }
+
+    await _unwrap(update_drive_file)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        file_id="md123",
+        content="## Newest entry\n",
+        mode="prepend",
+    )
+
+    media = mock_service.files.return_value.update.call_args.kwargs["media_body"]
+    uploaded = media.getbytes(0, media.size()).decode("utf-8")
+    assert uploaded == "## Newest entry\n## Older entry\n"
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools._download_file_bytes", new_callable=AsyncMock)
+@patch("gdrive.drive_tools.resolve_drive_item", new_callable=AsyncMock)
+async def test_update_drive_file_serializes_splices_across_service_instances(
+    mock_resolve_item, mock_download
+):
+    """Concurrent appends to one file each build on the latest uploaded content."""
+    mock_resolve_item.return_value = (
+        "md123",
+        {"name": "log.md", "mimeType": "text/markdown"},
+    )
+    stored_content = b"Base"
+
+    async def download(_service, _file_id):
+        snapshot = stored_content
+        await asyncio.sleep(0)
+        return snapshot
+
+    def make_service():
+        service = Mock()
+
+        def execute(**_kwargs):
+            nonlocal stored_content
+            media = service.files.return_value.update.call_args.kwargs["media_body"]
+            stored_content = media.getbytes(0, media.size())
+            return {"id": "md123", "name": "log.md", "mimeType": "text/markdown"}
+
+        service.files().update().execute.side_effect = execute
+        return service
+
+    mock_download.side_effect = download
+    first_service = make_service()
+    second_service = make_service()
+
+    await asyncio.gather(
+        _unwrap(update_drive_file)(
+            service=first_service,
+            user_google_email="user@example.com",
+            file_id="md123",
+            content="First",
+            mode="append",
+        ),
+        _unwrap(update_drive_file)(
+            service=second_service,
+            user_google_email="user@example.com",
+            file_id="md123",
+            content="Second",
+            mode="append",
+        ),
+    )
+
+    assert stored_content.decode("utf-8").splitlines() == ["Base", "First", "Second"]
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.resolve_drive_item", new_callable=AsyncMock)
+async def test_update_drive_file_append_rejected_for_native_google_docs(
+    mock_resolve_item,
+):
+    """Appending to a Doc would mean export + re-import; point at the Docs tools."""
+    mock_resolve_item.return_value = (
+        "doc123",
+        {"name": "Living Doc", "mimeType": "application/vnd.google-apps.document"},
+    )
+    mock_service = Mock()
+
+    with pytest.raises(ValueError, match="only supported for non-Google files"):
+        await _unwrap(update_drive_file)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_id="doc123",
+            content="## More",
+            mode="append",
+        )
+
+    mock_service.files.return_value.update.return_value.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_update_drive_file_append_requires_content():
+    """append/prepend fail fast when given a file_path instead of inline text."""
+    with pytest.raises(ValueError, match="requires 'content'"):
+        await _unwrap(update_drive_file)(
+            service=Mock(),
+            user_google_email="user@example.com",
+            file_id="md123",
+            file_path="/tmp/note.md",
+            mode="append",
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["append", "prepend"])
+async def test_update_drive_file_splice_rejects_mime_type(mode):
+    """append/prepend cannot change the MIME type while splicing existing text."""
+    with pytest.raises(ValueError, match=f"mime_type cannot be set when mode='{mode}'"):
+        await _unwrap(update_drive_file)(
+            service=Mock(),
+            user_google_email="user@example.com",
+            file_id="md123",
+            content="More text",
+            mime_type="text/plain",
+            mode=mode,
+        )
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.resolve_drive_item", new_callable=AsyncMock)
+async def test_update_drive_file_rejects_string_content_for_binary_targets(
+    mock_resolve_item,
+):
+    """Binary files still reject an in-memory string, which would corrupt the upload."""
     mock_resolve_item.return_value = (
         "pdf123",
         {"name": "Report.pdf", "mimeType": "application/pdf"},
     )
     mock_service = Mock()
 
-    with pytest.raises(ValueError, match="only supported for native Google Docs"):
+    with pytest.raises(ValueError, match="only valid for text-based source formats"):
         await _unwrap(update_drive_file)(
             service=mock_service,
             user_google_email="user@example.com",
             file_id="pdf123",
+            content="# Replacement",
+        )
+
+    mock_service.files.return_value.update.return_value.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.resolve_drive_item", new_callable=AsyncMock)
+async def test_update_drive_file_rejects_content_for_non_editable_google_types(
+    mock_resolve_item,
+):
+    """Google Apps types with no import path (forms, folders) fail before upload."""
+    mock_resolve_item.return_value = (
+        "form123",
+        {"name": "Survey", "mimeType": "application/vnd.google-apps.form"},
+    )
+    mock_service = Mock()
+
+    with pytest.raises(ValueError, match="not supported for this Google Apps type"):
+        await _unwrap(update_drive_file)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_id="form123",
             content="# Replacement",
             source_format="md",
         )
