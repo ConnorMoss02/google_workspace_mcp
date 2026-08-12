@@ -2381,7 +2381,7 @@ async def send_gmail_message(
     reply_all: Annotated[
         bool,
         Field(
-            description="Whether to derive reply-all recipients from the thread: To = the sender being replied to, Cc = the other participants, excluding the authenticated account. Requires thread_id. Explicit to/cc win. Defaults to false.",
+            description="Whether to derive reply-all recipients from the thread: To = the sender being replied to, Cc = the other participants, excluding the authenticated account and from_email. Requires thread_id. Explicit to/cc win; when cc is omitted the sender being replied to is added to the derived Cc if they are not already in To. Defaults to false.",
         ),
     ] = False,
 ) -> str:
@@ -2430,8 +2430,10 @@ async def send_gmail_message(
             original. Only has an effect when thread_id is provided.
         reply_all (bool): Whether to derive reply-all recipients from the thread: To = the
             sender being replied to, Cc = the other participants, excluding the authenticated
-            account. Requires thread_id. Explicit to/cc win over the derived values; an
-            explicit 'to' moves the sender being replied to into the derived Cc.
+            account and from_email. Requires thread_id. Explicit to/cc win over the derived
+            values; when cc is omitted, the sender being replied to is added to the derived Cc
+            unless they are already in To (so an explicit 'to' that redirects the reply still
+            keeps them on it).
 
     Returns:
         str: Confirmation message with the sent email's message ID.
