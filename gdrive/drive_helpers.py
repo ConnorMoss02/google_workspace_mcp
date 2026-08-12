@@ -289,6 +289,7 @@ def build_drive_list_params(
     return list_params
 
 
+GOOGLE_APPS_MIME_PREFIX = "application/vnd.google-apps."
 SHORTCUT_MIME_TYPE = "application/vnd.google-apps.shortcut"
 FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 
@@ -538,6 +539,16 @@ TEXT_BASED_IMPORT_MIME_TYPES = {
 }
 
 
+def _is_text_like_mime_type(mime_type: str) -> bool:
+    """Whether an in-memory `content` string can safely be uploaded as this MIME type."""
+    return (
+        mime_type.startswith("text/")
+        or mime_type in TEXT_BASED_IMPORT_MIME_TYPES
+        or mime_type.endswith(("+json", "+xml"))
+        or mime_type in {"application/json", "application/xml"}
+    )
+
+
 def _detect_source_format(
     file_name: str,
     content: Optional[str] = None,
@@ -570,7 +581,8 @@ async def _resolve_import_media(
     file_path: Optional[str],
     file_url: Optional[str],
     source_format: Optional[str],
-    format_map: Dict[str, str],
+    format_map: Optional[Dict[str, str]] = None,
+    passthrough_mime_type: Optional[str] = None,
 ) -> Tuple[MediaIoBaseUpload, str, Optional[BinaryIO]]:
     """
     Resolve a content source into an upload ``MediaIoBaseUpload`` and source MIME type.
@@ -579,6 +591,10 @@ async def _resolve_import_media(
     The source bytes are uploaded with their *source* MIME type so the Drive API can
     convert them into the destination Google Apps format. ``format_map`` is the
     extension → source MIME allowlist used for detection and validation.
+
+    Pass ``passthrough_mime_type`` instead of ``format_map`` for non-Google targets
+    (a raw .md, .txt, .pdf, ...): there is nothing to convert, so the bytes upload
+    verbatim under that MIME type and no source allowlist applies.
 
     Returns ``(media, source_mime_type, closeable)``; when the source is a remote URL,
     ``closeable`` is the download stream the caller must close after upload (else None).
@@ -592,7 +608,9 @@ async def _resolve_import_media(
         raise ValueError("Provide only one of: 'content', 'file_path', or 'file_url'.")
 
     # Determine source MIME type from the explicit hint or auto-detection.
-    if source_format:
+    if passthrough_mime_type:
+        source_mime_type = passthrough_mime_type
+    elif source_format:
         format_key = f".{source_format.lower().lstrip('.')}"
         if format_key not in format_map:
             raise ValueError(
@@ -612,7 +630,7 @@ async def _resolve_import_media(
     remote_file_data: Optional[BinaryIO] = None
 
     if content is not None:
-        if source_mime_type not in TEXT_BASED_IMPORT_MIME_TYPES:
+        if not _is_text_like_mime_type(source_mime_type):
             raise ValueError(
                 f"[{tool_name}] 'content' is only valid for text-based source formats, "
                 f"but the source resolves to '{source_mime_type}' (a binary format). "
@@ -646,7 +664,7 @@ async def _resolve_import_media(
         logger.info(f"[{tool_name}] Read local file: {len(file_data)} bytes")
 
         # Re-detect from the real file extension when no explicit hint was given.
-        if not source_format:
+        if not source_format and not passthrough_mime_type:
             source_mime_type = _detect_source_format(actual_path, None, format_map)
 
     else:  # file_url is not None
@@ -657,7 +675,7 @@ async def _resolve_import_media(
         remote_file_data, remote_content_type = await _download_url_to_bytes(file_url)
 
         # Prefer the response Content-Type, falling back to URL-based detection.
-        if not source_format:
+        if not source_format and not passthrough_mime_type:
             ct_base = (remote_content_type or "").split(";", 1)[0].strip()
             if ct_base and ct_base in format_map.values():
                 source_mime_type = ct_base
@@ -668,7 +686,8 @@ async def _resolve_import_media(
 
     # Enforce the allowlist on the final resolved MIME type so auto-detection can't
     # upload an unsupported source (e.g. text/plain from an unknown extension).
-    if source_mime_type not in format_map.values():
+    # Passthrough uploads have no conversion target, so nothing to enforce.
+    if not passthrough_mime_type and source_mime_type not in format_map.values():
         if remote_file_data is not None:
             remote_file_data.close()
         raise ValueError(
