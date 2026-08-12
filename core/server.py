@@ -71,6 +71,11 @@ _DEFAULT_PORTS = {"http": 80, "https": 443, "ws": 80, "wss": 443}
 _ALLOW_NULL_ORIGIN_CONSENT_ENV = "WORKSPACE_MCP_ALLOW_NULL_ORIGIN_CONSENT"
 
 
+def _parse_bool_env(value: str) -> bool:
+    """Parse environment variable string to boolean."""
+    return value.lower() in ("1", "true", "yes", "on")
+
+
 def _normalize_parsed(parsed: ParseResult) -> Optional[str]:
     if not parsed.scheme:
         return None
@@ -140,7 +145,15 @@ def _is_same_origin_as_host(origin: str, host_header: Optional[str]) -> bool:
 
 
 def _is_null_origin_consent_compat_allowed(scope: Scope, origin: str) -> bool:
-    """Allow known opaque-origin consent POSTs only when explicitly enabled."""
+    """Allow known opaque-origin consent POSTs only when explicitly enabled.
+
+    Some browser/MCP-client OAuth redirect chains end with Chrome sending
+    ``Origin: null`` on the consent form submission, which this middleware would
+    otherwise reject. The bypass is opt-in and scoped to that exact request shape;
+    the consent handler itself still enforces a double-submit CSRF check (the form
+    token must match the SameSite=Lax ``MCP_CONSENT_STATE`` cookie), so origin
+    validation is defense in depth here rather than the only guard.
+    """
     if origin != "null":
         return False
     if scope.get("method") != "POST":
@@ -148,8 +161,7 @@ def _is_null_origin_consent_compat_allowed(scope: Scope, origin: str) -> bool:
     if scope.get("path") != "/consent":
         return False
 
-    value = os.getenv(_ALLOW_NULL_ORIGIN_CONSENT_ENV, "").strip().lower()
-    return value in ("1", "true", "yes", "on")
+    return _parse_bool_env(os.getenv(_ALLOW_NULL_ORIGIN_CONSENT_ENV, "").strip())
 
 
 class OriginValidationMiddleware:
@@ -352,11 +364,6 @@ server = SecureFastMCP(
 # Add the AuthInfo middleware to inject authentication into FastMCP context
 auth_info_middleware = AuthInfoMiddleware()
 server.add_middleware(auth_info_middleware)
-
-
-def _parse_bool_env(value: str) -> bool:
-    """Parse environment variable string to boolean."""
-    return value.lower() in ("1", "true", "yes", "on")
 
 
 def _parse_allowed_redirect_uris(value: Optional[str]) -> Optional[List[str]]:
