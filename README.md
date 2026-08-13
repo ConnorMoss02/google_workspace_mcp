@@ -187,16 +187,17 @@ uvx workspace-mcp --tools gmail drive calendar
 </td>
 <td valign="top" width="50%">
 
-**Secretless / Public OAuth 2.1 (PKCE)**
+**OAuth 2.1 (PKCE)**
 
 ```bash
-# 1. Credentials
+# 1. Credentials - MCP clients connect with PKCE and no
+#    secret, but Google still requires one server-side
 export MCP_ENABLE_OAUTH21=true
 export GOOGLE_OAUTH_CLIENT_ID="..."
+export GOOGLE_OAUTH_CLIENT_SECRET="..."
 export WORKSPACE_MCP_PORT=8000
 export GOOGLE_OAUTH_REDIRECT_URI="http://localhost:${WORKSPACE_MCP_PORT}/oauth2callback"
 export OAUTHLIB_INSECURE_TRANSPORT=1
-export FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY="$(openssl rand -hex 32)"
 
 # 2. Launch - OAuth 2.1 requires HTTP transport
 uvx workspace-mcp --transport streamable-http --tool-tier core

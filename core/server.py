@@ -427,6 +427,18 @@ def configure_server_for_http():
                 "protocol authentication can be configured."
             )
 
+        if not config.client_secret and not config.is_external_oauth21_provider():
+            # MCP clients stay secretless, but this server performs the Google code
+            # exchange itself and Google requires a secret for it. Fail here instead
+            # of at the last step of the user's browser flow.
+            raise RuntimeError(
+                "OAuth 2.1 requires GOOGLE_OAUTH_CLIENT_SECRET: Google rejects the "
+                "authorization code exchange without a client secret (invalid_request: "
+                "client_secret is missing), even for public clients using PKCE. Set "
+                "GOOGLE_OAUTH_CLIENT_SECRET, or set EXTERNAL_OAUTH21_PROVIDER=true if "
+                "another identity provider performs the code exchange."
+            )
+
         def validate_and_derive_jwt_key(
             jwt_signing_key_override: str | None, client_secret: str | None
         ) -> bytes:
