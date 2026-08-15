@@ -204,8 +204,11 @@ class AttachmentStorage:
                 f"Saved attachment file_id={file_id} filename={filename or save_name} "
                 f"({size} bytes) to {file_path}"
             )
+            return self._record(
+                file_id, file_path, save_name, filename, mime_type, size
+            )
         except Exception as e:
-            # The move can land before chmod/stat fails, leaving a file in
+            # The move can land before a later finalization step fails, leaving a file in
             # storage that no metadata entry will ever expire. Drop it rather
             # than orphan it, but never let cleanup mask the original failure.
             try:
@@ -220,8 +223,6 @@ class AttachmentStorage:
                 f"filename={filename or save_name} to {file_path}: {e}"
             )
             raise
-
-        return self._record(file_id, file_path, save_name, filename, mime_type, size)
 
     def _record(
         self,

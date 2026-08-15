@@ -113,17 +113,21 @@ class TestSaveAttachmentFromPath:
 
         assert Path(saved.path).name == f"{saved.file_id}.pdf"
 
+    @pytest.mark.parametrize("failure_point", ("chmod", "record"))
     def test_removes_partially_saved_file_when_finalizing_fails(
-        self, storage, tmp_path, monkeypatch
+        self, storage, tmp_path, monkeypatch, failure_point
     ):
         # The move can land before a later step fails; a file left behind here
         # has no metadata entry, so nothing would ever expire it.
         src = self._source(tmp_path)
-        monkeypatch.setattr(
-            attachment_storage.os, "chmod", Mock(side_effect=OSError("nope"))
-        )
+        error = OSError("nope")
+        if failure_point == "chmod":
+            monkeypatch.setattr(attachment_storage.os, "chmod", Mock(side_effect=error))
+        else:
+            monkeypatch.setattr(storage, "_record", Mock(side_effect=error))
 
-        with pytest.raises(OSError):
+        with pytest.raises(OSError) as exc_info:
             storage.save_attachment_from_path(str(src), filename="clip.mp4")
 
+        assert exc_info.value is error
         assert list(attachment_storage.STORAGE_DIR.iterdir()) == []
