@@ -205,6 +205,16 @@ class AttachmentStorage:
                 f"({size} bytes) to {file_path}"
             )
         except Exception as e:
+            # The move can land before chmod/stat fails, leaving a file in
+            # storage that no metadata entry will ever expire. Drop it rather
+            # than orphan it, but never let cleanup mask the original failure.
+            try:
+                file_path.unlink(missing_ok=True)
+            except OSError as cleanup_error:
+                logger.warning(
+                    f"Failed to remove partially saved attachment {file_path}: "
+                    f"{cleanup_error}"
+                )
             logger.error(
                 f"Failed to save attachment file_id={file_id} "
                 f"filename={filename or save_name} to {file_path}: {e}"

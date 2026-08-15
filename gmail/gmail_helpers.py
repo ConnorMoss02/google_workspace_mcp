@@ -515,7 +515,47 @@ class _HTMLBlockTextExtractor(HTMLParser):
     real newlines and only collapses horizontal whitespace within a line.
     """
 
-    _BLOCK_TAGS = ("div", "p", "tr", "li")
+    # Elements whose boundaries are visible line breaks once the markup is
+    # gone. Table cells are deliberately absent: a line per cell would wreck
+    # table-based layouts, and the separator they do need is its own issue.
+    _BLOCK_TAGS = frozenset(
+        {
+            "address",
+            "article",
+            "aside",
+            "blockquote",
+            "dd",
+            "div",
+            "dl",
+            "dt",
+            "fieldset",
+            "figcaption",
+            "figure",
+            "footer",
+            "form",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "header",
+            "hr",
+            "li",
+            "main",
+            "nav",
+            "ol",
+            "p",
+            "pre",
+            "section",
+            "table",
+            "tbody",
+            "tfoot",
+            "thead",
+            "tr",
+            "ul",
+        }
+    )
 
     def __init__(self):
         super().__init__()
@@ -583,6 +623,11 @@ def html_to_text_preserving_breaks(html_content: str) -> str:
     try:
         parser = _HTMLBlockTextExtractor()
         parser.feed(html_content)
+        # feed() withholds any tail that could still turn out to be an
+        # incomplete construct -- a trailing "&" or an unterminated entity.
+        # close() flushes it; without this a body ending in "Tom &amp" comes
+        # back empty rather than merely losing the entity.
+        parser.close()
         return parser.get_text()
     except Exception:
         return html_content

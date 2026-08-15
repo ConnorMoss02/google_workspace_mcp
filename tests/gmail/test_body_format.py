@@ -224,6 +224,26 @@ class TestHtmlPlainTextAlternative:
 
         assert plain.strip().splitlines() == ["Best,", "Alice"]
 
+    def test_plain_part_separates_headings_from_following_text(self):
+        plain = self._parts("<h1>Quarterly update</h1><h2>Revenue</h2>")["text/plain"]
+
+        assert plain.strip().splitlines() == ["Quarterly update", "Revenue"]
+
+    def test_plain_part_separates_semantic_sections(self):
+        body = "<section>Section one.</section><section>Section two.</section>"
+
+        plain = self._parts(body)["text/plain"]
+
+        assert plain.strip().splitlines() == ["Section one.", "Section two."]
+        assert "one.Section" not in plain
+
+    def test_plain_part_keeps_body_ending_in_incomplete_entity(self):
+        # HTMLParser withholds a trailing "&" as a possibly-incomplete entity,
+        # so an unflushed parser drops the whole tail of the body.
+        plain = self._parts("<p>Tom &amp</p>")["text/plain"]
+
+        assert plain.strip() == "Tom &"
+
 
 class TestFormatBodyContentHtmlMode:
     """Verify 'html' body_format returns raw HTML."""

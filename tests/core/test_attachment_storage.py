@@ -3,6 +3,7 @@
 import stat
 import unicodedata
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -111,3 +112,18 @@ class TestSaveAttachmentFromPath:
         saved = storage.save_attachment_from_path(str(src), mime_type="application/pdf")
 
         assert Path(saved.path).name == f"{saved.file_id}.pdf"
+
+    def test_removes_partially_saved_file_when_finalizing_fails(
+        self, storage, tmp_path, monkeypatch
+    ):
+        # The move can land before a later step fails; a file left behind here
+        # has no metadata entry, so nothing would ever expire it.
+        src = self._source(tmp_path)
+        monkeypatch.setattr(
+            attachment_storage.os, "chmod", Mock(side_effect=OSError("nope"))
+        )
+
+        with pytest.raises(OSError):
+            storage.save_attachment_from_path(str(src), filename="clip.mp4")
+
+        assert list(attachment_storage.STORAGE_DIR.iterdir()) == []

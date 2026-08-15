@@ -573,7 +573,11 @@ async def get_drive_file_download_url(
     # Move the download into attachment storage and return its path/URL
     try:
         storage = get_attachment_storage()
-        result = storage.save_attachment_from_path(
+        # shutil.move falls back to a full streamed copy when the temp dir and
+        # the storage dir are on different mounts, which for a multi-gigabyte
+        # download would block the event loop for the length of that copy.
+        result = await asyncio.to_thread(
+            storage.save_attachment_from_path,
             src_path=str(tmp_path),
             filename=output_filename,
             mime_type=output_mime_type,
