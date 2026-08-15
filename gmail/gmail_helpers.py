@@ -495,17 +495,20 @@ def _build_forward_content(
     return subject, forward_body, body_format
 
 
-class _HTMLSignatureExtractor(HTMLParser):
-    """Extract text from signature HTML, preserving block-level line breaks.
+class _HTMLBlockTextExtractor(HTMLParser):
+    """Extract text from HTML, preserving block-level line breaks.
 
-    _HTMLTextExtractor (in gmail_tools.py) is tuned for reading arbitrary
+    _HTMLTextExtractor (in gmail_tools.py) is tuned for *reading* arbitrary
     message bodies, where flowing single-line text is preferred -- it inserts
     no separator at all between block elements (</div><div> etc.), and its
     get_text() collapses every whitespace run, including newlines, to a
-    single space. Gmail signatures are structured line-by-line (name /
-    title / phone / ...) using <br> or one <div>/<p> per line; run through
-    the general extractor, adjacent lines end up concatenated with zero
-    whitespace between them (e.g. "-Erik" immediately followed by
+    single space. That is the wrong shape whenever the output has to keep the
+    author's structure: Gmail signatures are laid out line-by-line (name /
+    title / phone / ...) using <br> or one <div>/<p> per line, and the
+    text/plain alternative of an outgoing HTML message has to preserve
+    paragraph breaks because it is what non-HTML clients actually display.
+    Run through the general extractor, adjacent lines end up concatenated
+    with zero whitespace between them (e.g. "-Erik" immediately followed by
     "Erik Holzhauer" with no break at all), which no amount of whitespace
     collapsing afterward can repair since there was never a separating
     character to begin with. This extractor treats block boundaries as
@@ -571,11 +574,20 @@ class _HTMLSignatureExtractor(HTMLParser):
         return text.strip()
 
 
-def _signature_html_to_text(signature_html: str) -> str:
-    """Convert Gmail signature HTML to plain text, preserving line breaks."""
+def html_to_text_preserving_breaks(html_content: str) -> str:
+    """Convert HTML to plain text, keeping block boundaries as line breaks.
+
+    Falls back to the original markup if parsing fails, so a malformed body is
+    still delivered as *something* rather than an empty part.
+    """
     try:
-        parser = _HTMLSignatureExtractor()
-        parser.feed(signature_html)
+        parser = _HTMLBlockTextExtractor()
+        parser.feed(html_content)
         return parser.get_text()
     except Exception:
-        return signature_html
+        return html_content
+
+
+def _signature_html_to_text(signature_html: str) -> str:
+    """Convert Gmail signature HTML to plain text, preserving line breaks."""
+    return html_to_text_preserving_breaks(signature_html)
