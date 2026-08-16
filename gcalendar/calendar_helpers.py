@@ -30,9 +30,10 @@ def _format_event_time(item: Dict[str, Any], field: str) -> str:
         return str(value)
     try:
         if "T" in value:
-            local_date = datetime.datetime.fromisoformat(
-                value.replace("Z", "+00:00")
-            ).date()
+            parsed = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                return value
+            local_date = parsed.date()
         else:
             local_date = datetime.date.fromisoformat(value)
     except ValueError:

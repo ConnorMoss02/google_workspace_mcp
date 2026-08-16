@@ -259,6 +259,15 @@ async def test_basic_ranged_output_is_unchanged():
         ),
         (
             {
+                **ORDINARY_MEETING,
+                "start": {"dateTime": "2026-08-20T17:15:00"},
+                "end": {"dateTime": "2026-08-20T18:00:00"},
+            },
+            "2026-08-20T17:15:00",
+            "2026-08-20T18:00:00",
+        ),
+        (
+            {
                 **ALL_FIELDS_INSTANCE,
                 "start": {"date": "2026-08-20"},
                 "end": {"date": "2026-08-22"},
@@ -267,7 +276,7 @@ async def test_basic_ranged_output_is_unchanged():
             "2026-08-22 [weekday: Saturday; ISO weekday: 6; exclusive all-day end]",
         ),
     ],
-    ids=["timed", "offset-crossing", "dst-offsets", "z", "all-day"],
+    ids=["timed", "offset-crossing", "dst-offsets", "z", "offset-less", "all-day"],
 )
 async def test_get_events_always_retains_raw_times_with_deterministic_weekdays(
     read, item, start_evidence, end_evidence
