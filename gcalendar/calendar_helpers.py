@@ -5,10 +5,43 @@ This module provides utility functions for formatting Google Calendar
 event data for display.
 """
 
+import datetime
 import logging
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+_WEEKDAYS = (
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+)
+
+
+def _format_event_time(item: Dict[str, Any], field: str) -> str:
+    """Format one raw Google event boundary with offset-local weekday evidence."""
+    boundary = item[field]
+    value = boundary.get("dateTime", boundary.get("date"))
+    if not isinstance(value, str):
+        return str(value)
+    try:
+        if "T" in value:
+            local_date = datetime.datetime.fromisoformat(
+                value.replace("Z", "+00:00")
+            ).date()
+        else:
+            local_date = datetime.date.fromisoformat(value)
+    except ValueError:
+        return value
+    iso_weekday = local_date.isoweekday()
+    evidence = f"weekday: {_WEEKDAYS[iso_weekday - 1]}; ISO weekday: {iso_weekday}"
+    if field == "end" and "date" in boundary and "dateTime" not in boundary:
+        evidence += "; exclusive all-day end"
+    return f"{value} [{evidence}]"
 
 
 def _get_meeting_link(item: Dict[str, Any]) -> str:

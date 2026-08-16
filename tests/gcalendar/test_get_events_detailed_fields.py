@@ -59,9 +59,35 @@ async def _single_detail(item):
     )
 
 
+async def _ranged_basic(item):
+    """Basic output via the time_min/time_max branch."""
+    return await _unwrap(get_events)(
+        service=_mock_service([item]),
+        user_google_email="user@example.com",
+        time_min="2026-04-06T00:00:00Z",
+        time_max="2026-04-07T00:00:00Z",
+        detailed=False,
+    )
+
+
+async def _single_basic(item):
+    """Basic output via the event_id branch."""
+    return await _unwrap(get_events)(
+        service=_mock_service([item]),
+        user_google_email="user@example.com",
+        event_id=item["id"],
+        detailed=False,
+    )
+
+
 # Every test runs through both formatters. Their disagreement was the bug.
 both_branches = pytest.mark.parametrize(
     "detail", [_ranged_detail, _single_detail], ids=["ranged", "single"]
+)
+all_get_paths = pytest.mark.parametrize(
+    "read",
+    [_ranged_basic, _single_basic, _ranged_detail, _single_detail],
+    ids=["ranged-basic", "single-basic", "ranged-detailed", "single-detailed"],
 )
 
 RECURRING_INSTANCE = {
@@ -188,3 +214,65 @@ async def test_basic_ranged_output_is_unchanged():
 
     assert "Color ID" not in result
     assert "Recurring Event ID" not in result
+
+
+@pytest.mark.asyncio
+@all_get_paths
+@pytest.mark.parametrize(
+    "item,start_evidence,end_evidence",
+    [
+        (
+            {
+                **ORDINARY_MEETING,
+                "start": {"dateTime": "2026-08-20T17:15:00+02:00"},
+                "end": {"dateTime": "2026-08-20T18:00:00+02:00"},
+            },
+            "2026-08-20T17:15:00+02:00 [weekday: Thursday; ISO weekday: 4]",
+            "2026-08-20T18:00:00+02:00 [weekday: Thursday; ISO weekday: 4]",
+        ),
+        (
+            {
+                **ORDINARY_MEETING,
+                "start": {"dateTime": "2026-08-20T00:15:00+14:00"},
+                "end": {"dateTime": "2026-08-19T23:45:00-10:00"},
+            },
+            "2026-08-20T00:15:00+14:00 [weekday: Thursday; ISO weekday: 4]",
+            "2026-08-19T23:45:00-10:00 [weekday: Wednesday; ISO weekday: 3]",
+        ),
+        (
+            {
+                **ORDINARY_MEETING,
+                "start": {"dateTime": "2026-03-29T01:30:00+01:00"},
+                "end": {"dateTime": "2026-03-29T03:30:00+02:00"},
+            },
+            "2026-03-29T01:30:00+01:00 [weekday: Sunday; ISO weekday: 7]",
+            "2026-03-29T03:30:00+02:00 [weekday: Sunday; ISO weekday: 7]",
+        ),
+        (
+            {
+                **ORDINARY_MEETING,
+                "start": {"dateTime": "2026-08-20T23:30:00Z"},
+                "end": {"dateTime": "2026-08-21T00:30:00Z"},
+            },
+            "2026-08-20T23:30:00Z [weekday: Thursday; ISO weekday: 4]",
+            "2026-08-21T00:30:00Z [weekday: Friday; ISO weekday: 5]",
+        ),
+        (
+            {
+                **ALL_FIELDS_INSTANCE,
+                "start": {"date": "2026-08-20"},
+                "end": {"date": "2026-08-22"},
+            },
+            "2026-08-20 [weekday: Thursday; ISO weekday: 4]",
+            "2026-08-22 [weekday: Saturday; ISO weekday: 6; exclusive all-day end]",
+        ),
+    ],
+    ids=["timed", "offset-crossing", "dst-offsets", "z", "all-day"],
+)
+async def test_get_events_always_retains_raw_times_with_deterministic_weekdays(
+    read, item, start_evidence, end_evidence
+):
+    result = await read(item)
+
+    assert f"Starts: {start_evidence}" in result
+    assert f"Ends: {end_evidence}" in result
