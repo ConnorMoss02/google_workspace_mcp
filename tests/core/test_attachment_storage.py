@@ -1,5 +1,6 @@
 """Tests for filename handling and storage in core.attachment_storage."""
 
+import base64
 import stat
 import unicodedata
 from pathlib import Path
@@ -53,6 +54,39 @@ class TestSanitizeAttachmentFilename:
             sep = chr(cp)
             assert unicodedata.category(sep) == "Zs"
             assert sanitize_attachment_filename(f"a{sep}b.txt") == "a b.txt"
+
+
+class TestSaveAttachment:
+    """save_attachment writes base64 payloads to storage."""
+
+    @pytest.fixture
+    def storage(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(attachment_storage, "STORAGE_DIR", tmp_path / "attachments")
+        return AttachmentStorage()
+
+    def test_ids_sharing_a_prefix_get_distinct_files(self, storage, monkeypatch):
+        # The on-disk name once used only file_id[:8], so two ids sharing that
+        # prefix overwrote each other and the first attachment was lost.
+        ids = [
+            "abcdef12-0000-4000-8000-000000000001",
+            "abcdef12-0000-4000-8000-000000000002",
+        ]
+        monkeypatch.setattr(
+            attachment_storage.uuid, "uuid4", Mock(side_effect=list(ids))
+        )
+
+        first = storage.save_attachment(
+            base64.urlsafe_b64encode(b"first").decode(), filename="report.pdf"
+        )
+        second = storage.save_attachment(
+            base64.urlsafe_b64encode(b"second").decode(), filename="report.pdf"
+        )
+
+        assert first.path != second.path
+        assert Path(first.path).read_bytes() == b"first"
+        assert Path(second.path).read_bytes() == b"second"
+        assert storage.get_attachment_path(first.file_id) == Path(first.path)
+        assert storage.get_attachment_path(second.file_id) == Path(second.path)
 
 
 class TestSaveAttachmentFromPath:

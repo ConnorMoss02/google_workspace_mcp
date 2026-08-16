@@ -81,8 +81,10 @@ def _build_save_name(
 ) -> str:
     """Build a collision-free on-disk name, keeping the original stem when given."""
     if filename:
+        # The full file_id, not a prefix: a truncated one lets two distinct
+        # attachments land on the same path, silently overwriting the first.
         safe_filename = Path(sanitize_attachment_filename(filename))
-        return f"{safe_filename.stem}_{file_id[:8]}{safe_filename.suffix}"
+        return f"{safe_filename.stem}_{file_id}{safe_filename.suffix}"
     return f"{file_id}{_MIME_TO_EXTENSION.get(mime_type or '', '')}"
 
 
