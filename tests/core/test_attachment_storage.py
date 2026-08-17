@@ -113,6 +113,17 @@ class TestSaveAttachmentFromPath:
         assert Path(saved.path).read_bytes() == b"payload"
         assert not src.exists()
 
+    def test_resets_source_mtime_when_moving_into_storage(self, storage, tmp_path):
+        src = self._source(tmp_path)
+        past = time.time() - 7200
+        os.utime(src, (past, past))
+
+        saved = storage.save_attachment_from_path(str(src), filename="clip.mp4")
+
+        assert Path(saved.path).stat().st_mtime > past
+        assert storage.sweep_expired() == 0
+        assert Path(saved.path).exists()
+
     def test_stored_file_is_owner_only(self, storage, tmp_path):
         src = self._source(tmp_path)
 
@@ -149,7 +160,7 @@ class TestSaveAttachmentFromPath:
 
         assert Path(saved.path).name == f"{saved.file_id}.pdf"
 
-    @pytest.mark.parametrize("failure_point", ("chmod", "record"))
+    @pytest.mark.parametrize("failure_point", ("chmod", "utime", "record"))
     def test_removes_partially_saved_file_when_finalizing_fails(
         self, storage, tmp_path, monkeypatch, failure_point
     ):
@@ -159,6 +170,8 @@ class TestSaveAttachmentFromPath:
         error = OSError("nope")
         if failure_point == "chmod":
             monkeypatch.setattr(attachment_storage.os, "chmod", Mock(side_effect=error))
+        elif failure_point == "utime":
+            monkeypatch.setattr(attachment_storage.os, "utime", Mock(side_effect=error))
         else:
             monkeypatch.setattr(storage, "_record", Mock(side_effect=error))
 
@@ -251,8 +264,8 @@ class TestSweepExpired:
         assert storage.sweep_expired() == 1
 
 
-class TestGetAttachmentStorageSweepsOnCreate:
-    """A restart is the only chance to reclaim what the previous process left."""
+class TestGetAttachmentStorageSweeps:
+    """Singleton access reclaims files left by previous processes."""
 
     def test_singleton_creation_sweeps_orphans(self, tmp_path, monkeypatch):
         monkeypatch.setattr(attachment_storage, "STORAGE_DIR", tmp_path / "attachments")
@@ -266,3 +279,52 @@ class TestGetAttachmentStorageSweepsOnCreate:
         attachment_storage.get_attachment_storage()
 
         assert not stale.exists()
+
+    def test_later_access_reconsiders_files_kept_on_first_sweep(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(attachment_storage, "STORAGE_DIR", tmp_path / "attachments")
+        monkeypatch.setattr(attachment_storage, "_attachment_storage", None)
+        attachment_storage._ensure_storage_dir()
+        orphan = attachment_storage.STORAGE_DIR / "previous-process.bin"
+        orphan.write_bytes(b"payload")
+
+        first = attachment_storage.get_attachment_storage()
+        assert orphan.exists()
+
+        past = time.time() - 7200
+        os.utime(orphan, (past, past))
+        second = attachment_storage.get_attachment_storage()
+
+        assert first is second
+        assert not orphan.exists()
+
+    def test_scan_failure_is_best_effort_and_retried(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        monkeypatch.setattr(attachment_storage, "STORAGE_DIR", tmp_path / "attachments")
+        monkeypatch.setattr(attachment_storage, "_attachment_storage", None)
+        attachment_storage._ensure_storage_dir()
+        stale = attachment_storage.STORAGE_DIR / "stale.bin"
+        stale.write_bytes(b"payload")
+        past = time.time() - 7200
+        os.utime(stale, (past, past))
+
+        real_iterdir = Path.iterdir
+        calls = {"n": 0}
+
+        def flaky_iterdir(self):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise OSError("permission denied")
+            return real_iterdir(self)
+
+        monkeypatch.setattr(Path, "iterdir", flaky_iterdir)
+
+        first = attachment_storage.get_attachment_storage()
+        assert stale.exists()
+        second = attachment_storage.get_attachment_storage()
+
+        assert first is second
+        assert not stale.exists()
+        assert "Failed to scan attachment storage" in caplog.text

@@ -202,6 +202,10 @@ class AttachmentStorage:
             # stays memory-safe when the temp dir is on another mount.
             shutil.move(str(src_path), str(file_path))
             os.chmod(file_path, 0o600)
+            # A move can preserve the source timestamp. Expiry is keyed to the
+            # time the file enters attachment storage, not when the source was
+            # originally created or last written.
+            os.utime(file_path, None)
             size = file_path.stat().st_size
             logger.info(
                 f"Saved attachment file_id={file_id} filename={filename or save_name} "
@@ -326,24 +330,29 @@ class AttachmentStorage:
         Returns:
             Number of files removed
         """
-        if not STORAGE_DIR.exists():
-            return 0
-
         cutoff = time.time() - self.expiration_seconds
         swept: set[str] = set()
 
-        for path in STORAGE_DIR.iterdir():
-            try:
-                if not path.is_file():
+        try:
+            if not STORAGE_DIR.exists():
+                return 0
+
+            for path in STORAGE_DIR.iterdir():
+                try:
+                    if not path.is_file():
+                        continue
+                    if path.stat().st_mtime >= cutoff:
+                        continue
+                    path.unlink()
+                except OSError as e:
+                    # One locked or unreadable entry must not abandon the rest.
+                    logger.warning(f"Failed to remove expired attachment {path}: {e}")
                     continue
-                if path.stat().st_mtime >= cutoff:
-                    continue
-                path.unlink()
-            except OSError as e:
-                # One locked or unreadable entry must not abandon the rest.
-                logger.warning(f"Failed to remove expired attachment {path}: {e}")
-                continue
-            swept.add(str(path))
+                swept.add(str(path))
+        except OSError as e:
+            # Cleanup is best-effort and must never make attachment storage
+            # unavailable when the directory cannot be enumerated.
+            logger.warning(f"Failed to scan attachment storage {STORAGE_DIR}: {e}")
 
         if swept:
             stale_ids = [
@@ -388,9 +397,10 @@ def get_attachment_storage() -> AttachmentStorage:
     global _attachment_storage
     if _attachment_storage is None:
         _attachment_storage = AttachmentStorage()
-        # First use in a process is the only opportunity to reclaim whatever the
-        # previous one left behind, since _metadata starts empty.
-        _attachment_storage.sweep_expired()
+    # Sweep on every acquisition so a previous process's still-fresh files are
+    # reconsidered once they cross the expiration boundary. Callers acquire the
+    # singleton once per attachment operation, so no background task is needed.
+    _attachment_storage.sweep_expired()
     return _attachment_storage
 
 
