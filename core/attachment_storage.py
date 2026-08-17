@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import shutil
+import time
 import unicodedata
 import uuid
 from pathlib import Path
@@ -312,6 +313,50 @@ class AttachmentStorage:
                 logger.warning(f"Failed to delete attachment file {file_path}: {e}")
             del self._metadata[file_id]
 
+    def sweep_expired(self) -> int:
+        """
+        Remove stored files older than the expiration window, using mtime only.
+
+        ``self._metadata`` is the only other record of when a file expires, and
+        it starts empty in a new process. Anything written before a restart is
+        therefore unreachable by the metadata-driven cleanup and would stay on
+        disk forever. Dating files by mtime keeps expiry working across restarts,
+        and also covers files that are simply never requested again.
+
+        Returns:
+            Number of files removed
+        """
+        if not STORAGE_DIR.exists():
+            return 0
+
+        cutoff = time.time() - self.expiration_seconds
+        swept: set[str] = set()
+
+        for path in STORAGE_DIR.iterdir():
+            try:
+                if not path.is_file():
+                    continue
+                if path.stat().st_mtime >= cutoff:
+                    continue
+                path.unlink()
+            except OSError as e:
+                # One locked or unreadable entry must not abandon the rest.
+                logger.warning(f"Failed to remove expired attachment {path}: {e}")
+                continue
+            swept.add(str(path))
+
+        if swept:
+            stale_ids = [
+                file_id
+                for file_id, metadata in self._metadata.items()
+                if metadata["file_path"] in swept
+            ]
+            for file_id in stale_ids:
+                del self._metadata[file_id]
+            logger.info(f"Swept {len(swept)} expired attachment(s) from {STORAGE_DIR}")
+
+        return len(swept)
+
     def cleanup_expired(self) -> int:
         """
         Clean up expired attachments.
@@ -329,7 +374,9 @@ class AttachmentStorage:
         for file_id in expired_ids:
             self._cleanup_file(file_id)
 
-        return len(expired_ids)
+        # Files this process never recorded (written before a restart, or left
+        # behind by a failed save) are only reachable through the disk sweep.
+        return len(expired_ids) + self.sweep_expired()
 
 
 # Global instance
@@ -341,6 +388,9 @@ def get_attachment_storage() -> AttachmentStorage:
     global _attachment_storage
     if _attachment_storage is None:
         _attachment_storage = AttachmentStorage()
+        # First use in a process is the only opportunity to reclaim whatever the
+        # previous one left behind, since _metadata starts empty.
+        _attachment_storage.sweep_expired()
     return _attachment_storage
 
 

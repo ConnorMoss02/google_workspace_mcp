@@ -1,7 +1,9 @@
 """Tests for filename handling and storage in core.attachment_storage."""
 
 import base64
+import os
 import stat
+import time
 import unicodedata
 from pathlib import Path
 from unittest.mock import Mock
@@ -165,3 +167,102 @@ class TestSaveAttachmentFromPath:
 
         assert exc_info.value is error
         assert list(attachment_storage.STORAGE_DIR.iterdir()) == []
+
+
+class TestSweepExpired:
+    """Expiry has to survive a restart, so it must be derivable from disk alone."""
+
+    @pytest.fixture
+    def storage(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(attachment_storage, "STORAGE_DIR", tmp_path / "attachments")
+        return AttachmentStorage(expiration_seconds=3600)
+
+    @staticmethod
+    def _orphan(name="orphan.bin", age_seconds=0):
+        """Write a file straight into storage with no metadata entry, as a
+        previous process would have left behind."""
+        attachment_storage._ensure_storage_dir()
+        path = attachment_storage.STORAGE_DIR / name
+        path.write_bytes(b"payload")
+        if age_seconds:
+            past = time.time() - age_seconds
+            os.utime(path, (past, past))
+        return path
+
+    def test_removes_orphaned_file_past_expiration(self, storage):
+        # The restart case: the file outlived the process that recorded it, so
+        # _metadata knows nothing about it and only mtime can date it.
+        stale = self._orphan("stale.bin", age_seconds=7200)
+
+        removed = storage.sweep_expired()
+
+        assert removed == 1
+        assert not stale.exists()
+
+    def test_keeps_orphaned_file_inside_expiration_window(self, storage):
+        fresh = self._orphan("fresh.bin", age_seconds=60)
+
+        removed = storage.sweep_expired()
+
+        assert removed == 0
+        assert fresh.exists()
+
+    def test_drops_metadata_for_files_it_sweeps(self, storage):
+        # A swept file must not leave a dangling metadata entry pointing at a
+        # path that no longer exists.
+        saved = storage.save_attachment(
+            base64.urlsafe_b64encode(b"payload").decode(), filename="doc.pdf"
+        )
+        past = time.time() - 7200
+        os.utime(saved.path, (past, past))
+
+        assert storage.sweep_expired() == 1
+        assert saved.file_id not in storage._metadata
+
+    def test_leaves_directories_alone(self, storage):
+        attachment_storage._ensure_storage_dir()
+        nested = attachment_storage.STORAGE_DIR / "nested"
+        nested.mkdir()
+        past = time.time() - 7200
+        os.utime(nested, (past, past))
+
+        assert storage.sweep_expired() == 0
+        assert nested.is_dir()
+
+    def test_missing_storage_dir_is_not_an_error(self, storage):
+        # Nothing has been saved yet, so the directory may not exist.
+        assert storage.sweep_expired() == 0
+
+    def test_one_unremovable_file_does_not_abort_the_sweep(self, storage, monkeypatch):
+        self._orphan("first.bin", age_seconds=7200)
+        self._orphan("second.bin", age_seconds=7200)
+        real_unlink = Path.unlink
+        calls = {"n": 0}
+
+        def flaky_unlink(self, *a, **kw):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise OSError("permission denied")
+            return real_unlink(self, *a, **kw)
+
+        monkeypatch.setattr(Path, "unlink", flaky_unlink)
+
+        # The second file still gets reclaimed even though the first failed.
+        assert storage.sweep_expired() == 1
+
+
+class TestGetAttachmentStorageSweepsOnCreate:
+    """A restart is the only chance to reclaim what the previous process left."""
+
+    def test_singleton_creation_sweeps_orphans(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(attachment_storage, "STORAGE_DIR", tmp_path / "attachments")
+        monkeypatch.setattr(attachment_storage, "_attachment_storage", None)
+        attachment_storage._ensure_storage_dir()
+        stale = attachment_storage.STORAGE_DIR / "left-by-previous-process.bin"
+        stale.write_bytes(b"payload")
+        past = time.time() - 7200
+        os.utime(stale, (past, past))
+
+        attachment_storage.get_attachment_storage()
+
+        assert not stale.exists()
