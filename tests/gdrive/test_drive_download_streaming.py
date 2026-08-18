@@ -196,9 +196,7 @@ async def test_worker_save_survives_concurrent_attachment_route_sweep(
         assert move_completed
 
         try:
-            racing_response = await serve_attachment(
-                _attachment_request(attachment_id)
-            )
+            racing_response = await serve_attachment(_attachment_request(attachment_id))
         finally:
             resume_save.set()
         result = await download
