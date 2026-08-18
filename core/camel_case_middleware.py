@@ -6,7 +6,6 @@ import logging
 import re
 from typing import Any, Dict, Optional
 
-from fastmcp.exceptions import NotFoundError
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 
 logger = logging.getLogger(__name__)
@@ -53,9 +52,8 @@ class CamelCaseArgumentsMiddleware(Middleware):
         if not context.fastmcp_context:
             return None
 
-        try:
-            tool = await context.fastmcp_context.fastmcp.get_tool(context.message.name)
-        except NotFoundError:
+        tool = await context.fastmcp_context.fastmcp.get_tool(context.message.name)
+        if tool is None:
             # Unknown tool — let the normal "tool not found" handling run.
             return None
 

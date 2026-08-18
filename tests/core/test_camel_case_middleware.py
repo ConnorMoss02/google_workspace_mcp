@@ -5,6 +5,7 @@ from typing import Optional
 
 import pytest
 from fastmcp import Client, FastMCP
+from fastmcp.exceptions import ToolError
 
 from core.camel_case_middleware import CamelCaseArgumentsMiddleware, to_snake_case
 
@@ -121,7 +122,7 @@ async def test_declared_camel_case_parameter_is_untouched():
 async def test_unknown_tool_error_still_propagates():
     server = _build_server()
     async with Client(server) as client:
-        with pytest.raises(Exception):
+        with pytest.raises(ToolError, match="Unknown tool: 'does_not_exist'"):
             await client.call_tool("does_not_exist", {"calendarId": "primary"})
 
 
