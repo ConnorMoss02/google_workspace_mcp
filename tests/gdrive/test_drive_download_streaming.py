@@ -160,6 +160,8 @@ async def test_worker_save_survives_concurrent_attachment_route_sweep(
 
     monkeypatch.setattr(attachment_storage, "STORAGE_DIR", storage_dir)
     monkeypatch.setattr(attachment_storage, "_attachment_storage", None)
+    attachment_id = "00000000-0000-0000-0000-000000000001"
+    monkeypatch.setattr(attachment_storage.uuid, "uuid4", lambda: attachment_id)
     monkeypatch.setattr("gdrive.drive_tools._download_file_to_temp", stale_download)
     storage = attachment_storage.get_attachment_storage()
 
@@ -195,7 +197,7 @@ async def test_worker_save_survives_concurrent_attachment_route_sweep(
 
         try:
             racing_response = await serve_attachment(
-                _attachment_request("save-in-progress")
+                _attachment_request(attachment_id)
             )
         finally:
             resume_save.set()
@@ -206,11 +208,10 @@ async def test_worker_save_survives_concurrent_attachment_route_sweep(
     assert "Saved to:" in result
     assert not source.exists()
 
-    [file_id] = storage._metadata
-    saved_path = Path(storage._metadata[file_id]["file_path"])
+    saved_path = Path(storage._metadata[attachment_id]["file_path"])
     assert saved_path.read_bytes() == b"video-bytes"
     assert isinstance(
-        await serve_attachment(_attachment_request(file_id)), FileResponse
+        await serve_attachment(_attachment_request(attachment_id)), FileResponse
     )
 
 
