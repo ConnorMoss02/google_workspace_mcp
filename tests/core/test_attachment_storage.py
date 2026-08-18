@@ -113,7 +113,7 @@ class TestSaveAttachmentFromPath:
         assert Path(saved.path).read_bytes() == b"payload"
         assert not src.exists()
 
-    def test_resets_source_mtime_when_moving_into_storage(self, storage, tmp_path):
+    def test_refreshes_source_mtime_before_moving_into_storage(self, storage, tmp_path):
         src = self._source(tmp_path)
         past = time.time() - 7200
         os.utime(src, (past, past))
@@ -183,7 +183,7 @@ class TestSaveAttachmentFromPath:
 
 
 class TestSweepExpired:
-    """Expiry has to survive a restart, so it must be derivable from disk alone."""
+    """Tests for mtime-based expiry."""
 
     @pytest.fixture
     def storage(self, tmp_path, monkeypatch):
@@ -192,8 +192,7 @@ class TestSweepExpired:
 
     @staticmethod
     def _orphan(name="orphan.bin", age_seconds=0):
-        """Write a file straight into storage with no metadata entry, as a
-        previous process would have left behind."""
+        """Write a file without a metadata entry."""
         attachment_storage._ensure_storage_dir()
         path = attachment_storage.STORAGE_DIR / name
         path.write_bytes(b"payload")
@@ -203,8 +202,6 @@ class TestSweepExpired:
         return path
 
     def test_removes_orphaned_file_past_expiration(self, storage):
-        # The restart case: the file outlived the process that recorded it, so
-        # _metadata knows nothing about it and only mtime can date it.
         stale = self._orphan("stale.bin", age_seconds=7200)
 
         removed = storage.sweep_expired()
@@ -221,8 +218,6 @@ class TestSweepExpired:
         assert fresh.exists()
 
     def test_drops_metadata_for_files_it_sweeps(self, storage):
-        # A swept file must not leave a dangling metadata entry pointing at a
-        # path that no longer exists.
         saved = storage.save_attachment(
             base64.urlsafe_b64encode(b"payload").decode(), filename="doc.pdf"
         )
@@ -243,7 +238,6 @@ class TestSweepExpired:
         assert nested.is_dir()
 
     def test_missing_storage_dir_is_not_an_error(self, storage):
-        # Nothing has been saved yet, so the directory may not exist.
         assert storage.sweep_expired() == 0
 
     def test_one_unremovable_file_does_not_abort_the_sweep(self, storage, monkeypatch):
@@ -260,12 +254,11 @@ class TestSweepExpired:
 
         monkeypatch.setattr(Path, "unlink", flaky_unlink)
 
-        # The second file still gets reclaimed even though the first failed.
         assert storage.sweep_expired() == 1
 
 
 class TestGetAttachmentStorageSweeps:
-    """Singleton access reclaims files left by previous processes."""
+    """Tests for sweeping on singleton access."""
 
     def test_singleton_creation_sweeps_orphans(self, tmp_path, monkeypatch):
         monkeypatch.setattr(attachment_storage, "STORAGE_DIR", tmp_path / "attachments")

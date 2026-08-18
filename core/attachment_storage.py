@@ -198,14 +198,12 @@ class AttachmentStorage:
         file_path = STORAGE_DIR / save_name
 
         try:
+            # Publish with a fresh mtime so a concurrent sweep cannot expire it.
+            os.utime(src_path, None)
             # shutil.move degrades to a streamed copy across filesystems, so it
             # stays memory-safe when the temp dir is on another mount.
             shutil.move(str(src_path), str(file_path))
             os.chmod(file_path, 0o600)
-            # A move can preserve the source timestamp. Expiry is keyed to the
-            # time the file enters attachment storage, not when the source was
-            # originally created or last written.
-            os.utime(file_path, None)
             size = file_path.stat().st_size
             logger.info(
                 f"Saved attachment file_id={file_id} filename={filename or save_name} "
@@ -318,18 +316,7 @@ class AttachmentStorage:
             del self._metadata[file_id]
 
     def sweep_expired(self) -> int:
-        """
-        Remove stored files older than the expiration window, using mtime only.
-
-        ``self._metadata`` is the only other record of when a file expires, and
-        it starts empty in a new process. Anything written before a restart is
-        therefore unreachable by the metadata-driven cleanup and would stay on
-        disk forever. Dating files by mtime keeps expiry working across restarts,
-        and also covers files that are simply never requested again.
-
-        Returns:
-            Number of files removed
-        """
+        """Remove files older than the expiration window based on mtime."""
         cutoff = time.time() - self.expiration_seconds
         swept: set[str] = set()
 
@@ -345,13 +332,10 @@ class AttachmentStorage:
                         continue
                     path.unlink()
                 except OSError as e:
-                    # One locked or unreadable entry must not abandon the rest.
                     logger.warning(f"Failed to remove expired attachment {path}: {e}")
                     continue
                 swept.add(str(path))
         except OSError as e:
-            # Cleanup is best-effort and must never make attachment storage
-            # unavailable when the directory cannot be enumerated.
             logger.warning(f"Failed to scan attachment storage {STORAGE_DIR}: {e}")
 
         if swept:
@@ -383,8 +367,6 @@ class AttachmentStorage:
         for file_id in expired_ids:
             self._cleanup_file(file_id)
 
-        # Files this process never recorded (written before a restart, or left
-        # behind by a failed save) are only reachable through the disk sweep.
         return len(expired_ids) + self.sweep_expired()
 
 
@@ -397,9 +379,6 @@ def get_attachment_storage() -> AttachmentStorage:
     global _attachment_storage
     if _attachment_storage is None:
         _attachment_storage = AttachmentStorage()
-    # Sweep on every acquisition so a previous process's still-fresh files are
-    # reconsidered once they cross the expiration boundary. Callers acquire the
-    # singleton once per attachment operation, so no background task is needed.
     _attachment_storage.sweep_expired()
     return _attachment_storage
 
