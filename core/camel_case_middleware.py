@@ -10,7 +10,9 @@ from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 
 logger = logging.getLogger(__name__)
 
-_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+# Split on lowercase/digit -> uppercase ("timeMin") and on the tail of an
+# acronym run followed by a new word ("fooURLValue" -> "foo_URL_Value").
+_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
 
 
 def to_snake_case(name: str) -> str:

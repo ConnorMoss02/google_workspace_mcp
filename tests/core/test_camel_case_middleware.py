@@ -17,6 +17,10 @@ def test_to_snake_case_conversions():
     assert to_snake_case("maxResults") == "max_results"
     assert to_snake_case("singleEvents") == "single_events"
     assert to_snake_case("orderBy") == "order_by"
+    # Acronym runs split from the word that follows them
+    assert to_snake_case("fooURLValue") == "foo_url_value"
+    assert to_snake_case("iCalUID") == "i_cal_uid"
+    assert to_snake_case("htmlURL") == "html_url"
     # Already snake_case or single-word names are untouched
     assert to_snake_case("calendar_id") == "calendar_id"
     assert to_snake_case("query") == "query"
