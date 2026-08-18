@@ -401,7 +401,7 @@ async def get_events(
         str: A formatted list of events (summary, start and end times, link) within the specified range, or detailed information for a single event if event_id is provided.
     """
     logger.info(
-        f"[get_events] Raw parameters - event_id: '{event_id}', time_min: '{time_min}', time_max: '{time_max}', query: '{query}', detailed: {detailed}, include_attachments: {include_attachments}"
+        f"[get_events] Raw parameters - event_id: '{event_id}', time_min: '{time_min}', time_max: '{time_max}', query_len={len(query) if query else 0}, detailed: {detailed}, include_attachments: {include_attachments}"
     )
 
     # Handle single event retrieval
@@ -438,7 +438,7 @@ async def get_events(
             )
 
         logger.info(
-            f"[get_events] Final API parameters - calendarId: '{calendar_id}', timeMin: '{effective_time_min}', timeMax: '{effective_time_max}', maxResults: {max_results}, query: '{query}'"
+            f"[get_events] Final API parameters - calendarId: '{calendar_id}', timeMin: '{effective_time_min}', timeMax: '{effective_time_max}', maxResults: {max_results}, query_len={len(query) if query else 0}"
         )
 
         # Build the request parameters dynamically
@@ -654,13 +654,13 @@ async def _create_event_impl(
 ) -> str:
     """Internal implementation for creating a calendar event."""
     logger.info(
-        f"[create_event] Invoked. Email: '{user_google_email}', Summary: {summary}"
+        f"[create_event] Invoked. Email: '{user_google_email}', summary_len={len(summary) if summary else 0}"
     )
-    logger.info(f"[create_event] Incoming attachments param: {attachments}")
+    logger.debug(f"[create_event] Incoming attachments param: {attachments}")
     # If attachments value is a string, split by comma and strip whitespace
     if attachments and isinstance(attachments, str):
         attachments = [a.strip() for a in attachments.split(",") if a.strip()]
-        logger.info(
+        logger.debug(
             f"[create_event] Parsed attachments list from string: {attachments}"
         )
     # When an IANA timezone is provided, strip any UTC offset from dateTime values
@@ -778,7 +778,7 @@ async def _create_event_impl(
                     match = re.search(r"(?:/d/|/file/d/|id=)([\w-]+)", att)
                     file_id = match.group(1) if match else None
                     logger.info(
-                        f"[create_event] Extracted file_id '{file_id}' from attachment URL '{att}'"
+                        f"[create_event] Extracted file_id '{file_id}' from attachment URL"
                     )
                 else:
                     file_id = att
@@ -894,7 +894,7 @@ def _normalize_attendees(
             normalized.append(att)
         else:
             logger.warning(
-                f"[_normalize_attendees] Invalid attendee format: {att}, skipping"
+                f"[_normalize_attendees] Invalid attendee format (type={type(att).__name__}), skipping"
             )
     return normalized if normalized else None
 
@@ -1263,7 +1263,7 @@ async def _rsvp_event_impl(
 
     summary = updated_event.get("summary", "Unknown event")
     logger.info(
-        f"[rsvp_event] RSVP for '{summary}' (ID: {event_id}) set to '{response}' for {user_google_email}."
+        f"[rsvp_event] RSVP for event {event_id} set to '{response}' for {user_google_email}."
     )
     return f"Successfully updated RSVP for '{summary}' (ID: {event_id}) to '{response}' for {user_google_email}."
 
@@ -2444,7 +2444,7 @@ async def query_freebusy(
         request_body["calendarExpansionMax"] = calendar_expansion_max
 
     logger.info(
-        f"[query_freebusy] Request body: timeMin={formatted_time_min}, timeMax={formatted_time_max}, calendars={calendar_ids}"
+        f"[query_freebusy] Request body: timeMin={formatted_time_min}, timeMax={formatted_time_max}, calendar_count={len(calendar_ids)}"
     )
 
     # Execute the freebusy query
@@ -2532,7 +2532,7 @@ async def create_calendar(
         str: The ID and summary of the newly created calendar.
     """
     logger.info(
-        f"[create_calendar] Invoked. Email: '{user_google_email}', summary: '{summary}'"
+        f"[create_calendar] Invoked. Email: '{user_google_email}', summary_len={len(summary)}"
     )
 
     body: Dict[str, Any] = {"summary": summary}
@@ -2547,7 +2547,5 @@ async def create_calendar(
 
     calendar_id = result["id"]
     calendar_summary = result.get("summary", summary)
-    logger.info(
-        f"[create_calendar] Created calendar '{calendar_summary}' with ID: {calendar_id}"
-    )
+    logger.info(f"[create_calendar] Created calendar with ID: {calendar_id}")
     return f"Created calendar '{calendar_summary}' (ID: {calendar_id})"
