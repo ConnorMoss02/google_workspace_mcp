@@ -3485,8 +3485,9 @@ async def list_gmail_labels(
     Args:
         user_google_email (str): The user's Google email address. Required.
         prefix (Optional[str]): Return only labels whose name starts with this
-            exact (case-sensitive) string. With a hierarchical label tree this
-            fetches one subtree instead of the whole list.
+            exact (case-sensitive) string. users.labels.list accepts no filter,
+            so the full list is fetched and narrowed here: this shrinks what the
+            caller receives, not the API call.
         compact (bool): Return minimal JSON {"count", "labels": [{"id", "name"}]}
             sorted by name, instead of the formatted text list. For callers
             that parse the result, e.g. a label cache refresh.
