@@ -11,6 +11,7 @@ import re
 import uuid
 import json
 from typing import List, Optional, Dict, Any, Union
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pytz
 from googleapiclient.errors import HttpError
@@ -330,6 +331,17 @@ def _build_time_boundary(time_value: str, timezone: Optional[str]) -> Dict[str, 
         return {"date": time_value}
     if not timezone:
         return {"dateTime": time_value}
+    # Reject an unresolvable zone here rather than stripping the caller's offset and
+    # forwarding a name Google will refuse. Falling back to the offset instead would
+    # be worse than erroring: it silently discards the zone the caller asked for and
+    # books the event somewhere else.
+    try:
+        ZoneInfo(timezone)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise ValueError(
+            f"Unrecognized IANA timezone {timezone!r}. Use a zone name such as "
+            "'America/New_York' or 'Europe/Amsterdam'."
+        ) from exc
     # With an IANA zone present, drop any caller-supplied offset so Google resolves
     # the DST-correct one from the zone name itself (see _strip_utc_offset).
     return {"dateTime": _strip_utc_offset(time_value), "timeZone": timezone}

@@ -268,3 +268,51 @@ def test_new_timezone_params_are_keyword_only():
             assert params[name].kind is inspect.Parameter.KEYWORD_ONLY, (
                 f"{fn.__name__}.{name} must stay keyword-only"
             )
+
+
+# --- timezone validation -----------------------------------------------------
+
+
+def test_unresolvable_timezone_raises_rather_than_silently_dropping():
+    """Falling back to the offset would book the event in the wrong zone.
+
+    Silently ignoring an unrecognized zone discards the caller's stated intent
+    with no error, which is worse than the bug: the event lands somewhere the
+    caller never asked for. Fail loudly with a name they can act on instead.
+    """
+    with pytest.raises(ValueError, match="Unrecognized IANA timezone"):
+        _build_time_boundary("2026-08-21T17:50:00+03:00", "Mars/Olympus_Mons")
+
+
+def test_validation_error_names_the_offending_zone():
+    with pytest.raises(ValueError, match="Mars/Olympus_Mons"):
+        _build_time_boundary("2026-08-21T17:50:00", "Mars/Olympus_Mons")
+
+
+def test_all_day_boundary_skips_timezone_validation():
+    """An all-day date carries no zone, so a bad name is irrelevant, not fatal."""
+    assert _build_time_boundary("2026-08-21", "Mars/Olympus_Mons") == {
+        "date": "2026-08-21"
+    }
+
+
+def test_valid_zones_still_pass_validation():
+    for zone in ("Asia/Jerusalem", "Europe/Amsterdam", "America/New_York", "UTC"):
+        assert _build_time_boundary("2026-08-21T09:00:00", zone)["timeZone"] == zone
+
+
+@pytest.mark.asyncio
+async def test_create_rejects_unresolvable_boundary_timezone():
+    service = _create_mock_service()
+    with pytest.raises(ValueError, match="Unrecognized IANA timezone"):
+        await _create_event_impl(
+            service=service,
+            user_google_email="user@example.com",
+            summary="Bad zone",
+            start_time="2026-08-21T09:00:00",
+            end_time="2026-08-21T09:15:00",
+            end_timezone="Mars/Olympus_Mons",
+        )
+    # The mock records a bare events().insert() during setup, so assert that no
+    # call carrying a request body was made: nothing reached the API.
+    assert not [c for c in service.events().insert.call_args_list if c.kwargs]
