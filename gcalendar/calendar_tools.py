@@ -329,7 +329,10 @@ def _build_time_boundary(time_value: str, timezone: Optional[str]) -> Dict[str, 
     """
     if "T" not in time_value:
         return {"date": time_value}
-    if not timezone:
+    # `is None` rather than falsy: an explicitly empty zone is an invalid value, not
+    # an omitted one, and must reach validation below instead of being treated as
+    # "no zone given".
+    if timezone is None:
         return {"dateTime": time_value}
     # Reject an unresolvable zone here rather than stripping the caller's offset and
     # forwarding a name Google will refuse. Falling back to the offset instead would
@@ -699,8 +702,12 @@ async def _create_event_impl(
     # Each boundary resolves its own zone, falling back to the event-wide timezone.
     event_body: Dict[str, Any] = {
         "summary": summary,
-        "start": _build_time_boundary(start_time, start_timezone or timezone),
-        "end": _build_time_boundary(end_time, end_timezone or timezone),
+        "start": _build_time_boundary(
+            start_time, start_timezone if start_timezone is not None else timezone
+        ),
+        "end": _build_time_boundary(
+            end_time, end_timezone if end_timezone is not None else timezone
+        ),
     }
     if recurrence:
         event_body["recurrence"] = recurrence
@@ -953,10 +960,12 @@ async def _modify_event_impl(
         event_body["summary"] = summary
     if start_time is not None:
         event_body["start"] = _build_time_boundary(
-            start_time, start_timezone or timezone
+            start_time, start_timezone if start_timezone is not None else timezone
         )
     if end_time is not None:
-        event_body["end"] = _build_time_boundary(end_time, end_timezone or timezone)
+        event_body["end"] = _build_time_boundary(
+            end_time, end_timezone if end_timezone is not None else timezone
+        )
     if description is not None:
         event_body["description"] = description
     if location is not None:

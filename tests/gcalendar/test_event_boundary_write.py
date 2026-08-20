@@ -316,3 +316,69 @@ async def test_create_rejects_unresolvable_boundary_timezone():
     # The mock records a bare events().insert() during setup, so assert that no
     # call carrying a request body was made: nothing reached the API.
     assert not [c for c in service.events().insert.call_args_list if c.kwargs]
+
+
+# --- empty vs omitted timezone -----------------------------------------------
+
+
+def test_empty_timezone_is_rejected_not_treated_as_omitted():
+    """`""` is an invalid value, not an absent one."""
+    with pytest.raises(ValueError, match="Unrecognized IANA timezone"):
+        _build_time_boundary("2026-08-21T09:00:00", "")
+
+
+def test_omitted_timezone_still_returns_bare_datetime():
+    assert _build_time_boundary("2026-08-21T09:00:00", None) == {
+        "dateTime": "2026-08-21T09:00:00"
+    }
+
+
+@pytest.mark.asyncio
+async def test_empty_boundary_timezone_does_not_fall_back_to_event_wide():
+    """The silent-substitution bug this PR exists to fix, in miniature.
+
+    `start_timezone or timezone` let an explicitly empty boundary zone collapse to
+    the event-wide one, so the caller got a zone they never asked for and no error.
+    """
+    service = _create_mock_service()
+    with pytest.raises(ValueError, match="Unrecognized IANA timezone"):
+        await _create_event_impl(
+            service=service,
+            user_google_email="user@example.com",
+            summary="Empty zone",
+            start_time="2026-08-21T09:00:00",
+            end_time="2026-08-21T09:15:00",
+            timezone="America/New_York",
+            start_timezone="",
+        )
+    assert not [c for c in service.events().insert.call_args_list if c.kwargs]
+
+
+@pytest.mark.asyncio
+async def test_empty_boundary_timezone_rejected_without_event_wide_timezone():
+    service = _create_mock_service()
+    with pytest.raises(ValueError, match="Unrecognized IANA timezone"):
+        await _create_event_impl(
+            service=service,
+            user_google_email="user@example.com",
+            summary="Empty zone",
+            start_time="2026-08-21T09:00:00",
+            end_time="2026-08-21T09:15:00",
+            end_timezone="",
+        )
+    assert not [c for c in service.events().insert.call_args_list if c.kwargs]
+
+
+@pytest.mark.asyncio
+async def test_update_rejects_empty_boundary_timezone():
+    service = _create_mock_service()
+    with pytest.raises(ValueError, match="Unrecognized IANA timezone"):
+        await _modify_event_impl(
+            service=service,
+            user_google_email="user@example.com",
+            event_id="evt1",
+            start_time="2026-08-21T09:00:00",
+            timezone="America/New_York",
+            start_timezone="",
+        )
+    assert not [c for c in service.events().patch.call_args_list if c.kwargs]
