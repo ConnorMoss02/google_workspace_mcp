@@ -34,6 +34,7 @@ GMAIL_METADATA_HEADERS = [
     "From",
     "To",
     "Cc",
+    "Reply-To",
     "Message-ID",
     "In-Reply-To",
     "References",

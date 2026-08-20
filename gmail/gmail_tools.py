@@ -296,6 +296,7 @@ def _format_message_header_lines(
     """Format standard Gmail message headers for response output."""
     subject = headers.get("Subject", "(no subject)")
     sender = headers.get("From", "(unknown sender)")
+    reply_to = headers.get("Reply-To", "")
     to = headers.get("To", "")
     cc = headers.get("Cc", "")
     rfc822_msg_id = headers.get("Message-ID", "")
@@ -316,6 +317,8 @@ def _format_message_header_lines(
             f"Date: {headers.get('Date', '(unknown date)')}",
         ]
     )
+    if reply_to:
+        content_lines.append(f"Reply-To: {reply_to}")
 
     if rfc822_msg_id:
         content_lines.append(f"Message-ID: {rfc822_msg_id}")
@@ -3127,6 +3130,7 @@ def _format_thread_content(
         sender = headers.get("From", "(unknown sender)")
         date = headers.get("Date", "(unknown date)")
         subject = headers.get("Subject", "(no subject)")
+        reply_to = headers.get("Reply-To", "")
         to = headers.get("To", "")
         cc = headers.get("Cc", "")
         rfc822_message_id = headers.get("Message-ID", "")
@@ -3162,6 +3166,8 @@ def _format_thread_content(
                 f"Date: {date}",
             ]
         )
+        if reply_to:
+            content_lines.append(f"Reply-To: {reply_to}")
         content_lines.append(
             f"To: {to}" if "To" in headers else "To: [not present in Gmail response]"
         )
