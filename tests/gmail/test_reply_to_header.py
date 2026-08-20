@@ -18,6 +18,7 @@ def test_reply_to_in_metadata_headers_whitelist():
 
 
 def test_format_message_header_lines_includes_reply_to_when_present():
+    """When Reply-To is in the headers dict, it must appear in the output."""
     headers = {
         "Subject": "Test",
         "From": "Alex <alex@example.com>",
@@ -31,6 +32,7 @@ def test_format_message_header_lines_includes_reply_to_when_present():
 
 
 def test_format_message_header_lines_omits_reply_to_when_absent():
+    """Without Reply-To in the headers dict, no Reply-To line is emitted."""
     headers = {
         "Subject": "Test",
         "From": "Alex <alex@example.com>",
