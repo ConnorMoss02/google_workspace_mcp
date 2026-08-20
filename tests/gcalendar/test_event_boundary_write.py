@@ -1,0 +1,212 @@
+"""
+Unit tests for authoring events whose two boundaries sit in different timezones.
+
+A single `timezone` applied to both ends cannot express a flight: departing 13:45
+Asia/Jerusalem and landing 17:50 Europe/Amsterdam is one event authored in two
+zones. The previous behavior stripped the caller's explicit UTC offsets and then
+stamped the one `timezone` onto both boundaries, so the arrival above was written
+as 17:50 Israel time -- an hour off, silently, with the API reporting success.
+
+`start_timezone` / `end_timezone` override `timezone` per boundary; each falls
+back to `timezone` when omitted, so existing single-zone callers are unaffected.
+"""
+
+import os
+import sys
+from unittest.mock import Mock
+
+import pytest
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+
+from gcalendar.calendar_tools import (
+    _build_time_boundary,
+    _create_event_impl,
+    _modify_event_impl,
+)
+
+
+def _create_mock_service():
+    mock_service = Mock()
+    mock_service.events().insert().execute = Mock(
+        return_value={"id": "evt1", "htmlLink": "https://example.test/evt1"}
+    )
+    mock_service.events().get().execute = Mock(return_value={})
+    mock_service.events().patch().execute = Mock(
+        return_value={"id": "evt1", "htmlLink": "https://example.test/evt1"}
+    )
+    mock_service.events().update().execute = Mock(
+        return_value={"id": "evt1", "htmlLink": "https://example.test/evt1"}
+    )
+    return mock_service
+
+
+def _sent_body(mock_service, method="insert"):
+    """Return the event body of the last insert/patch call."""
+    calls = [
+        c for c in getattr(mock_service.events(), method).call_args_list if c.kwargs
+    ]
+    return calls[-1].kwargs["body"]
+
+
+# --- _build_time_boundary ----------------------------------------------------
+
+
+def test_boundary_pairs_datetime_with_its_zone():
+    assert _build_time_boundary("2026-08-21T17:50:00", "Europe/Amsterdam") == {
+        "dateTime": "2026-08-21T17:50:00",
+        "timeZone": "Europe/Amsterdam",
+    }
+
+
+def test_boundary_strips_offset_when_zone_given():
+    """An explicit offset would override the IANA zone and defeat DST resolution."""
+    assert _build_time_boundary("2026-08-21T17:50:00+03:00", "Europe/Amsterdam") == {
+        "dateTime": "2026-08-21T17:50:00",
+        "timeZone": "Europe/Amsterdam",
+    }
+
+
+def test_boundary_keeps_offset_when_no_zone_given():
+    assert _build_time_boundary("2026-08-21T17:50:00+02:00", None) == {
+        "dateTime": "2026-08-21T17:50:00+02:00"
+    }
+
+
+def test_boundary_handles_all_day_dates():
+    assert _build_time_boundary("2026-08-21", "Europe/Amsterdam") == {
+        "date": "2026-08-21"
+    }
+
+
+# --- create ------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_writes_distinct_zones_per_boundary():
+    service = _create_mock_service()
+    await _create_event_impl(
+        service=service,
+        user_google_email="user@example.com",
+        summary="Flight IZ1513 TLV -> AMS",
+        start_time="2026-08-21T13:45:00",
+        end_time="2026-08-21T17:50:00",
+        start_timezone="Asia/Jerusalem",
+        end_timezone="Europe/Amsterdam",
+    )
+    body = _sent_body(service)
+    assert body["start"] == {
+        "dateTime": "2026-08-21T13:45:00",
+        "timeZone": "Asia/Jerusalem",
+    }
+    assert body["end"] == {
+        "dateTime": "2026-08-21T17:50:00",
+        "timeZone": "Europe/Amsterdam",
+    }
+
+
+@pytest.mark.asyncio
+async def test_create_falls_back_to_event_wide_timezone():
+    """Omitting the per-boundary params must behave exactly as before."""
+    service = _create_mock_service()
+    await _create_event_impl(
+        service=service,
+        user_google_email="user@example.com",
+        summary="Standup",
+        start_time="2026-08-21T09:00:00",
+        end_time="2026-08-21T09:15:00",
+        timezone="America/New_York",
+    )
+    body = _sent_body(service)
+    assert body["start"]["timeZone"] == "America/New_York"
+    assert body["end"]["timeZone"] == "America/New_York"
+
+
+@pytest.mark.asyncio
+async def test_create_allows_overriding_only_one_boundary():
+    service = _create_mock_service()
+    await _create_event_impl(
+        service=service,
+        user_google_email="user@example.com",
+        summary="Red-eye",
+        start_time="2026-08-28T19:00:00",
+        end_time="2026-08-29T00:30:00",
+        timezone="Europe/Amsterdam",
+        end_timezone="Asia/Jerusalem",
+    )
+    body = _sent_body(service)
+    assert body["start"]["timeZone"] == "Europe/Amsterdam"
+    assert body["end"]["timeZone"] == "Asia/Jerusalem"
+
+
+@pytest.mark.asyncio
+async def test_create_without_any_timezone_keeps_offsets():
+    service = _create_mock_service()
+    await _create_event_impl(
+        service=service,
+        user_google_email="user@example.com",
+        summary="Sync",
+        start_time="2026-08-21T09:00:00Z",
+        end_time="2026-08-21T09:15:00Z",
+    )
+    body = _sent_body(service)
+    assert body["start"] == {"dateTime": "2026-08-21T09:00:00Z"}
+    assert "timeZone" not in body["end"]
+
+
+# --- update ------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_update_writes_distinct_zones_per_boundary():
+    service = _create_mock_service()
+    await _modify_event_impl(
+        service=service,
+        user_google_email="user@example.com",
+        event_id="evt1",
+        start_time="2026-08-28T19:00:00",
+        end_time="2026-08-29T00:30:00",
+        start_timezone="Europe/Amsterdam",
+        end_timezone="Asia/Jerusalem",
+    )
+    body = _sent_body(service, "patch")
+    assert body["start"] == {
+        "dateTime": "2026-08-28T19:00:00",
+        "timeZone": "Europe/Amsterdam",
+    }
+    assert body["end"] == {
+        "dateTime": "2026-08-29T00:30:00",
+        "timeZone": "Asia/Jerusalem",
+    }
+
+
+@pytest.mark.asyncio
+async def test_update_falls_back_to_event_wide_timezone():
+    service = _create_mock_service()
+    await _modify_event_impl(
+        service=service,
+        user_google_email="user@example.com",
+        event_id="evt1",
+        start_time="2026-08-21T09:00:00",
+        end_time="2026-08-21T09:15:00",
+        timezone="America/New_York",
+    )
+    body = _sent_body(service, "patch")
+    assert body["start"]["timeZone"] == "America/New_York"
+    assert body["end"]["timeZone"] == "America/New_York"
+
+
+@pytest.mark.asyncio
+async def test_update_leaves_untouched_boundary_absent():
+    """Patch semantics: an omitted end must not be invented."""
+    service = _create_mock_service()
+    await _modify_event_impl(
+        service=service,
+        user_google_email="user@example.com",
+        event_id="evt1",
+        start_time="2026-08-21T09:00:00",
+        start_timezone="Asia/Jerusalem",
+    )
+    body = _sent_body(service, "patch")
+    assert body["start"]["timeZone"] == "Asia/Jerusalem"
+    assert "end" not in body
