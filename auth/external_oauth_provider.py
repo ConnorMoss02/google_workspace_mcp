@@ -8,6 +8,7 @@ This provider acts as a Resource Server only - it validates tokens issued by
 Google's Authorization Server but does not issue tokens itself.
 """
 
+import asyncio
 import functools
 import logging
 import os
@@ -118,7 +119,9 @@ class ExternalOAuthProvider(GoogleProvider):
                 )
 
                 # Validate token by calling userinfo API
-                user_info = get_user_info(credentials, skip_valid_check=True)
+                user_info = await asyncio.to_thread(
+                    get_user_info, credentials, skip_valid_check=True
+                )
 
                 if user_info and user_info.get("email"):
                     session_time = get_session_time()
