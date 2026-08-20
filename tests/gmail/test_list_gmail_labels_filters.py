@@ -50,11 +50,24 @@ async def _call(**kwargs):
 class TestDefaults:
     @pytest.mark.asyncio
     async def test_default_returns_formatted_text_with_every_label(self):
+        """Pins the exact default output, so a change to the heading, the
+        grouping, the ordering or the whitespace fails here rather than
+        silently breaking callers that parse this string."""
         result = await _call()
-        assert isinstance(result, str)
-        assert "Found 5 labels:" in result
-        assert "INBOX" in result
-        assert "Clients/Acme Co" in result
+        assert result == "\n".join(
+            [
+                "Found 5 labels:",
+                "",
+                "\U0001f4c2 SYSTEM LABELS:",
+                "  • INBOX (ID: INBOX)",
+                "  • SENT (ID: SENT)",
+                "",
+                "\U0001f3f7️  USER LABELS:",
+                "  • Clients/Beta Corp (ID: Label_9)",
+                "  • Clients/Acme Co (ID: Label_3)",
+                "  • Vendors/Gamma LLC (ID: Label_7)",
+            ]
+        )
 
     @pytest.mark.asyncio
     async def test_default_no_labels_message_unchanged(self):
