@@ -657,8 +657,6 @@ async def _create_event_impl(
     location: Optional[str] = None,
     attendees: Optional[List[str]] = None,
     timezone: Optional[str] = None,
-    start_timezone: Optional[str] = None,
-    end_timezone: Optional[str] = None,
     attachments: Optional[List[str]] = None,
     add_google_meet: bool = False,
     conference_data: Optional[Dict[str, Any]] = None,
@@ -671,6 +669,9 @@ async def _create_event_impl(
     guests_can_invite_others: Optional[bool] = None,
     guests_can_see_other_guests: Optional[bool] = None,
     send_updates: str = "all",
+    *,
+    start_timezone: Optional[str] = None,
+    end_timezone: Optional[str] = None,
 ) -> str:
     """Internal implementation for creating a calendar event."""
     logger.info(
@@ -913,8 +914,6 @@ async def _modify_event_impl(
     location: Optional[str] = None,
     attendees: Optional[Union[List[str], List[Dict[str, Any]]]] = None,
     timezone: Optional[str] = None,
-    start_timezone: Optional[str] = None,
-    end_timezone: Optional[str] = None,
     add_google_meet: Optional[bool] = None,
     conference_data: Optional[Dict[str, Any]] = None,
     reminders: Optional[Union[str, List[Dict[str, Any]]]] = None,
@@ -927,6 +926,9 @@ async def _modify_event_impl(
     guests_can_invite_others: Optional[bool] = None,
     guests_can_see_other_guests: Optional[bool] = None,
     send_updates: str = "all",
+    *,
+    start_timezone: Optional[str] = None,
+    end_timezone: Optional[str] = None,
 ) -> str:
     """Internal implementation for modifying a calendar event."""
     logger.info(
@@ -1287,8 +1289,6 @@ async def manage_event(
     location: Optional[str] = None,
     attendees: Optional[Union[StringList, List[Dict[str, Any]]]] = None,
     timezone: Optional[str] = None,
-    start_timezone: Optional[str] = None,
-    end_timezone: Optional[str] = None,
     attachments: Optional[StringList] = None,
     add_google_meet: Optional[bool] = None,
     conference_data: Optional[Dict[str, Any]] = None,
@@ -1308,6 +1308,9 @@ async def manage_event(
     response: Optional[str] = None,
     rsvp_comment: Optional[str] = None,
     send_updates: Optional[str] = None,
+    *,
+    start_timezone: Optional[str] = None,
+    end_timezone: Optional[str] = None,
 ) -> str:
     """
     Manages calendar events. Supports creating, updating, deleting, and RSVP.

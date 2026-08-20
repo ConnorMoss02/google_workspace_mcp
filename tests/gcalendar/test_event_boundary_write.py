@@ -23,7 +23,16 @@ from gcalendar.calendar_tools import (
     _build_time_boundary,
     _create_event_impl,
     _modify_event_impl,
+    manage_event,
 )
+
+
+def _unwrap(tool):
+    """Unwrap FunctionTool + decorators to the original async function."""
+    fn = tool.fn if hasattr(tool, "fn") else tool
+    while hasattr(fn, "__wrapped__"):
+        fn = fn.__wrapped__
+    return fn
 
 
 def _create_mock_service():
@@ -210,3 +219,52 @@ async def test_update_leaves_untouched_boundary_absent():
     body = _sent_body(service, "patch")
     assert body["start"]["timeZone"] == "Asia/Jerusalem"
     assert "end" not in body
+
+
+# --- backward compatibility --------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_legacy_positional_call_still_binds_attachments_correctly():
+    """New params must not shift existing positional bindings.
+
+    `attachments` follows `timezone` in manage_event's signature, so inserting the
+    new parameters between them would silently rebind a caller's attachment list
+    to start_timezone -- which then goes out as start.timeZone and is rejected by
+    Google. Appending them as keyword-only keeps every prior position intact.
+    """
+    service = _create_mock_service()
+    fn = _unwrap(manage_event)
+    await fn(
+        service,
+        "user@example.com",
+        "create",
+        "Legacy positional",
+        "2026-08-21T09:00:00",
+        "2026-08-21T09:15:00",
+        None,  # event_id
+        "primary",  # calendar_id
+        "desc",  # description
+        "loc",  # location
+        None,  # attendees
+        "America/New_York",  # timezone
+        ["https://drive.google.com/file/d/abc123/view"],  # attachments
+    )
+    body = _sent_body(service)
+    assert body["start"]["timeZone"] == "America/New_York"
+    assert body["end"]["timeZone"] == "America/New_York"
+    assert body.get("attachments") is not None
+
+
+def test_new_timezone_params_are_keyword_only():
+    """Guard the fix itself: positional callers can never reach these."""
+    import inspect
+
+    from gcalendar.calendar_tools import _create_event_impl, _modify_event_impl
+
+    for fn in (_unwrap(manage_event), _create_event_impl, _modify_event_impl):
+        params = inspect.signature(fn).parameters
+        for name in ("start_timezone", "end_timezone"):
+            assert params[name].kind is inspect.Parameter.KEYWORD_ONLY, (
+                f"{fn.__name__}.{name} must stay keyword-only"
+            )
