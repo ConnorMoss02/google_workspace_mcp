@@ -1002,8 +1002,11 @@ async def create_drive_file(
         str: Confirmation message of the successful file creation with file link.
     """
     logger.info(
-        f"[create_drive_file] Invoked. Email: '{user_google_email}', File Name: {file_name}, Folder ID: {folder_id}, fileUrl: {fileUrl}"
+        f"[create_drive_file] Invoked. Email: '{user_google_email}', "
+        f"file_name_len={len(file_name) if file_name else 0}, Folder ID: {folder_id}, "
+        f"has_fileUrl={bool(fileUrl)}"
     )
+    logger.debug(f"[create_drive_file] File Name: {file_name}, fileUrl: {fileUrl}")
 
     has_existing_content_source = content is not None or bool(fileUrl)
     if (
@@ -1282,8 +1285,10 @@ async def _import_with_conversion(
     """
     logger.info(
         f"[{tool_name}] Invoked. Email: '{user_google_email}', "
-        f"File Name: '{file_name}', Source Format: '{source_format}', Folder ID: '{folder_id}'"
+        f"file_name_len={len(file_name) if file_name else 0}, "
+        f"Source Format: '{source_format}', Folder ID: '{folder_id}'"
     )
+    logger.debug(f"[{tool_name}] File Name: '{file_name}'")
 
     media, source_mime_type, remote_file_data = await _resolve_import_media(
         tool_name=tool_name,
@@ -1745,9 +1750,11 @@ async def check_drive_file_public_access(
         str: Information about the file's sharing status and whether it can be used in Google Docs.
     """
     logger.info(
-        f"[check_drive_file_public_access] Searching for {file_name}"
+        f"[check_drive_file_public_access] Invoked. "
+        f"file_name_len={len(file_name) if file_name else 0}"
         + (f" within drive_id={drive_id}" if drive_id else "")
     )
+    logger.debug(f"[check_drive_file_public_access] Searching for {file_name}")
 
     # Search for the file
     escaped_name = file_name.replace("'", "\\'")
