@@ -1881,6 +1881,12 @@ async def update_drive_file(
     server-side, so only the new text has to be supplied — no need to send the whole
     file back to rewrite it.
 
+    Drive shortcuts are handled according to the kind of update: metadata-only changes
+    (rename, move, trash, star, description, etc.) apply to the supplied shortcut
+    resource itself, while content replacement follows the shortcut and updates its
+    target. A call that combines content and metadata therefore applies both to the
+    resolved target, preserving the tool's historical content-update behavior.
+
     Args:
         user_google_email (str): The user's Google email address. Required.
         file_id (str): The ID of the file to update. Required.
@@ -1924,6 +1930,7 @@ async def update_drive_file(
             "'file_path' and 'file_url' are only supported with mode='replace'."
         )
 
+    replacing_content = any(x is not None for x in (content, file_path, file_url))
     current_file_fields = (
         "name, description, mimeType, parents, starred, trashed, webViewLink, "
         "writersCanShare, copyRequiresWriterPermission, properties"
@@ -1932,6 +1939,10 @@ async def update_drive_file(
         service,
         file_id,
         extra_fields=current_file_fields,
+        # Metadata-only changes belong to the supplied Drive resource (including a
+        # shortcut). Content updates keep the historical behavior of following a
+        # shortcut to the actual file whose bytes/content should be changed.
+        follow_shortcuts=replacing_content,
     )
     file_id = resolved_file_id
 
@@ -1989,7 +2000,6 @@ async def update_drive_file(
     # Native Google files take replacement content through Drive's import conversion
     # (the engine import_to_google_doc uses); any other file has nothing to convert,
     # so its bytes stream back verbatim under the same file ID.
-    replacing_content = any(x is not None for x in (content, file_path, file_url))
     remote_file_data = None
     format_map = None
     content_update_lock = (
