@@ -169,7 +169,7 @@ def test_utc_z_without_timezone_field_keeps_its_z_spelling():
     )
 
 
-def test_unrecognized_timezone_degrades_to_returned_offset():
+def test_unrecognized_timezone_keeps_returned_offset_and_raw_zone_name():
     item = {
         "start": {
             "dateTime": "2026-08-21T13:45:00+03:00",
@@ -181,8 +181,14 @@ def test_unrecognized_timezone_degrades_to_returned_offset():
         },
     }
     assert _format_event_time(item, "end") == (
-        "2026-08-21T14:45:00+03:00 [weekday: Friday; ISO weekday: 5]"
+        "2026-08-21T14:45:00+03:00 "
+        "[Mars/Olympus_Mons; weekday: Friday; ISO weekday: 5]"
     )
+
+    boundary = parse_event_boundary(item, "end")
+    assert boundary is not None
+    assert boundary.timezone == "Mars/Olympus_Mons"
+    assert boundary.timezone_resolved is False
 
 
 def test_all_day_boundary_is_unaffected():

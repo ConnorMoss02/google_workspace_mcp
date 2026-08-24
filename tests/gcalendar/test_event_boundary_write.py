@@ -13,6 +13,7 @@ back to `timezone` when omitted, so existing single-zone callers are unaffected.
 
 import os
 import sys
+import zoneinfo
 from unittest.mock import Mock
 
 import pytest
@@ -299,6 +300,18 @@ def test_all_day_boundary_skips_timezone_validation():
 def test_valid_zones_still_pass_validation():
     for zone in ("Asia/Jerusalem", "Europe/Amsterdam", "America/New_York", "UTC"):
         assert _build_time_boundary("2026-08-21T09:00:00", zone)["timeZone"] == zone
+
+
+def test_zoneinfo_uses_packaged_tzdata_without_system_database():
+    """Supported IANA zones remain available when the OS supplies no tz database."""
+    original_tzpath = zoneinfo.TZPATH
+    zoneinfo.reset_tzpath(())
+    try:
+        assert str(zoneinfo.ZoneInfo.no_cache("America/New_York")) == (
+            "America/New_York"
+        )
+    finally:
+        zoneinfo.reset_tzpath(original_tzpath)
 
 
 @pytest.mark.asyncio

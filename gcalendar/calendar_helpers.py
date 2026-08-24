@@ -54,13 +54,16 @@ class EventBoundary:
     """The dateTime/date string exactly as Google returned it."""
 
     local_date: datetime.date
-    """Calendar date at this boundary, in :attr:`timezone` when one is known."""
+    """Calendar date at this boundary, in its own zone when that zone was resolved."""
 
     moment: Optional[datetime.datetime] = None
-    """Timezone-aware instant, converted into :attr:`timezone`. None for all-day."""
+    """Timezone-aware instant, converted when :attr:`timezone_resolved` is true."""
 
     timezone: Optional[str] = None
-    """IANA zone name from the boundary, when Google supplied a resolvable one."""
+    """IANA zone name exactly as Google supplied it, even if locally unresolvable."""
+
+    timezone_resolved: bool = False
+    """Whether :attr:`moment` was converted into :attr:`timezone`."""
 
     is_all_day: bool = False
     is_exclusive_end: bool = False
@@ -72,12 +75,12 @@ class EventBoundary:
     def isoformat(self) -> str:
         """RFC3339 stamp in this boundary's own zone.
 
-        Falls back to :attr:`raw` verbatim when no IANA zone was resolved. Absent a
-        ``timeZone`` there is no authored wall-clock to restore, so the value Google
-        returned is already the best answer -- and echoing it unchanged preserves its
+        Falls back to :attr:`raw` verbatim when no IANA zone was resolved. Without a
+        resolved zone there is no reliable wall-clock conversion to make, so the value
+        Google returned is the best timestamp -- and echoing it unchanged preserves its
         exact spelling (``Z`` rather than ``+00:00``, offset-less values untouched).
         """
-        if self.moment is None or self.timezone is None:
+        if self.moment is None or not self.timezone_resolved:
             return self.raw
         return self.moment.isoformat()
 
@@ -133,11 +136,14 @@ def parse_event_boundary(item: Dict[str, Any], field: str) -> Optional[EventBoun
         zone = _resolve_zone(boundary)
         if zone is not None:
             moment = moment.astimezone(zone)
+        tz_name = boundary.get("timeZone")
+        timezone = tz_name if isinstance(tz_name, str) and tz_name else None
         return EventBoundary(
             raw=value,
             local_date=moment.date(),
             moment=moment,
-            timezone=str(zone) if zone is not None else None,
+            timezone=timezone,
+            timezone_resolved=zone is not None,
         )
 
     if _GOOGLE_ALL_DAY_DATE.fullmatch(value) is None:
