@@ -163,7 +163,9 @@ async def test_missing_batch_result_is_not_applied_for_remove_only_request():
         def execute(self):
             pass
 
-    service.new_batch_http_request.side_effect = lambda callback: _BatchWithoutCallbacks()
+    service.new_batch_http_request.side_effect = lambda callback: (
+        _BatchWithoutCallbacks()
+    )
 
     result = await _run(service, message_ids=["msg-1"], remove_label_ids=["UNREAD"])
 

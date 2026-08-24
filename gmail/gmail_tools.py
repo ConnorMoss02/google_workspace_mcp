@@ -3930,9 +3930,7 @@ async def _verify_batch_label_changes(
 
         for mid in chunk_ids:
             entry = results.get(mid)
-            if not entry or (
-                entry.get("data") is None and entry.get("error") is None
-            ):
+            if not entry or (entry.get("data") is None and entry.get("error") is None):
                 statuses[mid] = "unverified"
                 continue
             error = entry.get("error")
