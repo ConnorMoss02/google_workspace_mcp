@@ -682,13 +682,8 @@ def _build_quoted_reply_body(
     return f"{reply_body}{sig_block}\n\n{attribution}\n{quoted_lines}"
 
 
-async def _get_send_as_signature_html(service, from_email: Optional[str] = None) -> str:
-    """
-    Fetch signature HTML from Gmail send-as settings.
-
-    Returns empty string when the account has no signature configured or when
-    auth/scope errors mean the settings endpoint is unavailable.
-    """
+async def _get_send_as_entries(service) -> List[Dict[str, Any]]:
+    """Fetch the account's Gmail send-as settings."""
     try:
         response = await asyncio.to_thread(
             service.users().settings().sendAs().list(userId="me").execute
@@ -696,30 +691,86 @@ async def _get_send_as_signature_html(service, from_email: Optional[str] = None)
     except HttpError as e:
         if _is_benign_signature_http_error(e):
             logger.info(
-                "Skipping Gmail signature fetch: missing auth/scope for settings endpoint."
+                "Skipping Gmail send-as lookup: missing auth/scope for settings endpoint."
             )
-            return ""
-        logger.error(f"Failed to fetch Gmail send-as signatures: {e}", exc_info=True)
+            return []
+        logger.error(f"Failed to fetch Gmail send-as settings: {e}", exc_info=True)
         raise _signature_fetch_tool_error(e) from e
     except Exception as e:
-        logger.error(f"Failed to fetch Gmail send-as signatures: {e}", exc_info=True)
+        logger.error(f"Failed to fetch Gmail send-as settings: {e}", exc_info=True)
         raise _signature_fetch_tool_error(e) from e
 
-    send_as_entries = response.get("sendAs", [])
+    return response.get("sendAs", [])
+
+
+def _find_send_as_entry(
+    send_as_entries: List[Dict[str, Any]], from_email: str
+) -> Optional[Dict[str, Any]]:
+    """Find a send-as entry by email address, case-insensitively."""
+    from_email_normalized = from_email.strip().lower()
+    return next(
+        (
+            entry
+            for entry in send_as_entries
+            if entry.get("sendAsEmail", "").strip().lower() == from_email_normalized
+        ),
+        None,
+    )
+
+
+async def _get_send_as_signature_html(service, from_email: Optional[str] = None) -> str:
+    """
+    Fetch signature HTML from Gmail send-as settings.
+
+    Returns empty string when the account has no signature configured or when
+    auth/scope errors mean the settings endpoint is unavailable.
+    """
+    send_as_entries = await _get_send_as_entries(service)
     if not send_as_entries:
         return ""
 
     if from_email:
-        from_email_normalized = from_email.strip().lower()
-        for entry in send_as_entries:
-            if entry.get("sendAsEmail", "").strip().lower() == from_email_normalized:
-                return entry.get("signature", "") or ""
+        entry = _find_send_as_entry(send_as_entries, from_email)
+        if entry:
+            return entry.get("signature", "") or ""
 
     for entry in send_as_entries:
         if entry.get("isPrimary"):
             return entry.get("signature", "") or ""
 
     return send_as_entries[0].get("signature", "") or ""
+
+
+async def _get_send_as_identity_and_signature(
+    service,
+    from_email: Optional[str],
+    fallback_email: str,
+) -> tuple[str, str]:
+    """Resolve the requested or default Gmail send-as identity and signature."""
+    send_as_entries = await _get_send_as_entries(service)
+    selected_entry = None
+
+    if from_email:
+        selected_entry = _find_send_as_entry(send_as_entries, from_email)
+    else:
+        selected_entry = next(
+            (entry for entry in send_as_entries if entry.get("isDefault")), None
+        )
+        if selected_entry is None:
+            selected_entry = next(
+                (entry for entry in send_as_entries if entry.get("isPrimary")), None
+            )
+        if selected_entry is None and send_as_entries:
+            selected_entry = send_as_entries[0]
+
+    sender_email = from_email or fallback_email
+    signature_html = ""
+    if selected_entry:
+        if not from_email:
+            sender_email = selected_entry.get("sendAsEmail") or fallback_email
+        signature_html = selected_entry.get("signature", "") or ""
+
+    return sender_email, signature_html
 
 
 async def _get_send_as_signature_html_for_tool(
@@ -2851,7 +2902,7 @@ async def draft_gmail_message(
     from_email: Annotated[
         Optional[str],
         Field(
-            description="Optional 'Send As' alias email address. Must be configured in Gmail settings (Settings > Accounts > Send mail as). If not provided, uses the authenticated user's email.",
+            description="Optional 'Send As' alias email address. Must be configured in Gmail settings (Settings > Accounts > Send mail as). If not provided, uses the account's default Send As address, falling back to the authenticated user's email when Gmail returns no usable Send-As entry or settings access is not authorized.",
         ),
     ] = None,
     thread_id: Annotated[
@@ -2906,7 +2957,9 @@ async def draft_gmail_message(
         from_name (Optional[str]): Optional sender display name. If provided, the From header will be formatted as 'Name <email>'.
         from_email (Optional[str]): Optional 'Send As' alias email address. The alias must be
             configured in Gmail settings (Settings > Accounts > Send mail as). If not provided,
-            the draft will be from the authenticated user's primary email address.
+            the draft uses the account's default Send As address, then the primary or first
+            usable Send-As entry, falling back to the authenticated user's email when Gmail
+            returns no usable entry or settings access is not authorized.
         thread_id (Optional[str]): Optional Gmail thread ID to reply within. When provided, creates a reply draft.
         in_reply_to (Optional[str]): Optional RFC Message-ID of the message being replied to (e.g., '<message123@gmail.com>').
         references (Optional[str]): Optional chain of RFC Message-IDs for proper threading (e.g., '<msg1@gmail.com> <msg2@gmail.com>').
@@ -2921,7 +2974,8 @@ async def draft_gmail_message(
               - 'mime_type' (optional): MIME type (defaults to 'application/octet-stream')
         include_signature (bool): Whether to append Gmail signature HTML from send-as settings.
             When include_signature is true and Gmail signature retrieval fails for benign reasons
-            (e.g., missing gmail.settings.basic scope), the draft proceeds without a signature.
+            (e.g., missing settings authorization), the draft proceeds with the requested or
+            authenticated sender and without a signature.
             Non-benign failures such as quota/rate-limit or API errors raise ToolError and abort
             the draft.
         quote_original (bool): Whether to include the original message as a quoted reply.
@@ -2987,15 +3041,22 @@ async def draft_gmail_message(
         f"[draft_gmail_message] Invoked. Email: '{user_google_email}', Subject: '{subject}'"
     )
 
-    # Prepare the email message
-    # Use from_email (Send As alias) if provided, otherwise default to authenticated user
-    sender_email = from_email or user_google_email
-    draft_body = body
-    signature_html = ""
-    if include_signature:
-        signature_html = await _get_send_as_signature_html_for_tool(
-            service, from_email=sender_email
+    # Prepare the email message. An explicit alias needs no settings lookup when
+    # its signature is disabled. Otherwise resolve the identity and signature
+    # together so Gmail's default sender and its signature stay aligned.
+    if from_email and not include_signature:
+        sender_email, resolved_signature_html = from_email, ""
+    else:
+        (
+            sender_email,
+            resolved_signature_html,
+        ) = await _get_send_as_identity_and_signature(
+            service,
+            from_email=from_email,
+            fallback_email=user_google_email,
         )
+    draft_body = body
+    signature_html = resolved_signature_html if include_signature else ""
 
     reply_context = None
     if thread_id and (quote_original or not in_reply_to or not references or not to):
