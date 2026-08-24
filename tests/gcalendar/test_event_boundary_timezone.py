@@ -181,8 +181,7 @@ def test_unrecognized_timezone_keeps_returned_offset_and_raw_zone_name():
         },
     }
     assert _format_event_time(item, "end") == (
-        "2026-08-21T14:45:00+03:00 "
-        "[Mars/Olympus_Mons; weekday: Friday; ISO weekday: 5]"
+        "2026-08-21T14:45:00+03:00 [Mars/Olympus_Mons; weekday: Friday; ISO weekday: 5]"
     )
 
     boundary = parse_event_boundary(item, "end")
