@@ -3856,8 +3856,8 @@ async def _verify_batch_label_changes(
 
     Returns a per-ID status: ``applied`` (end state matches the request),
     ``not_applied`` (message exists, labels do not match), ``unresolved``
-    (no such message — the ID was silently ignored), or ``unverified``
-    (the read-back itself failed, so nothing can be claimed either way).
+    (the ID does not currently resolve to a message), or ``unverified`` (the
+    read-back itself failed, so nothing can be claimed either way).
     """
     wanted = set(add_label_ids or ())
     unwanted = set(remove_label_ids or ())
@@ -3866,6 +3866,7 @@ async def _verify_batch_label_changes(
     for chunk_start in range(0, len(message_ids), GMAIL_BATCH_SIZE):
         chunk_ids = message_ids[chunk_start : chunk_start + GMAIL_BATCH_SIZE]
         results: Dict[str, Dict] = {}
+        batch_completed = False
 
         def _batch_callback(request_id, response, exception):
             results[request_id] = {"data": response, "error": exception}
@@ -3880,6 +3881,7 @@ async def _verify_batch_label_changes(
                     request_id=mid,
                 )
             await asyncio.to_thread(batch.execute)
+            batch_completed = True
         except Exception as batch_error:
             # Same fallback the read tools use: sequential reads with a small
             # delay, to avoid exhausting connections when the batch endpoint is
@@ -3902,8 +3904,37 @@ async def _verify_batch_label_changes(
                 results[mid_result] = {"data": data, "error": error}
                 await asyncio.sleep(GMAIL_REQUEST_DELAY)
 
+        retryable_ids = (
+            _retryable_result_ids(results, chunk_ids) if batch_completed else []
+        )
+        if retryable_ids:
+            logger.warning(
+                f"[batch_modify_gmail_message_labels] "
+                f"{len(retryable_ids)}/{len(chunk_ids)} verification reads failed "
+                f"with retryable errors; re-fetching: {retryable_ids}"
+            )
+            await asyncio.sleep(GMAIL_RATE_LIMIT_BACKOFF)
+            for mid in retryable_ids:
+                mid_result, data, error = await _fetch_with_retry(
+                    build_request=lambda mid=mid: (
+                        service.users()
+                        .messages()
+                        .get(userId="me", id=mid, format="minimal")
+                    ),
+                    item_id=mid,
+                    item_label="message",
+                    log_prefix="batch_modify_gmail_message_labels",
+                )
+                results[mid_result] = {"data": data, "error": error}
+                await asyncio.sleep(GMAIL_REQUEST_DELAY)
+
         for mid in chunk_ids:
-            entry = results.get(mid) or {}
+            entry = results.get(mid)
+            if not entry or (
+                entry.get("data") is None and entry.get("error") is None
+            ):
+                statuses[mid] = "unverified"
+                continue
             error = entry.get("error")
             if error is not None:
                 statuses[mid] = (
@@ -4016,9 +4047,9 @@ async def batch_modify_gmail_message_labels(
     if unresolved:
         lines.append(
             f"No such message ({len(unresolved)}): {_format_id_list(unresolved)}\n"
-            "  These IDs do not resolve to a message in this mailbox, so Gmail "
-            "ignored them. A common cause is passing a THREAD id where a MESSAGE "
-            "id is required."
+            "  These IDs do not currently resolve to messages in this mailbox, "
+            "so the requested change could not be verified. One possible cause "
+            "is passing a THREAD id where a MESSAGE id is required."
         )
     if not_applied:
         lines.append(

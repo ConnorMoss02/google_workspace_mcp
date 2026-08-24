@@ -104,6 +104,8 @@ async def test_unrecognised_id_is_not_reported_as_success():
     assert "No such message (1)" in result
     assert "thread-id" in result
     assert "THREAD id where a MESSAGE id is required" in result
+    assert "requested change could not be verified" in result
+    assert "Gmail ignored" not in result
     # The old wording must not come back.
     assert "Labels updated for 1 messages" not in result
 
@@ -147,6 +149,50 @@ async def test_read_back_failure_is_reported_as_unverified():
     assert "Applied: 0/1" in result
     assert "Could not verify (1): msg-1" in result
     assert "may or may not have been applied" in result
+
+
+@pytest.mark.asyncio
+async def test_missing_batch_result_is_not_applied_for_remove_only_request():
+    """No callback data cannot prove that an absent label was removed."""
+    service = _service({"msg-1": ["INBOX"]})
+
+    class _BatchWithoutCallbacks:
+        def add(self, request, request_id):
+            pass
+
+        def execute(self):
+            pass
+
+    service.new_batch_http_request.side_effect = lambda callback: _BatchWithoutCallbacks()
+
+    result = await _run(service, message_ids=["msg-1"], remove_label_ids=["UNREAD"])
+
+    assert "Applied: 0/1" in result
+    assert "Could not verify (1): msg-1" in result
+
+
+@pytest.mark.asyncio
+async def test_retryable_batch_read_is_retried_sequentially(monkeypatch):
+    monkeypatch.setattr("gmail.gmail_tools.GMAIL_RATE_LIMIT_BACKOFF", 0)
+    monkeypatch.setattr("gmail.gmail_tools.GMAIL_REQUEST_DELAY", 0)
+    outcomes = iter([HttpError(_FakeResp(429), b"{}"), ["TRASH"]])
+    service = _service({})
+
+    def message_get(**kwargs):
+        outcome = next(outcomes)
+        request = Mock()
+        if isinstance(outcome, Exception):
+            request.execute.side_effect = outcome
+        else:
+            request.execute.return_value = {"id": kwargs["id"], "labelIds": outcome}
+        return request
+
+    service.users().messages().get.side_effect = message_get
+
+    result = await _run(service, message_ids=["msg-1"], add_label_ids=["TRASH"])
+
+    assert "Applied: 1/1" in result
+    assert service.users().messages().get.call_count == 2
 
 
 @pytest.mark.asyncio
