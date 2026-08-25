@@ -24,7 +24,6 @@ import httpx
 from mcp.types import ToolAnnotations
 
 from pydantic import Field
-from googleapiclient.errors import HttpError
 
 from auth.oauth_config import is_stateless_mode
 from auth.service_decorator import require_google_service
@@ -64,10 +63,10 @@ from gmail.gmail_helpers import (
     _derive_reply_all_recipients,
     _derive_reply_headers,
     _fetch_with_retry,
+    _get_send_as_identity_and_signature,
+    _get_send_as_signature_html_for_tool,
     _http_error_status,
-    _is_benign_signature_http_error,
     _retryable_result_ids,
-    _signature_fetch_tool_error,
     _signature_html_to_text,
     html_to_text_preserving_breaks,
 )
@@ -681,104 +680,6 @@ def _build_quoted_reply_body(
     quoted_lines = "\n".join(f"> {line}" for line in orig_text.splitlines())
 
     return f"{reply_body}{sig_block}\n\n{attribution}\n{quoted_lines}"
-
-
-async def _get_send_as_entries(service) -> List[Dict[str, Any]]:
-    """Fetch the account's Gmail send-as settings."""
-    try:
-        response = await asyncio.to_thread(
-            service.users().settings().sendAs().list(userId="me").execute
-        )
-    except HttpError as e:
-        if _is_benign_signature_http_error(e):
-            logger.info(
-                "Skipping Gmail send-as lookup: missing auth/scope for settings endpoint."
-            )
-            return []
-        logger.error(f"Failed to fetch Gmail send-as settings: {e}", exc_info=True)
-        raise _signature_fetch_tool_error(e) from e
-    except Exception as e:
-        logger.error(f"Failed to fetch Gmail send-as settings: {e}", exc_info=True)
-        raise _signature_fetch_tool_error(e) from e
-
-    return response.get("sendAs", [])
-
-
-def _find_send_as_entry(
-    send_as_entries: List[Dict[str, Any]], from_email: str
-) -> Optional[Dict[str, Any]]:
-    """Find a send-as entry by email address, case-insensitively."""
-    from_email_normalized = from_email.strip().lower()
-    return next(
-        (
-            entry
-            for entry in send_as_entries
-            if entry.get("sendAsEmail", "").strip().lower() == from_email_normalized
-        ),
-        None,
-    )
-
-
-async def _get_send_as_signature_html(service, from_email: Optional[str] = None) -> str:
-    """
-    Fetch signature HTML from Gmail send-as settings.
-
-    Returns empty string when the account has no signature configured or when
-    auth/scope errors mean the settings endpoint is unavailable.
-    """
-    send_as_entries = await _get_send_as_entries(service)
-    if not send_as_entries:
-        return ""
-
-    if from_email:
-        entry = _find_send_as_entry(send_as_entries, from_email)
-        if entry:
-            return entry.get("signature", "") or ""
-
-    for entry in send_as_entries:
-        if entry.get("isPrimary"):
-            return entry.get("signature", "") or ""
-
-    return send_as_entries[0].get("signature", "") or ""
-
-
-async def _get_send_as_identity_and_signature(
-    service,
-    from_email: Optional[str],
-    fallback_email: str,
-) -> tuple[str, str]:
-    """Resolve the requested or default Gmail send-as identity and signature."""
-    send_as_entries = await _get_send_as_entries(service)
-    selected_entry = None
-
-    if from_email:
-        selected_entry = _find_send_as_entry(send_as_entries, from_email)
-    else:
-        selected_entry = next(
-            (entry for entry in send_as_entries if entry.get("isDefault")), None
-        )
-        if selected_entry is None:
-            selected_entry = next(
-                (entry for entry in send_as_entries if entry.get("isPrimary")), None
-            )
-        if selected_entry is None and send_as_entries:
-            selected_entry = send_as_entries[0]
-
-    sender_email = from_email or fallback_email
-    signature_html = ""
-    if selected_entry:
-        if not from_email:
-            sender_email = selected_entry.get("sendAsEmail") or fallback_email
-        signature_html = selected_entry.get("signature", "") or ""
-
-    return sender_email, signature_html
-
-
-async def _get_send_as_signature_html_for_tool(
-    service, from_email: Optional[str] = None
-) -> str:
-    """Fetch signature HTML and convert non-benign failures to tool errors."""
-    return await _get_send_as_signature_html(service, from_email=from_email)
 
 
 def _format_attachment_result(attached_count: int, requested_count: int) -> str:
