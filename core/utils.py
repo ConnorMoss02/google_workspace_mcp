@@ -490,7 +490,7 @@ def encode_image_content(file_bytes: bytes, mime_type: str) -> str:
     return f"[base64_image:{mime_type}]{encoded}"
 
 
-_URL_QUERY_RE = re.compile(r"\?[^\s>\"']+")
+_URL_QUERY_RE = re.compile(r"\?.*?(?=\s+returned(?:\s|$)|[>\"']|$)")
 
 
 def _scrub_url_queries(text: str) -> str:
@@ -502,6 +502,14 @@ def _scrub_url_queries(text: str) -> str:
     failing endpoint, which is all the log needs.
     """
     return _URL_QUERY_RE.sub("?<query-redacted>", text)
+
+
+def _format_http_error_for_log(error: HttpError) -> str:
+    """Return operational HTTP failure context without response-body text."""
+    status = getattr(error.resp, "status", "unknown")
+    uri = getattr(error, "uri", None)
+    request = _scrub_url_queries(uri) if uri else "<unknown>"
+    return f"status={status}, request={request}"
 
 
 def handle_http_errors(
@@ -603,10 +611,10 @@ def handle_http_errors(
                         message = f"API error in {tool_name}: {error}"
 
                     # ERROR gets the scrubbed form (HttpError embeds the request
-                    # URI — query strings carry user content); the full
-                    # exception with traceback stays available at DEBUG.
+                    # URI and may echo user content in its response details);
+                    # the full exception with traceback stays at DEBUG.
                     logger.error(
-                        f"API error in {tool_name}: {_scrub_url_queries(str(error))}"
+                        f"API error in {tool_name}: {_format_http_error_for_log(error)}"
                     )
                     logger.debug(f"API error detail in {tool_name}", exc_info=True)
                     raise Exception(message) from error

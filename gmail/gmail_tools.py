@@ -1295,7 +1295,7 @@ def _prepare_gmail_message(
             elif file_path:
                 path_obj = validate_file_path(file_path)
                 if not path_obj.exists():
-                    logger.error(f"File not found: {file_path}")
+                    logger.error(f"File not found: path_len={len(file_path)}")
                     continue
 
                 with open(path_obj, "rb") as f:
@@ -1336,10 +1336,12 @@ def _prepare_gmail_message(
                 cid_value = _normalize_attachment_content_id(content_id)
                 if cid_value in seen_content_ids:
                     logger.warning(
-                        "Duplicate content_id %r on attachment %s; "
-                        "email clients may only render one instance",
-                        cid_value,
-                        filename or file_path,
+                        "Duplicate content_id on attachment: content_id_len=%d, "
+                        "filename_len=%d, path_len=%d; email clients may only "
+                        "render one instance",
+                        len(cid_value),
+                        len(filename) if filename else 0,
+                        len(file_path) if file_path else 0,
                     )
                 seen_content_ids.add(cid_value)
                 # Find the right MIME part to attach the inline image to.
@@ -1369,8 +1371,8 @@ def _prepare_gmail_message(
                     disposition="inline",
                 )
                 logger.info(
-                    f"Attached inline (cid={cid_value}): "
-                    f"{safe_filename} ({len(file_data)} bytes)"
+                    f"Attached inline: content_id_len={len(cid_value)}, "
+                    f"filename_len={len(safe_filename)} ({len(file_data)} bytes)"
                 )
             else:
                 message.add_attachment(
@@ -1383,14 +1385,22 @@ def _prepare_gmail_message(
                     f"Attached file: filename_len={len(safe_filename)} "
                     f"({len(file_data)} bytes)"
                 )
-                logger.debug(f"Attached file name: {safe_filename}")
             attached_count += 1
         except (binascii.Error, ValueError) as e:
-            logger.error(f"Failed to decode attachment {filename or file_path}: {e}")
+            logger.error(
+                f"Failed to decode attachment: "
+                f"filename_len={len(filename) if filename else 0}, "
+                f"path_len={len(file_path) if file_path else 0}, "
+                f"error_type={type(e).__name__}"
+            )
             attachment_errors.append(_format_attachment_error(file_path, filename, e))
             continue
         except Exception as e:
-            logger.error(f"Failed to attach {filename or file_path}: {e}")
+            logger.error(
+                f"Failed to attach: filename_len={len(filename) if filename else 0}, "
+                f"path_len={len(file_path) if file_path else 0}, "
+                f"error_type={type(e).__name__}"
+            )
             attachment_errors.append(_format_attachment_error(file_path, filename, e))
             continue
 

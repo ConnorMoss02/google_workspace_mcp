@@ -13,6 +13,7 @@ by pattern-matching against these.
 
 import logging
 import os
+import subprocess
 import sys
 from unittest.mock import Mock
 
@@ -97,8 +98,32 @@ def test_scrub_url_queries_strips_embedded_request_uris():
     )
     scrubbed = _scrub_url_queries(msg)
     assert SECRET not in scrubbed
+    assert "ExampleCorp" not in scrubbed
     assert "gmail/v1/users/me/messages" in scrubbed
     assert "<query-redacted>" in scrubbed
+
+
+def test_log_level_override_survives_import_time_basic_config(tmp_path):
+    """Earlier imports configure logging before main reads the override."""
+    env = os.environ.copy()
+    env["WORKSPACE_MCP_LOG_LEVEL"] = "DEBUG"
+    env["WORKSPACE_MCP_LOG_DIR"] = str(tmp_path)
+    code = (
+        "import logging, sys; import main; "
+        "sys.stderr.write(str(logging.getLogger().getEffectiveLevel()))"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=os.path.dirname(os.path.dirname(__file__)),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stderr.endswith(str(logging.DEBUG))
 
 
 @pytest.mark.asyncio
@@ -184,7 +209,8 @@ async def test_handle_http_errors_scrubs_request_uri_at_error(caplog):
 
     @handle_http_errors("dummy_tool")
     async def dummy():
-        raise HttpError(_Resp(), b"{}", uri=uri)
+        content = f'{{"error": {{"message": "Invalid query: {SECRET}"}}}}'.encode()
+        raise HttpError(_Resp(), content, uri=uri)
 
     with caplog.at_level(logging.DEBUG):
         with pytest.raises(Exception):
@@ -194,9 +220,91 @@ async def test_handle_http_errors_scrubs_request_uri_at_error(caplog):
     assert error_records, "the decorator must still log the failure at ERROR"
     error_text = " ".join(r.getMessage() for r in error_records)
     assert SECRET not in error_text
+    assert "ExampleCorp" not in error_text
     assert "<query-redacted>" in error_text
     assert all(not r.exc_info for r in error_records)
     assert any(r.exc_info for r in caplog.records if r.levelno == logging.DEBUG)
+
+
+@pytest.mark.asyncio
+async def test_create_drive_file_hides_url_and_local_path(caplog, monkeypatch):
+    """Caller-controlled URLs and local paths never enter log records."""
+    import gdrive.drive_tools as drive_tools
+
+    secret_path = f"/private/tmp/{SECRET}.txt"
+    file_url = f"file://{secret_path}"
+    path_obj = Mock()
+    path_obj.exists.return_value = True
+    path_obj.is_file.return_value = True
+    path_obj.read_bytes.return_value = b"secret payload"
+    monkeypatch.setattr(drive_tools, "validate_file_path", lambda _path: path_obj)
+
+    service = Mock()
+    service.files().get().execute.return_value = {
+        "id": "root",
+        "mimeType": "application/vnd.google-apps.folder",
+    }
+    service.files().create().execute.return_value = {
+        "id": "F1",
+        "name": "safe-output.txt",
+        "webViewLink": "https://drive.google.com/safe-link",
+    }
+
+    with caplog.at_level(logging.DEBUG):
+        await _unwrap(drive_tools.create_drive_file)(
+            service=service,
+            user_google_email="user@example.com",
+            file_name="safe-output.txt",
+            fileUrl=file_url,
+        )
+
+    log_text = " ".join(record.getMessage() for record in caplog.records)
+    assert "has_fileUrl=True" in log_text
+    assert SECRET not in log_text
+    assert secret_path not in log_text
+    assert file_url not in log_text
+
+
+@pytest.mark.asyncio
+async def test_create_drive_file_failure_hides_local_path_at_error(caplog, monkeypatch):
+    """Path validation failures stay redacted through the error decorator."""
+    import gdrive.drive_tools as drive_tools
+    from core.utils import handle_http_errors
+
+    secret_path = f"/private/tmp/{SECRET}.txt"
+    file_url = f"file://{secret_path}"
+
+    def fail_validation(_path):
+        raise FileNotFoundError(f"Path does not exist: {secret_path}")
+
+    monkeypatch.setattr(drive_tools, "validate_file_path", fail_validation)
+    service = Mock()
+    service.files().get().execute.return_value = {
+        "id": "root",
+        "mimeType": "application/vnd.google-apps.folder",
+    }
+    wrapped = handle_http_errors("create_drive_file")(
+        _unwrap(drive_tools.create_drive_file)
+    )
+
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(Exception):
+            await wrapped(
+                service=service,
+                user_google_email="user@example.com",
+                file_name="safe-output.txt",
+                fileUrl=file_url,
+            )
+
+    error_text = " ".join(
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno >= logging.INFO
+    )
+    assert "Local file could not be accessed" in error_text
+    assert SECRET not in error_text
+    assert secret_path not in error_text
+    assert file_url not in error_text
 
 
 @pytest.mark.asyncio
@@ -230,26 +338,44 @@ async def test_import_to_google_doc_hides_file_name_from_info(caplog):
 
     info_text = _info_text(caplog)
     assert "file_name_len=" in info_text
+    assert SECRET not in info_text
     assert secret_name not in info_text
 
 
 def test_gmail_attach_logs_length_not_filename(caplog):
-    """The attach path logged 'Attached file: <name> (N bytes)' at INFO."""
+    """Attachment success and failure logs contain only safe metadata."""
     import base64
 
     from gmail.gmail_tools import _prepare_gmail_message
 
     secret_name = f"{SECRET}.pdf"
     payload = base64.b64encode(b"%PDF-fake").decode()
+    file_path = f"/definitely-missing/{secret_name}"
 
     with caplog.at_level(logging.DEBUG):
         _prepare_gmail_message(
             to="user@example.com",
             subject="s",
-            body="b",
-            attachments=[{"content": payload, "filename": secret_name}],
+            body='<img src="cid:secret-inline">',
+            body_format="html",
+            attachments=[
+                {"content": payload, "filename": secret_name},
+                {
+                    "content": payload,
+                    "filename": secret_name,
+                    "content_id": "secret-inline",
+                    "mime_type": "image/png",
+                },
+                {"content": "a", "filename": secret_name},
+                {"path": file_path, "filename": secret_name},
+            ],
         )
 
     info_text = _info_text(caplog)
     assert "filename_len=" in info_text
+    assert "content_id_len=" in info_text
+    assert "path_len=" in info_text
+    assert "error_type=" in info_text
+    assert SECRET not in info_text
     assert secret_name not in info_text
+    assert file_path not in info_text

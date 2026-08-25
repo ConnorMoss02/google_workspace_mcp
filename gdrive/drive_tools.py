@@ -12,7 +12,7 @@ import binascii
 
 from typing import Optional, List, Dict, Any
 from tempfile import NamedTemporaryFile, SpooledTemporaryFile
-from urllib.parse import urlparse, urlsplit
+from urllib.parse import urlparse
 from urllib.request import url2pathname
 from pathlib import Path
 from weakref import WeakValueDictionary
@@ -1006,7 +1006,7 @@ async def create_drive_file(
         f"file_name_len={len(file_name) if file_name else 0}, Folder ID: {folder_id}, "
         f"has_fileUrl={bool(fileUrl)}"
     )
-    logger.debug(f"[create_drive_file] File Name: {file_name}, fileUrl: {fileUrl}")
+    logger.debug(f"[create_drive_file] File Name: {file_name}")
 
     has_existing_content_source = content is not None or bool(fileUrl)
     if (
@@ -1067,9 +1067,7 @@ async def create_drive_file(
         )
     # Prefer fileUrl if both legacy sources are provided.
     elif fileUrl:
-        # Query strings and fragments can carry signed-URL secrets — log neither.
-        display_url = urlsplit(fileUrl)._replace(query="", fragment="").geturl()
-        logger.info(f"[create_drive_file] Fetching file from URL: {display_url}")
+        logger.info("[create_drive_file] Fetching file from provided URL")
 
         # Check if this is a file:// URL
         parsed_url = urlparse(fileUrl)
@@ -1093,26 +1091,36 @@ async def create_drive_file(
             file_path = url2pathname(raw_path)
 
             # Validate path safety and verify file exists
-            path_obj = validate_file_path(file_path)
+            try:
+                path_obj = validate_file_path(file_path)
+            except (OSError, ValueError) as exc:
+                raise ValueError(
+                    f"Local file could not be accessed ({type(exc).__name__})."
+                ) from None
             if not path_obj.exists():
                 extra = (
                     " The server is running via streamable-http, so file:// URLs must point to files inside the container or remote host."
                     if running_streamable
                     else ""
                 )
-                raise Exception(f"Local file does not exist: {file_path}.{extra}")
+                raise Exception(f"Local file does not exist.{extra}")
             if not path_obj.is_file():
                 extra = (
                     " In streamable-http/Docker deployments, mount the file into the container or provide an HTTP(S) URL."
                     if running_streamable
                     else ""
                 )
-                raise Exception(f"Path is not a file: {file_path}.{extra}")
+                raise Exception(f"Local path is not a file.{extra}")
 
-            logger.info(f"[create_drive_file] Reading local file: {file_path}")
+            logger.info("[create_drive_file] Reading local file")
 
             # Read file and upload
-            file_data = await asyncio.to_thread(path_obj.read_bytes)
+            try:
+                file_data = await asyncio.to_thread(path_obj.read_bytes)
+            except OSError as exc:
+                raise OSError(
+                    f"Failed to read local file ({type(exc).__name__})."
+                ) from None
             total_bytes = len(file_data)
             logger.info(f"[create_drive_file] Read {total_bytes} bytes from local file")
 
