@@ -1295,7 +1295,7 @@ def _prepare_gmail_message(
             elif file_path:
                 path_obj = validate_file_path(file_path)
                 if not path_obj.exists():
-                    logger.error(f"File not found: {file_path}")
+                    logger.error(f"File not found: path_len={len(file_path)}")
                     continue
 
                 with open(path_obj, "rb") as f:
@@ -1336,10 +1336,12 @@ def _prepare_gmail_message(
                 cid_value = _normalize_attachment_content_id(content_id)
                 if cid_value in seen_content_ids:
                     logger.warning(
-                        "Duplicate content_id %r on attachment %s; "
-                        "email clients may only render one instance",
-                        cid_value,
-                        filename or file_path,
+                        "Duplicate content_id on attachment: content_id_len=%d, "
+                        "filename_len=%d, path_len=%d; email clients may only "
+                        "render one instance",
+                        len(cid_value),
+                        len(filename) if filename else 0,
+                        len(file_path) if file_path else 0,
                     )
                 seen_content_ids.add(cid_value)
                 # Find the right MIME part to attach the inline image to.
@@ -1369,8 +1371,8 @@ def _prepare_gmail_message(
                     disposition="inline",
                 )
                 logger.info(
-                    f"Attached inline (cid={cid_value}): "
-                    f"{safe_filename} ({len(file_data)} bytes)"
+                    f"Attached inline: content_id_len={len(cid_value)}, "
+                    f"filename_len={len(safe_filename)} ({len(file_data)} bytes)"
                 )
             else:
                 message.add_attachment(
@@ -1379,14 +1381,26 @@ def _prepare_gmail_message(
                     subtype=sub_type,
                     filename=safe_filename,
                 )
-                logger.info(f"Attached file: {safe_filename} ({len(file_data)} bytes)")
+                logger.info(
+                    f"Attached file: filename_len={len(safe_filename)} "
+                    f"({len(file_data)} bytes)"
+                )
             attached_count += 1
         except (binascii.Error, ValueError) as e:
-            logger.error(f"Failed to decode attachment {filename or file_path}: {e}")
+            logger.error(
+                f"Failed to decode attachment: "
+                f"filename_len={len(filename) if filename else 0}, "
+                f"path_len={len(file_path) if file_path else 0}, "
+                f"error_type={type(e).__name__}"
+            )
             attachment_errors.append(_format_attachment_error(file_path, filename, e))
             continue
         except Exception as e:
-            logger.error(f"Failed to attach {filename or file_path}: {e}")
+            logger.error(
+                f"Failed to attach: filename_len={len(filename) if filename else 0}, "
+                f"path_len={len(file_path) if file_path else 0}, "
+                f"error_type={type(e).__name__}"
+            )
             attachment_errors.append(_format_attachment_error(file_path, filename, e))
             continue
 
@@ -1643,8 +1657,9 @@ async def search_gmail_messages(
         Includes pagination token if more results are available.
     """
     logger.info(
-        f"[search_gmail_messages] Email: '{user_google_email}', Query: '{query}', Page size: {page_size}"
+        f"[search_gmail_messages] Email: '{user_google_email}', query_len={len(query)}, Page size: {page_size}"
     )
+    logger.debug(f"[search_gmail_messages] Query: '{query}'")
 
     # Build the API request parameters
     request_params = {"userId": "me", "q": query, "maxResults": page_size}
@@ -2541,7 +2556,7 @@ async def send_gmail_message(
                 "'to' is required when forwarding via 'forward_message_id'."
             )
         logger.info(
-            f"[send_gmail_message] Forwarding message '{forward_message_id}' to '{to}' for '{user_google_email}'"
+            f"[send_gmail_message] Forwarding message '{forward_message_id}' for '{user_google_email}'"
         )
         return await _forward_gmail_message_impl(
             service=service,
@@ -2577,7 +2592,7 @@ async def send_gmail_message(
         )
 
     logger.info(
-        f"[send_gmail_message] Invoked. Email: '{user_google_email}', Subject: '{subject}', Attachments: {len(attachments) if attachments else 0}"
+        f"[send_gmail_message] Invoked. Email: '{user_google_email}', subject_len={len(subject) if subject else 0}, Attachments: {len(attachments) if attachments else 0}"
     )
 
     # Prepare the email message
@@ -2985,7 +3000,7 @@ async def draft_gmail_message(
         )
     """
     logger.info(
-        f"[draft_gmail_message] Invoked. Email: '{user_google_email}', Subject: '{subject}'"
+        f"[draft_gmail_message] Invoked. Email: '{user_google_email}', subject_len={len(subject) if subject else 0}"
     )
 
     # Prepare the email message

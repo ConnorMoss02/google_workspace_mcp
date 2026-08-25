@@ -221,7 +221,7 @@ async def search_drive_files(
              Includes a nextPageToken line when more results are available.
     """
     logger.info(
-        f"[search_drive_files] Invoked. Email: '{user_google_email}', Query: '{query}', "
+        f"[search_drive_files] Invoked. Email: '{user_google_email}', query_len={len(query)}, "
         f"file_type: '{file_type}', include_trashed: {include_trashed}"
     )
 
@@ -231,14 +231,14 @@ async def search_drive_files(
 
     if is_structured_query:
         final_query = query
-        logger.info(
+        logger.debug(
             f"[search_drive_files] Using structured query as-is: '{final_query}'"
         )
     else:
         # For free text queries, wrap in fullText contains
         escaped_query = query.replace("'", "\\'")
         final_query = f"fullText contains '{escaped_query}'"
-        logger.info(
+        logger.debug(
             f"[search_drive_files] Reformatting free text query '{query}' to '{final_query}'"
         )
 
@@ -1003,8 +1003,11 @@ async def create_drive_file(
         str: Confirmation message of the successful file creation with file link.
     """
     logger.info(
-        f"[create_drive_file] Invoked. Email: '{user_google_email}', File Name: {file_name}, Folder ID: {folder_id}, fileUrl: {fileUrl}"
+        f"[create_drive_file] Invoked. Email: '{user_google_email}', "
+        f"file_name_len={len(file_name) if file_name else 0}, Folder ID: {folder_id}, "
+        f"has_fileUrl={bool(fileUrl)}"
     )
+    logger.debug(f"[create_drive_file] File Name: {file_name}")
 
     has_existing_content_source = content is not None or bool(fileUrl)
     if (
@@ -1065,7 +1068,7 @@ async def create_drive_file(
         )
     # Prefer fileUrl if both legacy sources are provided.
     elif fileUrl:
-        logger.info(f"[create_drive_file] Fetching file from URL: {fileUrl}")
+        logger.info("[create_drive_file] Fetching file from provided URL")
 
         # Check if this is a file:// URL
         parsed_url = urlparse(fileUrl)
@@ -1089,26 +1092,36 @@ async def create_drive_file(
             file_path = url2pathname(raw_path)
 
             # Validate path safety and verify file exists
-            path_obj = validate_file_path(file_path)
+            try:
+                path_obj = validate_file_path(file_path)
+            except (OSError, ValueError) as exc:
+                raise ValueError(
+                    f"Local file could not be accessed ({type(exc).__name__})."
+                ) from None
             if not path_obj.exists():
                 extra = (
                     " The server is running via streamable-http, so file:// URLs must point to files inside the container or remote host."
                     if running_streamable
                     else ""
                 )
-                raise Exception(f"Local file does not exist: {file_path}.{extra}")
+                raise Exception(f"Local file does not exist.{extra}")
             if not path_obj.is_file():
                 extra = (
                     " In streamable-http/Docker deployments, mount the file into the container or provide an HTTP(S) URL."
                     if running_streamable
                     else ""
                 )
-                raise Exception(f"Path is not a file: {file_path}.{extra}")
+                raise Exception(f"Local path is not a file.{extra}")
 
-            logger.info(f"[create_drive_file] Reading local file: {file_path}")
+            logger.info("[create_drive_file] Reading local file")
 
             # Read file and upload
-            file_data = await asyncio.to_thread(path_obj.read_bytes)
+            try:
+                file_data = await asyncio.to_thread(path_obj.read_bytes)
+            except OSError as exc:
+                raise OSError(
+                    f"Failed to read local file ({type(exc).__name__})."
+                ) from None
             total_bytes = len(file_data)
             logger.info(f"[create_drive_file] Read {total_bytes} bytes from local file")
 
@@ -1281,8 +1294,10 @@ async def _import_with_conversion(
     """
     logger.info(
         f"[{tool_name}] Invoked. Email: '{user_google_email}', "
-        f"File Name: '{file_name}', Source Format: '{source_format}', Folder ID: '{folder_id}'"
+        f"file_name_len={len(file_name) if file_name else 0}, "
+        f"Source Format: '{source_format}', Folder ID: '{folder_id}'"
     )
+    logger.debug(f"[{tool_name}] File Name: '{file_name}'")
 
     media, source_mime_type, remote_file_data = await _resolve_import_media(
         tool_name=tool_name,
@@ -1744,9 +1759,11 @@ async def check_drive_file_public_access(
         str: Information about the file's sharing status and whether it can be used in Google Docs.
     """
     logger.info(
-        f"[check_drive_file_public_access] Searching for {file_name}"
+        f"[check_drive_file_public_access] Invoked. "
+        f"file_name_len={len(file_name) if file_name else 0}"
         + (f" within drive_id={drive_id}" if drive_id else "")
     )
+    logger.debug(f"[check_drive_file_public_access] Searching for {file_name}")
 
     # Search for the file
     escaped_name = file_name.replace("'", "\\'")
