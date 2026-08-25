@@ -64,6 +64,7 @@ from gmail.gmail_helpers import (
     _derive_reply_all_recipients,
     _derive_reply_headers,
     _fetch_with_retry,
+    _http_error_status,
     _is_benign_signature_http_error,
     _retryable_result_ids,
     _signature_fetch_tool_error,
@@ -1345,7 +1346,7 @@ def _prepare_gmail_message(
             elif file_path:
                 path_obj = validate_file_path(file_path)
                 if not path_obj.exists():
-                    logger.error(f"File not found: {file_path}")
+                    logger.error(f"File not found: path_len={len(file_path)}")
                     continue
 
                 with open(path_obj, "rb") as f:
@@ -1386,10 +1387,12 @@ def _prepare_gmail_message(
                 cid_value = _normalize_attachment_content_id(content_id)
                 if cid_value in seen_content_ids:
                     logger.warning(
-                        "Duplicate content_id %r on attachment %s; "
-                        "email clients may only render one instance",
-                        cid_value,
-                        filename or file_path,
+                        "Duplicate content_id on attachment: content_id_len=%d, "
+                        "filename_len=%d, path_len=%d; email clients may only "
+                        "render one instance",
+                        len(cid_value),
+                        len(filename) if filename else 0,
+                        len(file_path) if file_path else 0,
                     )
                 seen_content_ids.add(cid_value)
                 # Find the right MIME part to attach the inline image to.
@@ -1419,8 +1422,8 @@ def _prepare_gmail_message(
                     disposition="inline",
                 )
                 logger.info(
-                    f"Attached inline (cid={cid_value}): "
-                    f"{safe_filename} ({len(file_data)} bytes)"
+                    f"Attached inline: content_id_len={len(cid_value)}, "
+                    f"filename_len={len(safe_filename)} ({len(file_data)} bytes)"
                 )
             else:
                 message.add_attachment(
@@ -1429,14 +1432,26 @@ def _prepare_gmail_message(
                     subtype=sub_type,
                     filename=safe_filename,
                 )
-                logger.info(f"Attached file: {safe_filename} ({len(file_data)} bytes)")
+                logger.info(
+                    f"Attached file: filename_len={len(safe_filename)} "
+                    f"({len(file_data)} bytes)"
+                )
             attached_count += 1
         except (binascii.Error, ValueError) as e:
-            logger.error(f"Failed to decode attachment {filename or file_path}: {e}")
+            logger.error(
+                f"Failed to decode attachment: "
+                f"filename_len={len(filename) if filename else 0}, "
+                f"path_len={len(file_path) if file_path else 0}, "
+                f"error_type={type(e).__name__}"
+            )
             attachment_errors.append(_format_attachment_error(file_path, filename, e))
             continue
         except Exception as e:
-            logger.error(f"Failed to attach {filename or file_path}: {e}")
+            logger.error(
+                f"Failed to attach: filename_len={len(filename) if filename else 0}, "
+                f"path_len={len(file_path) if file_path else 0}, "
+                f"error_type={type(e).__name__}"
+            )
             attachment_errors.append(_format_attachment_error(file_path, filename, e))
             continue
 
@@ -1693,8 +1708,9 @@ async def search_gmail_messages(
         Includes pagination token if more results are available.
     """
     logger.info(
-        f"[search_gmail_messages] Email: '{user_google_email}', Query: '{query}', Page size: {page_size}"
+        f"[search_gmail_messages] Email: '{user_google_email}', query_len={len(query)}, Page size: {page_size}"
     )
+    logger.debug(f"[search_gmail_messages] Query: '{query}'")
 
     # Build the API request parameters
     request_params = {"userId": "me", "q": query, "maxResults": page_size}
@@ -2591,7 +2607,7 @@ async def send_gmail_message(
                 "'to' is required when forwarding via 'forward_message_id'."
             )
         logger.info(
-            f"[send_gmail_message] Forwarding message '{forward_message_id}' to '{to}' for '{user_google_email}'"
+            f"[send_gmail_message] Forwarding message '{forward_message_id}' for '{user_google_email}'"
         )
         return await _forward_gmail_message_impl(
             service=service,
@@ -2627,7 +2643,7 @@ async def send_gmail_message(
         )
 
     logger.info(
-        f"[send_gmail_message] Invoked. Email: '{user_google_email}', Subject: '{subject}', Attachments: {len(attachments) if attachments else 0}"
+        f"[send_gmail_message] Invoked. Email: '{user_google_email}', subject_len={len(subject) if subject else 0}, Attachments: {len(attachments) if attachments else 0}"
     )
 
     # Prepare the email message
@@ -3038,7 +3054,7 @@ async def draft_gmail_message(
         )
     """
     logger.info(
-        f"[draft_gmail_message] Invoked. Email: '{user_google_email}', Subject: '{subject}'"
+        f"[draft_gmail_message] Invoked. Email: '{user_google_email}', subject_len={len(subject) if subject else 0}"
     )
 
     # Prepare the email message. An explicit alias needs no settings lookup when
@@ -3893,6 +3909,122 @@ async def modify_gmail_message_labels(
     return f"Message labels updated successfully!\nMessage ID: {message_id}\n{'; '.join(actions)}"
 
 
+def _format_id_list(ids: List[str], limit: int = 10) -> str:
+    """Join IDs for a result message, truncating very long lists."""
+    shown = ", ".join(ids[:limit])
+    if len(ids) > limit:
+        shown += f", … (+{len(ids) - limit} more)"
+    return shown
+
+
+async def _verify_batch_label_changes(
+    service,
+    message_ids: List[str],
+    add_label_ids: Optional[List[str]],
+    remove_label_ids: Optional[List[str]],
+) -> Dict[str, str]:
+    """Read the messages back to see which requested label changes actually landed.
+
+    ``users.messages.batchModify`` answers ``204 No Content`` and silently
+    ignores IDs it does not recognise, so its own response cannot distinguish a
+    sweep that changed everything from one that changed nothing. This re-reads
+    each message with ``format="minimal"`` (``labelIds`` only) and classifies it.
+
+    Returns a per-ID status: ``applied`` (end state matches the request),
+    ``not_applied`` (message exists, labels do not match), ``unresolved``
+    (the ID does not currently resolve to a message), or ``unverified`` (the
+    read-back itself failed, so nothing can be claimed either way).
+    """
+    wanted = set(add_label_ids or ())
+    unwanted = set(remove_label_ids or ())
+    statuses: Dict[str, str] = {}
+
+    for chunk_start in range(0, len(message_ids), GMAIL_BATCH_SIZE):
+        chunk_ids = message_ids[chunk_start : chunk_start + GMAIL_BATCH_SIZE]
+        results: Dict[str, Dict] = {}
+        batch_completed = False
+
+        def _batch_callback(request_id, response, exception):
+            results[request_id] = {"data": response, "error": exception}
+
+        try:
+            batch = service.new_batch_http_request(callback=_batch_callback)
+            for mid in chunk_ids:
+                batch.add(
+                    service.users()
+                    .messages()
+                    .get(userId="me", id=mid, format="minimal"),
+                    request_id=mid,
+                )
+            await asyncio.to_thread(batch.execute)
+            batch_completed = True
+        except Exception as batch_error:
+            # Same fallback the read tools use: sequential reads with a small
+            # delay, to avoid exhausting connections when the batch endpoint is
+            # unavailable.
+            logger.warning(
+                f"[batch_modify_gmail_message_labels] Verification batch failed, "
+                f"falling back to sequential reads: {batch_error}"
+            )
+            for mid in chunk_ids:
+                mid_result, data, error = await _fetch_with_retry(
+                    build_request=lambda mid=mid: (
+                        service.users()
+                        .messages()
+                        .get(userId="me", id=mid, format="minimal")
+                    ),
+                    item_id=mid,
+                    item_label="message",
+                    log_prefix="batch_modify_gmail_message_labels",
+                )
+                results[mid_result] = {"data": data, "error": error}
+                await asyncio.sleep(GMAIL_REQUEST_DELAY)
+
+        retryable_ids = (
+            _retryable_result_ids(results, chunk_ids) if batch_completed else []
+        )
+        if retryable_ids:
+            logger.warning(
+                f"[batch_modify_gmail_message_labels] "
+                f"{len(retryable_ids)}/{len(chunk_ids)} verification reads failed "
+                f"with retryable errors; re-fetching: {retryable_ids}"
+            )
+            await asyncio.sleep(GMAIL_RATE_LIMIT_BACKOFF)
+            for mid in retryable_ids:
+                mid_result, data, error = await _fetch_with_retry(
+                    build_request=lambda mid=mid: (
+                        service.users()
+                        .messages()
+                        .get(userId="me", id=mid, format="minimal")
+                    ),
+                    item_id=mid,
+                    item_label="message",
+                    log_prefix="batch_modify_gmail_message_labels",
+                )
+                results[mid_result] = {"data": data, "error": error}
+                await asyncio.sleep(GMAIL_REQUEST_DELAY)
+
+        for mid in chunk_ids:
+            entry = results.get(mid)
+            if not entry or (entry.get("data") is None and entry.get("error") is None):
+                statuses[mid] = "unverified"
+                continue
+            error = entry.get("error")
+            if error is not None:
+                statuses[mid] = (
+                    "unresolved" if _http_error_status(error) == 404 else "unverified"
+                )
+                continue
+            labels = set((entry.get("data") or {}).get("labelIds") or ())
+            statuses[mid] = (
+                "applied"
+                if wanted <= labels and not (unwanted & labels)
+                else "not_applied"
+            )
+
+    return statuses
+
+
 @server.tool(
     title="Batch Modify Gmail Message Labels",
     annotations=ToolAnnotations(
@@ -3916,18 +4048,27 @@ async def batch_modify_gmail_message_labels(
         Optional[StringList],
         Field(json_schema_extra={"type": "array", "items": {"type": "string"}}),
     ] = None,
+    verify: bool = True,
 ) -> str:
     """
     Adds or removes labels from multiple Gmail messages in a single batch request.
+
+    Takes MESSAGE ids, not thread ids. Gmail's batch endpoint returns no
+    per-message result and silently ignores ids it does not recognise, so by
+    default this reads the messages back afterwards and reports which ids
+    actually changed.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
         message_ids (List[str]): A list of message IDs to modify.
         add_label_ids (Optional[List[str]]): List of label IDs to add to the messages.
         remove_label_ids (Optional[List[str]]): List of label IDs to remove from the messages.
+        verify (bool): Read the messages back and report per-id outcomes. Costs
+            one extra (batched) read per id. Set False for very large sweeps
+            where that cost matters and an unverified result is acceptable.
 
     Returns:
-        str: Confirmation message of the label changes applied to the messages.
+        str: Which label changes were applied, and which ids did not resolve.
     """
     logger.info(
         f"[batch_modify_gmail_message_labels] Invoked. Email: '{user_google_email}', Message IDs: '{message_ids}'"
@@ -3953,5 +4094,46 @@ async def batch_modify_gmail_message_labels(
         actions.append(f"Added labels: {', '.join(add_label_ids)}")
     if remove_label_ids:
         actions.append(f"Removed labels: {', '.join(remove_label_ids)}")
+    action_summary = "; ".join(actions)
 
-    return f"Labels updated for {len(message_ids)} messages: {'; '.join(actions)}"
+    total = len(message_ids)
+
+    if not verify:
+        return (
+            f"Requested label changes for {total} message ID(s): {action_summary}\n"
+            "NOT VERIFIED: Gmail's batchModify returns no per-message result and "
+            "silently ignores IDs it does not recognise, so this records what was "
+            "asked for, not what changed. Re-run with verify=True to confirm."
+        )
+
+    statuses = await _verify_batch_label_changes(
+        service, message_ids, add_label_ids, remove_label_ids
+    )
+    applied = [mid for mid in message_ids if statuses.get(mid) == "applied"]
+    not_applied = [mid for mid in message_ids if statuses.get(mid) == "not_applied"]
+    unresolved = [mid for mid in message_ids if statuses.get(mid) == "unresolved"]
+    unverified = [mid for mid in message_ids if statuses.get(mid) == "unverified"]
+
+    lines = [
+        f"Label changes for {total} message ID(s): {action_summary}",
+        f"Applied: {len(applied)}/{total}",
+    ]
+    if unresolved:
+        lines.append(
+            f"No such message ({len(unresolved)}): {_format_id_list(unresolved)}\n"
+            "  These IDs do not currently resolve to messages in this mailbox, "
+            "so the requested change could not be verified. One possible cause "
+            "is passing a THREAD id where a MESSAGE id is required."
+        )
+    if not_applied:
+        lines.append(
+            f"Unchanged ({len(not_applied)}): {_format_id_list(not_applied)}\n"
+            "  These messages exist but their labels do not match the request."
+        )
+    if unverified:
+        lines.append(
+            f"Could not verify ({len(unverified)}): {_format_id_list(unverified)}\n"
+            "  The read-back failed; the change may or may not have been applied."
+        )
+
+    return "\n".join(lines)
