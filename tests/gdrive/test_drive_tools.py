@@ -2426,7 +2426,9 @@ async def test_update_drive_file_shortcut_content_update_follows_target(
         mime_type="text/plain",
     )
 
-    assert [call.kwargs["follow_shortcuts"] for call in mock_resolve_item.await_args_list] == [
+    assert [
+        call.kwargs["follow_shortcuts"] for call in mock_resolve_item.await_args_list
+    ] == [
         False,
         True,
     ]
