@@ -46,6 +46,7 @@ from gdrive.drive_helpers import (
     GOOGLE_SHEETS_MIME_TYPE,
     GOOGLE_SLIDES_IMPORT_FORMATS,
     GOOGLE_SLIDES_MIME_TYPE,
+    SHORTCUT_MIME_TYPE,
     UPLOAD_CHUNK_SIZE_BYTES,
     _resolve_import_media,
     _stream_url_with_validation,
@@ -1898,18 +1899,30 @@ async def update_drive_file(
     server-side, so only the new text has to be supplied — no need to send the whole
     file back to rewrite it.
 
+    Drive shortcuts are handled according to the kind of update: supported
+    resource-local metadata changes (rename, move, trash, star, description, and
+    custom properties) apply to the supplied shortcut, while content replacement
+    follows the shortcut and updates its target. To avoid applying metadata to the
+    wrong resource, a shortcut call cannot combine content with resource-local
+    metadata. Update the shortcut metadata and target content in separate calls.
+
     Args:
         user_google_email (str): The user's Google email address. Required.
         file_id (str): The ID of the file to update. Required.
         name (Optional[str]): New name for the file.
         description (Optional[str]): New description for the file.
-        mime_type (Optional[str]): New MIME type (note: changing type may require content upload).
+        mime_type (Optional[str]): New MIME type (note: changing type may require
+            content upload). For a shortcut ID, this must accompany content and applies
+            to the resolved target.
         add_parents (Optional[str]): Comma-separated folder IDs to add as parents.
         remove_parents (Optional[str]): Comma-separated folder IDs to remove from parents.
         starred (Optional[bool]): Whether to star/unstar the file.
         trashed (Optional[bool]): Whether to move file to/from trash.
-        writers_can_share (Optional[bool]): Whether editors can share the file.
-        copy_requires_writer_permission (Optional[bool]): Whether copying requires writer permission.
+        writers_can_share (Optional[bool]): Whether editors can share the file. Pass the
+            target ID directly; this cannot be changed on a shortcut resource.
+        copy_requires_writer_permission (Optional[bool]): Whether copying requires writer
+            permission. Pass the target ID directly; this cannot be changed on a
+            shortcut resource.
         properties (Optional[dict]): Custom key-value properties for the file.
         content (Optional[str]): New text content for text-based formats (markdown, TXT, HTML).
         file_path (Optional[str]): Local file path for binary formats (DOCX, ODT). Supports file:// URLs.
@@ -1941,15 +1954,75 @@ async def update_drive_file(
             "'file_path' and 'file_url' are only supported with mode='replace'."
         )
 
+    replacing_content = any(x is not None for x in (content, file_path, file_url))
     current_file_fields = (
         "name, description, mimeType, parents, starred, trashed, webViewLink, "
         "writersCanShare, copyRequiresWriterPermission, properties"
     )
+    supplied_file_id = file_id
     resolved_file_id, current_file = await resolve_drive_item(
         service,
-        file_id,
+        supplied_file_id,
         extra_fields=current_file_fields,
+        # Inspect the supplied resource before deciding whether a content update may
+        # safely follow a shortcut. This prevents metadata in a mixed call from being
+        # silently applied to the shortcut target.
+        follow_shortcuts=False,
     )
+    supplied_file_is_shortcut = current_file.get("mimeType") == SHORTCUT_MIME_TYPE
+
+    if supplied_file_is_shortcut:
+        resource_local_updates = [
+            field
+            for field, requested in (
+                ("name", name is not None),
+                ("description", description is not None),
+                ("add_parents", bool(add_parents)),
+                ("remove_parents", bool(remove_parents)),
+                ("starred", starred is not None),
+                ("trashed", trashed is not None),
+                ("writers_can_share", writers_can_share is not None),
+                (
+                    "copy_requires_writer_permission",
+                    copy_requires_writer_permission is not None,
+                ),
+                ("properties", properties is not None),
+            )
+            if requested
+        ]
+        if replacing_content and resource_local_updates:
+            raise ValueError(
+                "Content and shortcut-local metadata cannot be updated in one call "
+                f"({', '.join(resource_local_updates)}). Update the shortcut metadata "
+                "and target content in separate calls."
+            )
+
+        unsupported_shortcut_updates = [
+            field
+            for field, requested in (
+                ("mime_type", mime_type is not None and not replacing_content),
+                ("writers_can_share", writers_can_share is not None),
+                (
+                    "copy_requires_writer_permission",
+                    copy_requires_writer_permission is not None,
+                ),
+            )
+            if requested
+        ]
+        if unsupported_shortcut_updates:
+            raise ValueError(
+                "These fields cannot be updated on a Drive shortcut: "
+                f"{', '.join(unsupported_shortcut_updates)}. Pass the target file ID "
+                "to change target MIME or permission controls."
+            )
+
+        if replacing_content:
+            resolved_file_id, current_file = await resolve_drive_item(
+                service,
+                supplied_file_id,
+                extra_fields=current_file_fields,
+                follow_shortcuts=True,
+            )
     file_id = resolved_file_id
 
     # Build the update body with only specified fields
@@ -2006,7 +2079,6 @@ async def update_drive_file(
     # Native Google files take replacement content through Drive's import conversion
     # (the engine import_to_google_doc uses); any other file has nothing to convert,
     # so its bytes stream back verbatim under the same file ID.
-    replacing_content = any(x is not None for x in (content, file_path, file_url))
     remote_file_data = None
     format_map = None
     content_update_lock = (
