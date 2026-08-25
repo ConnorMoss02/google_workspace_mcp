@@ -221,3 +221,69 @@ def test_configure_server_for_http_passes_jwt_key_to_external_provider(monkeypat
         "jwt_signing_key must be a bytes object"
     )
     assert len(captured["jwt_signing_key"]) > 0, "jwt_signing_key must be non-empty"
+
+
+def _oauth21_config():
+    return SimpleNamespace(
+        is_oauth21_enabled=lambda: True,
+        is_configured=lambda: True,
+        is_public_client=lambda: False,
+        is_external_oauth21_provider=lambda: False,
+        client_id="client-id",
+        client_secret="client-secret",
+        get_oauth_base_url=lambda: "https://workspace-mcp.example.test",
+        redirect_path="/oauth2callback",
+    )
+
+
+def _capture_provider_kwargs(monkeypatch):
+    captured = {}
+
+    class FakeGoogleProvider:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            self.client_registration_options = None
+            self._default_scope_str = ""
+            self._cimd_manager = None
+
+    monkeypatch.setattr(server_module, "get_transport_mode", lambda: "streamable-http")
+    monkeypatch.setattr(server_module, "GoogleProvider", FakeGoogleProvider)
+    monkeypatch.setattr(server_module, "set_auth_provider", lambda provider: None)
+    monkeypatch.setattr(server_module, "_auth_provider", server_module._auth_provider)
+    monkeypatch.setattr(server_module.server, "auth", server_module.server.auth)
+    monkeypatch.setattr("auth.oauth_config.get_oauth_config", _oauth21_config)
+    return captured
+
+
+def test_token_expiry_env_defaults_leave_fastmcp_behaviour_unchanged(monkeypatch):
+    monkeypatch.delenv(server_module._OAUTH_TOKEN_EXPIRY_THRESHOLD_ENV, raising=False)
+    monkeypatch.delenv(server_module._OAUTH_ACCESS_TOKEN_EXPIRY_ENV, raising=False)
+    captured = _capture_provider_kwargs(monkeypatch)
+
+    server_module.configure_server_for_http()
+
+    assert captured["token_expiry_threshold_seconds"] == 0
+    assert captured["fastmcp_access_token_expiry_seconds"] is None
+
+
+def test_token_expiry_env_is_forwarded_to_the_provider(monkeypatch):
+    monkeypatch.setenv(server_module._OAUTH_TOKEN_EXPIRY_THRESHOLD_ENV, "120")
+    monkeypatch.setenv(server_module._OAUTH_ACCESS_TOKEN_EXPIRY_ENV, "86400")
+    captured = _capture_provider_kwargs(monkeypatch)
+
+    server_module.configure_server_for_http()
+
+    assert captured["token_expiry_threshold_seconds"] == 120
+    assert captured["fastmcp_access_token_expiry_seconds"] == 86400
+
+
+@pytest.mark.parametrize("value", ["not-a-number", "-1", "   "])
+def test_token_expiry_env_ignores_unusable_values(monkeypatch, value):
+    monkeypatch.setenv(server_module._OAUTH_TOKEN_EXPIRY_THRESHOLD_ENV, value)
+    monkeypatch.setenv(server_module._OAUTH_ACCESS_TOKEN_EXPIRY_ENV, value)
+    captured = _capture_provider_kwargs(monkeypatch)
+
+    server_module.configure_server_for_http()
+
+    assert captured["token_expiry_threshold_seconds"] == 0
+    assert captured["fastmcp_access_token_expiry_seconds"] is None
