@@ -45,32 +45,18 @@ async def test_get_drive_file_content_rejects_declared_oversized(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_get_drive_file_download_url_rejects_mid_download(monkeypatch):
+async def test_get_drive_file_download_url_rejects_declared_oversized(monkeypatch):
     monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", "20")
     mock_service = Mock()
-    mock_service.files().get_media.return_value = Mock(uri="https://example/media")
 
-    async def _raise(*_args, **kwargs):
-        raise FileTooLargeError(
-            'Error: "blob.bin" (ID: file123) is too large to load into this MCP server '
-            "(50 bytes; limit is 20 bytes via WORKSPACE_MCP_MAX_FILE_BYTES)."
-        )
-
-    with (
-        patch("gdrive.drive_tools.resolve_drive_item") as resolve,
-        patch(
-            "gdrive.drive_tools.download_media_bytes",
-            new=AsyncMock(side_effect=_raise),
-        ),
-    ):
+    with patch("gdrive.drive_tools.resolve_drive_item") as resolve:
         resolve.return_value = (
             "file123",
             {
                 "name": "blob.bin",
                 "mimeType": "application/octet-stream",
                 "webViewLink": "https://drive.google.com/file/d/file123",
-                # Declared size under limit so we exercise download-time check.
-                "size": "10",
+                "size": "500",
             },
         )
         result = await _unwrap(get_drive_file_download_url)(
@@ -81,6 +67,8 @@ async def test_get_drive_file_download_url_rejects_mid_download(monkeypatch):
 
     assert result.startswith("Error:")
     assert "blob.bin" in result
+    assert "WORKSPACE_MCP_MAX_FILE_BYTES" in result
+    mock_service.files().get_media.assert_not_called()
 
 
 @pytest.mark.asyncio

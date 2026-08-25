@@ -46,6 +46,57 @@ def check_public_link_permission(permissions: List[Dict[str, Any]]) -> bool:
     )
 
 
+def list_all_permissions(service, file_id: str) -> List[Dict[str, Any]]:
+    """
+    Return the complete permission set for a file, including Shared Drive items.
+
+    files.get() does NOT populate the inline `permissions` field (nor the `shared`
+    boolean) for items that live in a Shared Drive, even when supportsAllDrives=True
+    is passed. permissions.list() is the only reliable source in that case. This
+    helper paginates and always sets supportsAllDrives=True.
+    """
+    permissions: List[Dict[str, Any]] = []
+    page_token = None
+    while True:
+        resp = (
+            service.permissions()
+            .list(
+                fileId=file_id,
+                supportsAllDrives=True,
+                pageSize=100,
+                pageToken=page_token,
+                fields=(
+                    "nextPageToken, permissions(id, type, role, emailAddress, "
+                    "domain, expirationTime, permissionDetails, allowFileDiscovery)"
+                ),
+            )
+            .execute()
+        )
+        permissions.extend(resp.get("permissions", []))
+        page_token = resp.get("nextPageToken")
+        if not page_token:
+            break
+    return permissions
+
+
+def derive_shared_state(
+    file_metadata: Dict[str, Any], permissions: List[Dict[str, Any]]
+) -> bool:
+    """
+    Determine whether a file is shared.
+
+    The Drive API omits the `shared` boolean for Shared Drive items, so derive it
+    from the driveId and the resolved permission set instead of trusting `shared`.
+    """
+    if file_metadata.get("shared"):
+        return True
+    if file_metadata.get("driveId"):
+        return True
+    if any(p.get("type") in ("anyone", "domain") for p in permissions):
+        return True
+    return len([p for p in permissions if p.get("type") in ("user", "group")]) > 1
+
+
 def format_public_sharing_error(file_name: str, file_id: str) -> str:
     """
     Format error message for files without public sharing.
@@ -289,6 +340,7 @@ def build_drive_list_params(
     return list_params
 
 
+GOOGLE_APPS_MIME_PREFIX = "application/vnd.google-apps."
 SHORTCUT_MIME_TYPE = "application/vnd.google-apps.shortcut"
 FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 
@@ -379,11 +431,16 @@ async def resolve_drive_item(
     *,
     extra_fields: Optional[str] = None,
     max_depth: int = 5,
+    follow_shortcuts: bool = True,
 ) -> Tuple[str, Dict[str, Any]]:
     """
-    Resolve a Drive shortcut so downstream callers operate on the real item.
+    Fetch Drive item metadata and optionally resolve shortcuts to their targets.
 
-    Returns the resolved file ID and its metadata. Raises if shortcut targets loop
+    By default shortcuts are followed so content-oriented callers operate on the real
+    item. Set ``follow_shortcuts=False`` for resource-local metadata mutations (rename,
+    move, trash, star, description, etc.) that must act on the shortcut itself.
+
+    Returns the selected file ID and its metadata. Raises if shortcut targets loop
     or exceed max_depth to avoid infinite recursion.
     """
     current_id = file_id
@@ -399,7 +456,7 @@ async def resolve_drive_item(
             .execute
         )
         mime_type = metadata.get("mimeType")
-        if mime_type != SHORTCUT_MIME_TYPE:
+        if not follow_shortcuts or mime_type != SHORTCUT_MIME_TYPE:
             return current_id, metadata
 
         shortcut_details = metadata.get("shortcutDetails") or {}
@@ -538,6 +595,16 @@ TEXT_BASED_IMPORT_MIME_TYPES = {
 }
 
 
+def _is_text_like_mime_type(mime_type: str) -> bool:
+    """Whether an in-memory `content` string can safely be uploaded as this MIME type."""
+    return (
+        mime_type.startswith("text/")
+        or mime_type in TEXT_BASED_IMPORT_MIME_TYPES
+        or mime_type.endswith(("+json", "+xml"))
+        or mime_type in {"application/json", "application/xml"}
+    )
+
+
 def _detect_source_format(
     file_name: str,
     content: Optional[str] = None,
@@ -570,7 +637,8 @@ async def _resolve_import_media(
     file_path: Optional[str],
     file_url: Optional[str],
     source_format: Optional[str],
-    format_map: Dict[str, str],
+    format_map: Optional[Dict[str, str]] = None,
+    passthrough_mime_type: Optional[str] = None,
 ) -> Tuple[MediaIoBaseUpload, str, Optional[BinaryIO]]:
     """
     Resolve a content source into an upload ``MediaIoBaseUpload`` and source MIME type.
@@ -579,6 +647,10 @@ async def _resolve_import_media(
     The source bytes are uploaded with their *source* MIME type so the Drive API can
     convert them into the destination Google Apps format. ``format_map`` is the
     extension → source MIME allowlist used for detection and validation.
+
+    Pass ``passthrough_mime_type`` instead of ``format_map`` for non-Google targets
+    (a raw .md, .txt, .pdf, ...): there is nothing to convert, so the bytes upload
+    verbatim under that MIME type and no source allowlist applies.
 
     Returns ``(media, source_mime_type, closeable)``; when the source is a remote URL,
     ``closeable`` is the download stream the caller must close after upload (else None).
@@ -592,7 +664,9 @@ async def _resolve_import_media(
         raise ValueError("Provide only one of: 'content', 'file_path', or 'file_url'.")
 
     # Determine source MIME type from the explicit hint or auto-detection.
-    if source_format:
+    if passthrough_mime_type:
+        source_mime_type = passthrough_mime_type
+    elif source_format:
         format_key = f".{source_format.lower().lstrip('.')}"
         if format_key not in format_map:
             raise ValueError(
@@ -612,7 +686,7 @@ async def _resolve_import_media(
     remote_file_data: Optional[BinaryIO] = None
 
     if content is not None:
-        if source_mime_type not in TEXT_BASED_IMPORT_MIME_TYPES:
+        if not _is_text_like_mime_type(source_mime_type):
             raise ValueError(
                 f"[{tool_name}] 'content' is only valid for text-based source formats, "
                 f"but the source resolves to '{source_mime_type}' (a binary format). "
@@ -646,7 +720,7 @@ async def _resolve_import_media(
         logger.info(f"[{tool_name}] Read local file: {len(file_data)} bytes")
 
         # Re-detect from the real file extension when no explicit hint was given.
-        if not source_format:
+        if not source_format and not passthrough_mime_type:
             source_mime_type = _detect_source_format(actual_path, None, format_map)
 
     else:  # file_url is not None
@@ -657,7 +731,7 @@ async def _resolve_import_media(
         remote_file_data, remote_content_type = await _download_url_to_bytes(file_url)
 
         # Prefer the response Content-Type, falling back to URL-based detection.
-        if not source_format:
+        if not source_format and not passthrough_mime_type:
             ct_base = (remote_content_type or "").split(";", 1)[0].strip()
             if ct_base and ct_base in format_map.values():
                 source_mime_type = ct_base
@@ -668,7 +742,8 @@ async def _resolve_import_media(
 
     # Enforce the allowlist on the final resolved MIME type so auto-detection can't
     # upload an unsupported source (e.g. text/plain from an unknown extension).
-    if source_mime_type not in format_map.values():
+    # Passthrough uploads have no conversion target, so nothing to enforce.
+    if not passthrough_mime_type and source_mime_type not in format_map.values():
         if remote_file_data is not None:
             remote_file_data.close()
         raise ValueError(

@@ -17,6 +17,7 @@ from mcp.types import ToolAnnotations
 
 # Auth & server utilities
 from auth.service_decorator import require_google_service, require_multiple_services
+from core.file_limits import FileTooLargeError, download_http_url_bytes
 from core.server import server
 from core.utils import TransientNetworkError, handle_http_errors
 
@@ -415,8 +416,12 @@ async def search_messages(
         str: A formatted list of messages matching the search criteria.
     """
     logger.info(
-        f"[search_messages] Email={user_google_email}, Query='{query}', TimeFilter='{time_filter}'"
+        f"[search_messages] Email={user_google_email}, query_len={len(query) if query else 0}, has_time_filter={bool(time_filter)}"
     )
+    if query:
+        logger.debug(f"[search_messages] Query='{query}'")
+    if time_filter:
+        logger.debug(f"[search_messages] TimeFilter='{time_filter}'")
 
     # Google Chat messages.list supports time/thread filters, but not full-text
     # search. Apply only supported API filters, then filter message text below.
@@ -674,8 +679,6 @@ async def download_chat_attachment(
     # Prefer attachmentDataRef.resourceName for the media endpoint
     resource_name = media_resource or att_name
     download_url = f"https://chat.googleapis.com/v1/media/{resource_name}?alt=media"
-
-    from core.file_limits import FileTooLargeError, download_http_url_bytes
 
     try:
         access_token = service._http.credentials.token

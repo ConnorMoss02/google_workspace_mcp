@@ -725,7 +725,7 @@ async def test_download_rejects_oversized_when_capped(monkeypatch):
     from gchat.chat_tools import download_chat_attachment
 
     with patch(
-        "core.file_limits.download_http_url_bytes",
+        "gchat.chat_tools.download_http_url_bytes",
         side_effect=FileTooLargeError(
             'Error: "image.png" is too large to load into this MCP server '
             "(50 bytes; limit is 10 bytes via WORKSPACE_MCP_MAX_FILE_BYTES)."

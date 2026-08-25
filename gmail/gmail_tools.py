@@ -1919,6 +1919,17 @@ async def get_gmail_messages_content_batch(
     return final_output
 
 
+def _attachment_metadata_fields(depth: int) -> str:
+    """Build a metadata-only fields mask for a MIME tree of the given depth."""
+    node = "filename,mimeType,body(attachmentId,size)"
+    for _ in range(depth):
+        node = f"filename,mimeType,body(attachmentId,size),parts({node})"
+    return f"payload({node})"
+
+
+_ATTACHMENT_METADATA_FIELDS = _attachment_metadata_fields(6)
+
+
 @server.tool(
     title="Get Gmail Attachment Content",
     annotations=ToolAnnotations(
@@ -1970,7 +1981,8 @@ async def get_gmail_attachment_content(
     )
 
     # Resolve attachment size/filename from message metadata before downloading
-    # the binary payload — attachments().get() returns the full body in one shot.
+    # the binary payload so we can reject oversized attachments before the API
+    # returns the full base64 body in one shot.
     filename = None
     mime_type = None
     declared_size = None
@@ -1982,7 +1994,7 @@ async def get_gmail_attachment_content(
                 userId="me",
                 id=message_id,
                 format="full",
-                fields="payload(parts(filename,mimeType,body(attachmentId,size)),body(attachmentId,size),filename,mimeType)",
+                fields=_ATTACHMENT_METADATA_FIELDS,
             )
             .execute
         )
@@ -2039,7 +2051,8 @@ async def get_gmail_attachment_content(
     size_kb = size_bytes / 1024 if size_bytes else 0
     base64_data = attachment.get("data", "")
 
-    # Safety net if metadata size was missing/stale.
+    # The Gmail API already buffered the full body above; this only prevents
+    # returning oversized data when the pre-download declared_size was absent.
     try:
         ensure_within_file_size_limit(
             size_bytes,
@@ -2080,7 +2093,8 @@ async def get_gmail_attachment_content(
 
         storage = get_attachment_storage()
 
-        # If metadata was incomplete, try size-based fallback among attachments.
+        # If the pre-download metadata fetch missed the filename, try again
+        # with the full nested MIME tree and size-based fallback heuristics.
         if not filename:
             try:
                 message_full = await asyncio.to_thread(
@@ -2090,7 +2104,7 @@ async def get_gmail_attachment_content(
                         userId="me",
                         id=message_id,
                         format="full",
-                        fields="payload(parts(filename,mimeType,body(attachmentId,size)),body(attachmentId,size),filename,mimeType)",
+                        fields=_ATTACHMENT_METADATA_FIELDS,
                     )
                     .execute
                 )
