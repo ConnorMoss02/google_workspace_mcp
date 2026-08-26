@@ -258,14 +258,16 @@ async def test_create_drive_file_rejects_oversized_base64_before_decode():
     mock_service = Mock()
 
     with patch("gdrive.drive_helpers.MAX_INLINE_BASE64_BYTES", patched_limit):
-        with pytest.raises(ValueError, match="limit"):
-            await _unwrap(create_drive_file)(
-                service=mock_service,
-                user_google_email="user@example.com",
-                file_name="huge.bin",
-                base64_content=oversized_b64,
-                content_mime_type="application/octet-stream",
-            )
+        with patch("gdrive.drive_helpers.base64.b64decode") as decode:
+            with pytest.raises(ValueError, match="limit"):
+                await _unwrap(create_drive_file)(
+                    service=mock_service,
+                    user_google_email="user@example.com",
+                    file_name="huge.bin",
+                    base64_content=oversized_b64,
+                    content_mime_type="application/octet-stream",
+                )
+        decode.assert_not_called()
 
     mock_service.files.return_value.create.return_value.execute.assert_not_called()
 
