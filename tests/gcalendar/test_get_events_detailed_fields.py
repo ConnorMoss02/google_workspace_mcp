@@ -39,7 +39,7 @@ def _mock_service(items):
     return mock_service
 
 
-async def _ranged_detail(item):
+async def _ranged_detail(item, *, single_events=True):
     """Detailed output via the time_min/time_max branch."""
     return await _unwrap(get_events)(
         service=_mock_service([item]),
@@ -47,6 +47,7 @@ async def _ranged_detail(item):
         time_min="2026-04-06T00:00:00Z",
         time_max="2026-04-07T00:00:00Z",
         detailed=True,
+        single_events=single_events,
     )
 
 
@@ -259,10 +260,26 @@ async def test_detailed_recurring_master_emits_lossless_recurrence(detail):
 
 
 @pytest.mark.asyncio
-@both_branches
-async def test_cancelled_recurring_exception_uses_original_start_time(detail):
+async def test_cancelled_recurring_exception_uses_original_start_time():
     """Sparse Google tombstones render as exclusions instead of crashing."""
-    result = await detail(CANCELLED_RECURRING_EXCEPTION)
+    result = await _single_detail(CANCELLED_RECURRING_EXCEPTION)
+
+    assert "Starts: 2026-04-20T11:00:00+02:00" in result
+    assert "Ends: Unavailable" in result
+    assert (
+        'Original Start Time: {"dateTime": "2026-04-20T11:00:00+02:00", '
+        '"timeZone": "Europe/Paris"}' in result
+    )
+    assert "Recurring Event ID: evt123" in result
+    assert "Status: cancelled" in result
+
+
+@pytest.mark.asyncio
+async def test_ranged_cancelled_exception_uses_original_start_time():
+    """Unexpanded ranges render sparse cancelled exceptions."""
+    result = await _ranged_detail(
+        CANCELLED_RECURRING_EXCEPTION, single_events=False
+    )
 
     assert "Starts: 2026-04-20T11:00:00+02:00" in result
     assert "Ends: Unavailable" in result
@@ -281,7 +298,8 @@ async def test_all_day_cancelled_exception_uses_original_date():
         {
             **CANCELLED_RECURRING_EXCEPTION,
             "originalStartTime": {"date": "2026-04-20"},
-        }
+        },
+        single_events=False,
     )
 
     assert "Starts: 2026-04-20" in result
