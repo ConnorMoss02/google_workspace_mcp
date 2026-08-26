@@ -573,7 +573,9 @@ def _decode_base64_upload(
     if expected_sha256 is not None:
         normalized_sha256 = expected_sha256.strip().lower()
         if not re.fullmatch(r"[0-9a-f]{64}", normalized_sha256):
-            raise ValueError("'base64_sha256' must be a 64-character hexadecimal SHA-256.")
+            raise ValueError(
+                "'base64_sha256' must be a 64-character hexadecimal SHA-256."
+            )
         actual_sha256 = hashlib.sha256(file_data).hexdigest()
         if actual_sha256 != normalized_sha256:
             raise ValueError(
@@ -845,7 +847,9 @@ async def _resolve_import_media(
             mime_type=source_mime_type,
             expected_sha256=base64_sha256,
         )
-        logger.info(f"[{tool_name}] Decoded inline binary content: {len(file_data)} bytes")
+        logger.info(
+            f"[{tool_name}] Decoded inline binary content: {len(file_data)} bytes"
+        )
 
     elif file_path is not None:
         parsed_url = urlparse(file_path)
