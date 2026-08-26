@@ -324,9 +324,8 @@ def _format_event_detail_lines(
         lines.append(f"{prefix}Recurring Event ID: {recurring_event_id}")
 
     original_start_time = item.get("originalStartTime")
-    if original_start_time:
-        # Keep the raw boundary lossless: its timeZone is material recurrence
-        # evidence and can differ from the offset Google used for dateTime.
+    is_exception = item.get("status") != "confirmed" or not item.get("start")
+    if original_start_time and is_exception:
         lines.append(f"{prefix}Original Start Time: {json.dumps(original_start_time)}")
 
     recurrence = item.get("recurrence")
