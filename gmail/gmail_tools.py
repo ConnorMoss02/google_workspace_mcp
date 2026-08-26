@@ -2329,7 +2329,7 @@ async def send_gmail_message(
     thread_id: Annotated[
         Optional[str],
         Field(
-            description="Optional Gmail thread ID to reply within. When in_reply_to is omitted, replies to the latest non-draft, non-trash message.",
+            description="Optional Gmail thread ID to reply within. When in_reply_to is omitted, replies to the latest non-draft, non-trash message with an RFC Message-ID.",
         ),
     ] = None,
     in_reply_to: Annotated[
@@ -2403,7 +2403,8 @@ async def send_gmail_message(
             the email will be sent from the authenticated user's primary email address.
         user_google_email (str): The user's Google email address. Required for authentication.
         thread_id (Optional[str]): Optional Gmail thread ID to reply within. When
-            in_reply_to is omitted, replies to the latest non-draft, non-trash message.
+            in_reply_to is omitted, replies to the latest non-draft, non-trash message
+            with an RFC Message-ID.
         in_reply_to (Optional[str]): Optional RFC Message-ID to explicitly reply to
             a specific message. Omit to reply to the latest eligible message.
         references (Optional[str]): Optional RFC Message-ID ancestry chain. Normally
@@ -2839,7 +2840,7 @@ async def draft_gmail_message(
     thread_id: Annotated[
         Optional[str],
         Field(
-            description="Optional Gmail thread ID to reply within. When in_reply_to is omitted, replies to the latest non-draft, non-trash message.",
+            description="Optional Gmail thread ID to reply within. When in_reply_to is omitted, replies to the latest non-draft, non-trash message with an RFC Message-ID.",
         ),
     ] = None,
     in_reply_to: Annotated[
@@ -2892,7 +2893,8 @@ async def draft_gmail_message(
             usable Send-As entry, falling back to the authenticated user's email when Gmail
             returns no usable entry or settings access is not authorized.
         thread_id (Optional[str]): Optional Gmail thread ID to reply within. When
-            in_reply_to is omitted, replies to the latest non-draft, non-trash message.
+            in_reply_to is omitted, replies to the latest non-draft, non-trash message
+            with an RFC Message-ID.
         in_reply_to (Optional[str]): Optional RFC Message-ID to explicitly reply to
             a specific message. Omit to reply to the latest eligible message.
         references (Optional[str]): Optional RFC Message-ID ancestry chain. Normally

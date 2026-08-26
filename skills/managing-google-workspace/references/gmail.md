@@ -83,7 +83,7 @@ Send an email. Supports new messages, replies, HTML, attachments, CC/BCC, and Se
 | bcc | string | no | | |
 | from_name | string | no | | Display name, e.g. "John Doe" |
 | from_email | string | no | | Send As alias (must be configured in Gmail settings) |
-| thread_id | string | no | | Thread ID for replies; defaults to its latest non-draft, non-trash message |
+| thread_id | string | no | | Thread ID for replies; defaults to its latest non-draft, non-trash message with an RFC `Message-ID` |
 | in_reply_to | string | no | | RFC Message-ID of a specific reply target; omit to reply to the latest eligible message |
 | references | string | no | | Optional Message-ID ancestry chain; normally derived from thread_id |
 | attachments | array | no | | See attachment format below |
@@ -106,7 +106,7 @@ Create a draft. Same capabilities as send but with additional signature/quoting 
 | bcc | string | no | | |
 | from_name | string | no | | Display name |
 | from_email | string | no | Gmail default | Send As alias; when omitted, resolves `isDefault`, then `isPrimary`, then the first Send-As entry, and finally the authenticated email if no usable entry is available |
-| thread_id | string | no | | For reply drafts; defaults to its latest non-draft, non-trash message |
+| thread_id | string | no | | For reply drafts; defaults to its latest non-draft, non-trash message with an RFC `Message-ID` |
 | in_reply_to | string | no | | RFC Message-ID of a specific reply target; omit for the latest eligible message |
 | references | string | no | | Optional Message-ID ancestry chain; normally derived from thread_id |
 | attachments | array | no | | Same format as send |
@@ -199,7 +199,7 @@ Create or delete a filter.
 
 ### Threading and Replies
 - Every search result returns both a `message_id` and a `thread_id`. Use the thread_id to read the full conversation.
-- For a normal reply, pass `thread_id` and omit `in_reply_to` and `references`. The server targets the latest non-draft, non-trash message and derives both RFC reply headers through it.
+- For a normal reply, pass `thread_id` and omit `in_reply_to` and `references`. The server targets the latest non-draft, non-trash message with an RFC `Message-ID` and derives both RFC reply headers through it.
 - Set `in_reply_to` only when deliberately replying to a specific older message. Use that message's RFC `Message-ID` header, not its Gmail API message ID; `references` can still be omitted and derived automatically.
 - Keep the subject consistent with the thread, normally prefixed with `Re: `.
 

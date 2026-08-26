@@ -213,7 +213,10 @@ def _derive_reply_headers(
     references: Optional[str],
     target: Optional[Mapping[str, Any]] = None,
 ) -> tuple[Optional[str], Optional[str]]:
-    """Fill reply headers, defaulting to the latest thread message."""
+    """Fill reply headers, defaulting to the latest automatically eligible message.
+
+    Automatic targets are non-draft, non-trash messages with an RFC Message-ID.
+    """
     derived_in_reply_to = in_reply_to
     derived_references = references
 
