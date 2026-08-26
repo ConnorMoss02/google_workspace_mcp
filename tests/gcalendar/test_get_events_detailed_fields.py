@@ -277,9 +277,7 @@ async def test_cancelled_recurring_exception_uses_original_start_time():
 @pytest.mark.asyncio
 async def test_ranged_cancelled_exception_uses_original_start_time():
     """Unexpanded ranges render sparse cancelled exceptions."""
-    result = await _ranged_detail(
-        CANCELLED_RECURRING_EXCEPTION, single_events=False
-    )
+    result = await _ranged_detail(CANCELLED_RECURRING_EXCEPTION, single_events=False)
 
     assert "Starts: 2026-04-20T11:00:00+02:00" in result
     assert "Ends: Unavailable" in result
