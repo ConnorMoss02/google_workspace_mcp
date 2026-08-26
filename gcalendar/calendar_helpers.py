@@ -6,6 +6,7 @@ event data for display.
 """
 
 import datetime
+import json
 import logging
 import re
 from dataclasses import dataclass
@@ -307,6 +308,13 @@ def _format_event_detail_lines(
     recurring_event_id = item.get("recurringEventId")
     if recurring_event_id:
         lines.append(f"{prefix}Recurring Event ID: {recurring_event_id}")
+
+    recurrence = item.get("recurrence")
+    if recurrence:
+        # Keep the individual RFC5545 lines lossless and machine-readable. A
+        # recurring master may carry RRULE plus RDATE/EXDATE entries whose
+        # commas and semicolons make a hand-joined string ambiguous.
+        lines.append(f"{prefix}Recurrence: {json.dumps(recurrence)}")
 
     # eventType and status are omitted at their API defaults, so an ordinary
     # one-off meeting stays as compact as it was before these fields existed.

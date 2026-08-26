@@ -102,6 +102,25 @@ RECURRING_INSTANCE = {
     "status": "confirmed",
 }
 
+RECURRING_SERIES = {
+    "id": "evt123",
+    "summary": "Standup",
+    "start": {
+        "dateTime": "2026-04-06T09:00:00Z",
+        "timeZone": "Europe/London",
+    },
+    "end": {
+        "dateTime": "2026-04-06T09:15:00Z",
+        "timeZone": "Europe/London",
+    },
+    "htmlLink": "https://calendar.google.com/event?eid=evt123",
+    "recurrence": [
+        "RRULE:FREQ=WEEKLY;INTERVAL=4;BYDAY=MO",
+        "EXDATE:20260504T090000Z",
+    ],
+    "status": "confirmed",
+}
+
 # Every optional field set to a value that renders, so parity can be asserted
 # on all four at once. RECURRING_INSTANCE deliberately can't do that: its
 # eventType is absent and its status is the suppressed default.
@@ -215,6 +234,51 @@ async def test_basic_ranged_output_is_unchanged():
 
     assert "Color ID" not in result
     assert "Recurring Event ID" not in result
+
+
+@pytest.mark.asyncio
+@both_branches
+async def test_detailed_recurring_master_emits_lossless_recurrence(detail):
+    result = await detail(RECURRING_SERIES)
+
+    assert (
+        'Recurrence: ["RRULE:FREQ=WEEKLY;INTERVAL=4;BYDAY=MO", '
+        '"EXDATE:20260504T090000Z"]' in result
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_events_can_return_unexpanded_recurring_masters():
+    service = _mock_service([RECURRING_SERIES])
+
+    await _unwrap(get_events)(
+        service=service,
+        user_google_email="user@example.com",
+        time_min="2026-04-01T00:00:00Z",
+        time_max="2026-05-01T00:00:00Z",
+        detailed=True,
+        single_events=False,
+    )
+
+    params = service.events().list.call_args.kwargs
+    assert params["singleEvents"] is False
+    assert "orderBy" not in params
+
+
+@pytest.mark.asyncio
+async def test_get_events_expands_recurring_series_by_default():
+    service = _mock_service([RECURRING_INSTANCE])
+
+    await _unwrap(get_events)(
+        service=service,
+        user_google_email="user@example.com",
+        time_min="2026-04-01T00:00:00Z",
+        time_max="2026-05-01T00:00:00Z",
+    )
+
+    params = service.events().list.call_args.kwargs
+    assert params["singleEvents"] is True
+    assert params["orderBy"] == "startTime"
 
 
 @pytest.mark.asyncio

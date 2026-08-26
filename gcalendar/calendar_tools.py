@@ -414,6 +414,7 @@ async def get_events(
     query: Optional[str] = None,
     detailed: bool = False,
     include_attachments: bool = False,
+    single_events: bool = True,
 ) -> str:
     """
     Retrieves events from a specified Google Calendar. Can retrieve a single event by ID or multiple events within a time range.
@@ -427,14 +428,15 @@ async def get_events(
         time_max (Optional[str]): The end of the time range (exclusive) in RFC3339 format. If omitted, events starting from `time_min` onwards are considered (up to `max_results`). Ignored if event_id is provided.
         max_results (int): The maximum number of events to return. Defaults to 25. Ignored if event_id is provided.
         query (Optional[str]): A keyword to search for within event fields (summary, description, location). Ignored if event_id is provided.
-        detailed (bool): Whether to return detailed event information including description, location, colour (colorId), attendees, and attendee details (response status, organizer, optional flags). Recurring instances also report the parent series ID needed to edit the whole series, and events that are not ordinary confirmed meetings report their event type (outOfOffice, workingLocation, focusTime) and status. Defaults to False.
+        detailed (bool): Whether to return detailed event information including description, location, colour (colorId), attendees, and attendee details (response status, organizer, optional flags). Recurring instances also report the parent series ID needed to edit the whole series; recurring masters report their raw RFC5545 recurrence rules; and events that are not ordinary confirmed meetings report their event type (outOfOffice, workingLocation, focusTime) and status. Defaults to False.
         include_attachments (bool): Whether to include attachment information in detailed event output. When True, shows attachment details (fileId, fileUrl, mimeType, title) for events that have attachments. Only applies when detailed=True. Set this to True when you need to view or access files that have been attached to calendar events, such as meeting documents, presentations, or other shared files. Defaults to False.
+        single_events (bool): Whether to expand recurring series into individual instances. Defaults to True for backwards compatibility. Set to False with detailed=True to retrieve recurring master events and their exact RFC5545 recurrence rules instead of inferring cadence from expanded instances.
 
     Returns:
         str: A formatted list of events (summary, start and end times, link) within the specified range, or detailed information for a single event if event_id is provided.
     """
     logger.info(
-        f"[get_events] Raw parameters - event_id: '{event_id}', time_min: '{time_min}', time_max: '{time_max}', query_len={len(query) if query else 0}, detailed: {detailed}, include_attachments: {include_attachments}"
+        f"[get_events] Raw parameters - event_id: '{event_id}', time_min: '{time_min}', time_max: '{time_max}', query_len={len(query) if query else 0}, detailed: {detailed}, include_attachments: {include_attachments}, single_events: {single_events}"
     )
 
     # Handle single event retrieval
@@ -480,9 +482,14 @@ async def get_events(
             "timeMin": effective_time_min,
             "timeMax": effective_time_max,
             "maxResults": max_results,
-            "singleEvents": True,
-            "orderBy": "startTime",
+            "singleEvents": single_events,
         }
+
+        # The Calendar API only permits start-time ordering when recurring
+        # series are expanded. Unexpanded results retain the API's stable
+        # default ordering and expose the master event's recurrence array.
+        if single_events:
+            request_params["orderBy"] = "startTime"
 
         if query:
             request_params["q"] = query
