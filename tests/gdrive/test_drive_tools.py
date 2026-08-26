@@ -252,19 +252,20 @@ async def test_create_drive_file_rejects_empty_file_url():
 @pytest.mark.asyncio
 async def test_create_drive_file_rejects_oversized_base64_before_decode():
     """Base64 input exceeding the inline-upload limit is rejected before decoding."""
-    from gdrive.drive_helpers import MAX_INLINE_BASE64_BYTES
-
-    oversized_b64 = "A" * (MAX_INLINE_BASE64_BYTES * 2)
+    patched_limit = 6
+    max_encoded_len = ((patched_limit + 2) // 3) * 4
+    oversized_b64 = "A" * (max_encoded_len + 4)
     mock_service = Mock()
 
-    with pytest.raises(ValueError, match="limit"):
-        await _unwrap(create_drive_file)(
-            service=mock_service,
-            user_google_email="user@example.com",
-            file_name="huge.bin",
-            base64_content=oversized_b64,
-            content_mime_type="application/octet-stream",
-        )
+    with patch("gdrive.drive_helpers.MAX_INLINE_BASE64_BYTES", patched_limit):
+        with pytest.raises(ValueError, match="limit"):
+            await _unwrap(create_drive_file)(
+                service=mock_service,
+                user_google_email="user@example.com",
+                file_name="huge.bin",
+                base64_content=oversized_b64,
+                content_mime_type="application/octet-stream",
+            )
 
     mock_service.files.return_value.create.return_value.execute.assert_not_called()
 

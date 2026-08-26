@@ -548,8 +548,9 @@ def _decode_base64_upload(
     expected_sha256: Optional[str] = None,
 ) -> bytes:
     """Decode and validate an inline binary upload before sending it to Drive."""
-    estimated_decoded_size = len(base64_content) * 3 // 4
-    if estimated_decoded_size > MAX_INLINE_BASE64_BYTES:
+    max_encoded_len = ((MAX_INLINE_BASE64_BYTES + 2) // 3) * 4
+    if len(base64_content) > max_encoded_len:
+        estimated_decoded_size = len(base64_content) * 3 // 4
         raise ValueError(
             f"[{tool_name}] Inline payload exceeds the "
             f"{MAX_INLINE_BASE64_BYTES // (1024 * 1024)} MB limit "

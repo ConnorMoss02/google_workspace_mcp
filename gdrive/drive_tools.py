@@ -1046,6 +1046,17 @@ async def create_drive_file(
             "MIME types."
         )
 
+    if mime_type == FOLDER_MIME_TYPE:
+        if base64_content is not None or content is not None or bool(fileUrl):
+            raise ValueError(
+                "Folders cannot contain file content. Remove 'content', "
+                "'base64_content', and 'fileUrl' when creating a folder, "
+                "or use a different mime_type."
+            )
+        return await _create_drive_folder_impl(
+            service, user_google_email, file_name, folder_id
+        )
+
     file_data = None
     if base64_content is not None:
         file_data = _decode_base64_upload(
@@ -1053,12 +1064,6 @@ async def create_drive_file(
             tool_name="create_drive_file",
             mime_type=content_mime_type,
             expected_sha256=base64_sha256,
-        )
-
-    # Create folder (no content or media_body). Prefer create_drive_folder for new code.
-    if mime_type == FOLDER_MIME_TYPE:
-        return await _create_drive_folder_impl(
-            service, user_google_email, file_name, folder_id
         )
 
     resolved_folder_id = await resolve_folder_id(service, folder_id)
