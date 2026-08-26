@@ -13,7 +13,7 @@ import mimetypes
 import html
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Annotated, Optional, List, Dict, Literal, Any
+from typing import Annotated, Optional, List, Dict, Literal, Any, Union
 from urllib.parse import unquote, urlparse, urlunsplit
 
 from email.message import EmailMessage
@@ -24,6 +24,7 @@ import httpx
 from mcp.types import ToolAnnotations
 
 from pydantic import Field
+from pydantic.json_schema import SkipJsonSchema
 
 from auth.oauth_config import is_stateless_mode
 from auth.service_decorator import require_google_service
@@ -81,6 +82,12 @@ GMAIL_SEARCH_HEADER_BATCH_SIZE = 10
 GMAIL_REQUEST_DELAY = 0.1
 GMAIL_RATE_LIMIT_BACKOFF = 2.0
 HTML_BODY_TRUNCATE_LIMIT = 20000
+
+# Keep ``None`` valid at runtime without publishing it as an ``anyOf`` branch.
+# Cowork needs a top-level array schema, while Moonshot rejects the previous
+# parent-level array override alongside a nullable ``anyOf``.
+_OptionalLabelIdList = Union[StringList, SkipJsonSchema[None]]
+
 LOW_VALUE_TEXT_PLACEHOLDERS = (
     "your client does not support html",
     "view this email in your browser",
@@ -3777,8 +3784,8 @@ async def modify_gmail_message_labels(
     service,
     user_google_email: str,
     message_id: str,
-    add_label_ids: Optional[StringList] = None,
-    remove_label_ids: Optional[StringList] = None,
+    add_label_ids: _OptionalLabelIdList = None,
+    remove_label_ids: _OptionalLabelIdList = None,
 ) -> str:
     """
     Adds or removes labels from a Gmail message.
@@ -3953,8 +3960,8 @@ async def batch_modify_gmail_message_labels(
     service,
     user_google_email: str,
     message_ids: StringList,
-    add_label_ids: Optional[StringList] = None,
-    remove_label_ids: Optional[StringList] = None,
+    add_label_ids: _OptionalLabelIdList = None,
+    remove_label_ids: _OptionalLabelIdList = None,
     verify: bool = True,
 ) -> str:
     """
