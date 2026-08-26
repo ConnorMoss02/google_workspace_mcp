@@ -40,15 +40,30 @@ def _mock_service(items):
 
 
 async def _ranged_detail(item, *, single_events=True):
-    """Detailed output via the time_min/time_max branch."""
-    return await _unwrap(get_events)(
-        service=_mock_service([item]),
+    """Detailed output via the time_min/time_max branch.
+
+    Also asserts the forwarded request matches what was asked for, so tests
+    using this helper check the actual events.list() call, not just the
+    formatted text it produced.
+    """
+    service = _mock_service([item])
+    result = await _unwrap(get_events)(
+        service=service,
         user_google_email="user@example.com",
         time_min="2026-04-06T00:00:00Z",
         time_max="2026-04-07T00:00:00Z",
         detailed=True,
         single_events=single_events,
     )
+
+    params = service.events().list.call_args.kwargs
+    assert params["singleEvents"] is single_events
+    if single_events:
+        assert params["orderBy"] == "startTime"
+    else:
+        assert "orderBy" not in params
+
+    return result
 
 
 async def _single_detail(item):
