@@ -1014,6 +1014,10 @@ async def create_drive_file(
     )
     logger.debug(f"[create_drive_file] File Name: {file_name}")
 
+    mime_type = mime_type.strip().lower()
+    if content_mime_type is not None:
+        content_mime_type = content_mime_type.strip().lower()
+
     has_existing_content_source = content is not None or bool(fileUrl)
     if (
         not has_existing_content_source

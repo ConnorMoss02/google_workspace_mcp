@@ -503,6 +503,11 @@ DOWNLOAD_CHUNK_SIZE_BYTES = 256 * 1024  # 256 KB
 UPLOAD_CHUNK_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB (Google recommended minimum)
 MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB safety limit for URL downloads
 
+MAX_INLINE_BASE64_BYTES = 100 * 1024 * 1024  # 100 MB decoded payload ceiling
+MAX_ZIP_MEMBER_COUNT = 10_000
+MAX_ZIP_UNCOMPRESSED_BYTES = 500 * 1024 * 1024  # 500 MB total uncompressed
+MAX_ZIP_COMPRESSION_RATIO = 100
+
 # Office Open XML and OpenDocument payloads are ZIP containers. Drive accepts
 # malformed bytes at upload time and may only surface the corruption minutes later
 # when its Docs/Sheets/Slides importer opens the file, so validate inline payloads
@@ -543,10 +548,27 @@ def _decode_base64_upload(
     expected_sha256: Optional[str] = None,
 ) -> bytes:
     """Decode and validate an inline binary upload before sending it to Drive."""
+    estimated_decoded_size = len(base64_content) * 3 // 4
+    if estimated_decoded_size > MAX_INLINE_BASE64_BYTES:
+        raise ValueError(
+            f"[{tool_name}] Inline payload exceeds the "
+            f"{MAX_INLINE_BASE64_BYTES // (1024 * 1024)} MB limit "
+            f"(estimated {estimated_decoded_size // (1024 * 1024)} MB). "
+            "Upload via 'fileUrl' instead."
+        )
+
     try:
         file_data = base64.b64decode(base64_content, validate=True)
     except (binascii.Error, ValueError) as exc:
         raise ValueError("'base64_content' must be valid standard base64.") from exc
+
+    if len(file_data) > MAX_INLINE_BASE64_BYTES:
+        raise ValueError(
+            f"[{tool_name}] Inline payload exceeds the "
+            f"{MAX_INLINE_BASE64_BYTES // (1024 * 1024)} MB limit "
+            f"({len(file_data) // (1024 * 1024)} MB). "
+            "Upload via 'fileUrl' instead."
+        )
 
     if expected_sha256 is not None:
         normalized_sha256 = expected_sha256.strip().lower()
@@ -563,6 +585,24 @@ def _decode_base64_upload(
     if required_members is not None:
         try:
             with zipfile.ZipFile(io.BytesIO(file_data)) as archive:
+                members = archive.infolist()
+                if len(members) > MAX_ZIP_MEMBER_COUNT:
+                    raise ValueError(
+                        f"[{tool_name}] Inline {mime_type} archive contains "
+                        f"{len(members)} members (limit {MAX_ZIP_MEMBER_COUNT})."
+                    )
+                total_uncompressed = sum(m.file_size for m in members)
+                if total_uncompressed > MAX_ZIP_UNCOMPRESSED_BYTES:
+                    raise ValueError(
+                        f"[{tool_name}] Inline {mime_type} archive uncompressed size "
+                        f"({total_uncompressed // (1024 * 1024)} MB) exceeds the "
+                        f"{MAX_ZIP_UNCOMPRESSED_BYTES // (1024 * 1024)} MB limit."
+                    )
+                if len(file_data) > 0 and total_uncompressed // max(len(file_data), 1) > MAX_ZIP_COMPRESSION_RATIO:
+                    raise ValueError(
+                        f"[{tool_name}] Inline {mime_type} archive compression ratio "
+                        f"exceeds {MAX_ZIP_COMPRESSION_RATIO}x."
+                    )
                 names = set(archive.namelist())
                 missing = required_members - names
                 if missing:

@@ -245,7 +245,196 @@ async def test_create_drive_file_rejects_empty_file_url():
 
 
 # ---------------------------------------------------------------------------
-# get_drive_file_permissions — owners
+# create_drive_file - inline base64 resource-limit enforcement
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_drive_file_rejects_oversized_base64_before_decode():
+    """Base64 input exceeding the inline-upload limit is rejected before decoding."""
+    from gdrive.drive_helpers import MAX_INLINE_BASE64_BYTES
+
+    oversized_b64 = "A" * (MAX_INLINE_BASE64_BYTES * 2)
+    mock_service = Mock()
+
+    with pytest.raises(ValueError, match="limit"):
+        await _unwrap(create_drive_file)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_name="huge.bin",
+            base64_content=oversized_b64,
+            content_mime_type="application/octet-stream",
+        )
+
+    mock_service.files.return_value.create.return_value.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.resolve_folder_id", new_callable=AsyncMock)
+@patch(
+    "gdrive.drive_helpers.MAX_ZIP_MEMBER_COUNT",
+    5,
+)
+async def test_create_drive_file_rejects_zip_excessive_member_count(mock_resolve_folder):
+    """ZIP archives with too many members are rejected before testzip()."""
+    mock_resolve_folder.return_value = "folder123"
+    mock_service = Mock()
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as archive:
+        archive.writestr("[Content_Types].xml", "<Types/>")
+        archive.writestr("xl/workbook.xml", "<workbook/>")
+        for i in range(6):
+            archive.writestr(f"xl/extra_{i}.xml", "x")
+
+    with pytest.raises(ValueError, match="members"):
+        await _unwrap(create_drive_file)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_name="big.xlsx",
+            base64_content=base64.b64encode(buf.getvalue()).decode("ascii"),
+            content_mime_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+        )
+
+    mock_service.files.return_value.create.return_value.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.resolve_folder_id", new_callable=AsyncMock)
+@patch(
+    "gdrive.drive_helpers.MAX_ZIP_UNCOMPRESSED_BYTES",
+    1024,
+)
+async def test_create_drive_file_rejects_zip_excessive_uncompressed_size(
+    mock_resolve_folder,
+):
+    """ZIP archives whose total uncompressed size exceeds the limit are rejected."""
+    mock_resolve_folder.return_value = "folder123"
+    mock_service = Mock()
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as archive:
+        archive.writestr("[Content_Types].xml", "<Types/>")
+        archive.writestr("xl/workbook.xml", "<workbook/>")
+        archive.writestr("xl/bigsheet.xml", "x" * 2048)
+
+    with pytest.raises(ValueError, match="uncompressed size"):
+        await _unwrap(create_drive_file)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_name="huge.xlsx",
+            base64_content=base64.b64encode(buf.getvalue()).decode("ascii"),
+            content_mime_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+        )
+
+    mock_service.files.return_value.create.return_value.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.resolve_folder_id", new_callable=AsyncMock)
+@patch(
+    "gdrive.drive_helpers.MAX_ZIP_COMPRESSION_RATIO",
+    2,
+)
+async def test_create_drive_file_rejects_zip_bomb_compression_ratio(
+    mock_resolve_folder,
+):
+    """ZIP archives with suspiciously high compression ratios are rejected."""
+    mock_resolve_folder.return_value = "folder123"
+    mock_service = Mock()
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", "<Types/>")
+        archive.writestr("xl/workbook.xml", "<workbook/>")
+        archive.writestr("xl/pad.xml", "A" * 50_000)
+
+    with pytest.raises(ValueError, match="compression ratio"):
+        await _unwrap(create_drive_file)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_name="bomb.xlsx",
+            base64_content=base64.b64encode(buf.getvalue()).decode("ascii"),
+            content_mime_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+        )
+
+    mock_service.files.return_value.create.return_value.execute.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# create_drive_file - MIME type case normalization
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_drive_file_rejects_mixed_case_google_apps_mime():
+    """Mixed-case Google Apps MIME types are caught by normalization."""
+    mock_service = Mock()
+
+    with pytest.raises(ValueError, match="import_to_google"):
+        await _unwrap(create_drive_file)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_name="Budget",
+            base64_content=base64.b64encode(_xlsx_bytes()).decode("ascii"),
+            content_mime_type="Application/VND.Google-Apps.Spreadsheet",
+        )
+
+    mock_service.files.return_value.create.return_value.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.resolve_folder_id", new_callable=AsyncMock)
+async def test_create_drive_file_normalizes_mixed_case_xlsx_mime_for_zip_validation(
+    mock_resolve_folder,
+):
+    """Mixed-case XLSX MIME types receive the same ZIP validation as lowercase."""
+    mock_resolve_folder.return_value = "folder123"
+    mock_service = Mock()
+
+    with pytest.raises(ValueError, match="valid, intact archive"):
+        await _unwrap(create_drive_file)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_name="broken.xlsx",
+            base64_content=base64.b64encode(b"PK-not-an-xlsx").decode("ascii"),
+            content_mime_type=(
+                "Application/VND.Openxmlformats-Officedocument.Spreadsheetml.Sheet"
+            ),
+        )
+
+    mock_service.files.return_value.create.return_value.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.resolve_folder_id", new_callable=AsyncMock)
+async def test_create_drive_file_normalizes_mixed_case_odt_mime_for_zip_validation(
+    mock_resolve_folder,
+):
+    """Mixed-case OpenDocument MIME types receive ZIP validation."""
+    mock_resolve_folder.return_value = "folder123"
+    mock_service = Mock()
+
+    with pytest.raises(ValueError, match="valid, intact archive"):
+        await _unwrap(create_drive_file)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_name="broken.odt",
+            base64_content=base64.b64encode(b"PK-not-an-odt").decode("ascii"),
+            content_mime_type="Application/VND.Oasis.Opendocument.Text",
+        )
+
+    mock_service.files.return_value.create.return_value.execute.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# get_drive_file_permissions - owners
 # ---------------------------------------------------------------------------
 
 
