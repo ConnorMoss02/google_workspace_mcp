@@ -146,6 +146,16 @@ ORDINARY_MEETING = {
     "status": "confirmed",
 }
 
+CANCELLED_RECURRING_EXCEPTION = {
+    "id": "evt123_20260420T090000Z",
+    "status": "cancelled",
+    "recurringEventId": "evt123",
+    "originalStartTime": {
+        "dateTime": "2026-04-20T11:00:00+02:00",
+        "timeZone": "Europe/Paris",
+    },
+}
+
 
 @pytest.mark.asyncio
 @both_branches
@@ -246,6 +256,37 @@ async def test_detailed_recurring_master_emits_lossless_recurrence(detail):
         'Recurrence: ["RRULE:FREQ=WEEKLY;INTERVAL=4;BYDAY=MO", '
         '"EXDATE:20260504T090000Z"]' in result
     )
+
+
+@pytest.mark.asyncio
+@both_branches
+async def test_cancelled_recurring_exception_uses_original_start_time(detail):
+    """Sparse Google tombstones render as exclusions instead of crashing."""
+    result = await detail(CANCELLED_RECURRING_EXCEPTION)
+
+    assert "Starts: 2026-04-20T11:00:00+02:00" in result
+    assert "Ends: Unavailable" in result
+    assert (
+        'Original Start Time: {"dateTime": "2026-04-20T11:00:00+02:00", '
+        '"timeZone": "Europe/Paris"}' in result
+    )
+    assert "Recurring Event ID: evt123" in result
+    assert "Status: cancelled" in result
+
+
+@pytest.mark.asyncio
+async def test_all_day_cancelled_exception_uses_original_date():
+    """All-day exclusions use originalStartTime.date as their start boundary."""
+    result = await _ranged_detail(
+        {
+            **CANCELLED_RECURRING_EXCEPTION,
+            "originalStartTime": {"date": "2026-04-20"},
+        }
+    )
+
+    assert "Starts: 2026-04-20" in result
+    assert "Ends: Unavailable" in result
+    assert 'Original Start Time: {"date": "2026-04-20"}' in result
 
 
 @pytest.mark.asyncio
