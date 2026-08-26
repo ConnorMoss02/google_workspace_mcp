@@ -239,6 +239,7 @@ async def test_basic_ranged_output_is_unchanged():
 @pytest.mark.asyncio
 @both_branches
 async def test_detailed_recurring_master_emits_lossless_recurrence(detail):
+    """Detailed output preserves every recurrence line from a series master."""
     result = await detail(RECURRING_SERIES)
 
     assert (
@@ -249,6 +250,7 @@ async def test_detailed_recurring_master_emits_lossless_recurrence(detail):
 
 @pytest.mark.asyncio
 async def test_get_events_can_return_unexpanded_recurring_masters():
+    """Unexpanded requests reach Google without start-time ordering."""
     service = _mock_service([RECURRING_SERIES])
 
     await _unwrap(get_events)(
@@ -266,7 +268,30 @@ async def test_get_events_can_return_unexpanded_recurring_masters():
 
 
 @pytest.mark.asyncio
+async def test_unexpanded_query_without_time_min_keeps_older_masters_discoverable():
+    """Do not filter masters by their first occurrence when no range was requested."""
+    older_series = {
+        **RECURRING_SERIES,
+        "start": {"dateTime": "2020-01-06T09:00:00Z"},
+        "end": {"dateTime": "2020-01-06T09:15:00Z"},
+        "recurrence": ["RRULE:FREQ=WEEKLY;BYDAY=MO"],
+    }
+    service = _mock_service([older_series])
+
+    await _unwrap(get_events)(
+        service=service,
+        user_google_email="user@example.com",
+        detailed=True,
+        single_events=False,
+    )
+
+    params = service.events().list.call_args.kwargs
+    assert "timeMin" not in params
+
+
+@pytest.mark.asyncio
 async def test_get_events_expands_recurring_series_by_default():
+    """The default request remains expanded and chronologically ordered."""
     service = _mock_service([RECURRING_INSTANCE])
 
     await _unwrap(get_events)(
