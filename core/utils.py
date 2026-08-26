@@ -301,7 +301,17 @@ def extract_office_xml_text(file_bytes: bytes, mime_type: str) -> Optional[str]:
                 mime_type
                 == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             ):
+                # Body first, then headers/footers/footnotes/endnotes. Text that
+                # lives only in a header — confidentiality banners, running
+                # titles, document numbers — is otherwise invisible to callers.
                 targets = ["word/document.xml"]
+                targets += sorted(
+                    n
+                    for n in zf.namelist()
+                    if re.fullmatch(
+                        r"word/(header\d*|footer\d*|footnotes|endnotes)\.xml", n
+                    )
+                )
             elif (
                 mime_type
                 == "application/vnd.openxmlformats-officedocument.presentationml.presentation"
@@ -384,22 +394,55 @@ def extract_office_xml_text(file_bytes: bytes, mime_type: str) -> Optional[str]:
                             else:  # Direct value (number, boolean, inline string if not 's')
                                 member_texts.append(value_element.text)
                     else:  # Word or PowerPoint
-                        for elem in xml_root.iter():
-                            # For Word: <w:t> where w is "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-                            # For PowerPoint: <a:t> where a is "http://schemas.openxmlformats.org/drawingml/2006/main"
-                            if (
-                                elem.tag.endswith("}t") and elem.text
-                            ):  # Check for any namespaced tag ending with 't'
-                                cleaned_text = elem.text.strip()
-                                if (
-                                    cleaned_text
-                                ):  # Add only if there's non-whitespace text
-                                    member_texts.append(cleaned_text)
+                        # Group runs by their containing paragraph (w:p / a:p) and
+                        # join the runs of one paragraph with NO separator.
+                        #
+                        # Word splits a single word across runs routinely — spell
+                        # check state, formatting, tracked changes. Stripping each
+                        # run and joining with " " turns "ProjectX2024" into
+                        # "ProjectX 2024", so a search for the identifier finds
+                        # nothing. That is a false negative indistinguishable from
+                        # the term genuinely being absent.
+                        #
+                        # Runs are not stripped individually either: under
+                        # xml:space="preserve" the leading/trailing spaces of a run
+                        # are the real spacing between words.
+                        paragraphs = []
+                        for para in xml_root.iter():
+                            if not para.tag.endswith("}p"):
+                                continue
+                            runs = [
+                                t.text
+                                for t in para.iter()
+                                if t.tag.endswith("}t") and t.text
+                            ]
+                            if runs:
+                                line = "".join(runs).strip()
+                                if line:
+                                    paragraphs.append(line)
+                        if paragraphs:
+                            member_texts.extend(paragraphs)
+                        else:
+                            # Fall back to the flat scan for text carried outside
+                            # any paragraph element (some shapes and tables).
+                            for elem in xml_root.iter():
+                                if elem.tag.endswith("}t") and elem.text:
+                                    cleaned_text = elem.text.strip()
+                                    if cleaned_text:
+                                        member_texts.append(cleaned_text)
 
                     if member_texts:
-                        pieces.append(
-                            " ".join(member_texts)
-                        )  # Join texts from one member with spaces
+                        # Word/PowerPoint entries are one paragraph each, so join
+                        # them with newlines: paragraph boundaries carry meaning,
+                        # and collapsing them runs headings into body text.
+                        # Spreadsheet entries stay space-joined as before.
+                        sep = (
+                            " "
+                            if mime_type
+                            == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            else "\n"
+                        )
+                        pieces.append(sep.join(member_texts))
 
                 except ET.ParseError as e:
                     logger.warning(
