@@ -8,11 +8,13 @@ and `file_type` filtering behaviors.
 
 import asyncio
 import base64
+import hashlib
 import pytest
 from unittest.mock import Mock, AsyncMock, patch
 import io
 import sys
 import os
+import zipfile
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
@@ -43,6 +45,15 @@ def _unwrap(tool):
     while hasattr(fn, "__wrapped__"):
         fn = fn.__wrapped__
     return fn
+
+
+def _xlsx_bytes() -> bytes:
+    """Return a minimal structurally valid XLSX ZIP for upload tests."""
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", "<Types/>")
+        archive.writestr("xl/workbook.xml", "<workbook/>")
+    return output.getvalue()
 
 
 # ---------------------------------------------------------------------------
@@ -81,8 +92,69 @@ async def test_create_drive_file_uploads_base64_content(mock_resolve_folder):
     assert create_kwargs["supportsAllDrives"] is True
     media = create_kwargs["media_body"]
     assert media.mimetype() == "application/pdf"
+    assert media.resumable() is False
     assert media.getbytes(0, len(payload)) == payload
     assert "Successfully created file 'report.pdf'" in result
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.resolve_folder_id", new_callable=AsyncMock)
+async def test_create_drive_file_validates_inline_xlsx_before_upload(
+    mock_resolve_folder,
+):
+    """Corrupt ZIP-based Office files fail before Drive creates an unusable item."""
+    mock_resolve_folder.return_value = "folder123"
+    mock_service = Mock()
+
+    with pytest.raises(ValueError, match="valid, intact archive"):
+        await _unwrap(create_drive_file)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_name="broken.xlsx",
+            base64_content=base64.b64encode(b"PK-not-an-xlsx").decode("ascii"),
+            content_mime_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+        )
+
+    mock_resolve_folder.assert_not_called()
+    mock_service.files.return_value.create.return_value.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_drive_file_rejects_google_native_inline_mime_type():
+    """Inline bytes need a source MIME type, not a Google-native target MIME type."""
+    mock_service = Mock()
+
+    with pytest.raises(ValueError, match="import_to_google_sheets"):
+        await _unwrap(create_drive_file)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_name="Budget",
+            base64_content=base64.b64encode(_xlsx_bytes()).decode("ascii"),
+            content_mime_type="application/vnd.google-apps.spreadsheet",
+        )
+
+    mock_service.files.return_value.create.return_value.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_drive_file_rejects_changed_inline_payload_by_sha256():
+    """An optional digest catches syntactically valid base64 that changed in transit."""
+    mock_service = Mock()
+    payload = b"original binary payload"
+
+    with pytest.raises(ValueError, match="SHA-256 integrity check"):
+        await _unwrap(create_drive_file)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_name="report.pdf",
+            base64_content=base64.b64encode(b"changed binary payload").decode("ascii"),
+            content_mime_type="application/pdf",
+            base64_sha256=hashlib.sha256(payload).hexdigest(),
+        )
+
+    mock_service.files.return_value.create.return_value.execute.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -1823,6 +1895,62 @@ async def test_import_to_google_sheets_converts_csv_content(mock_resolve_folder)
     assert media.mimetype() == "text/csv"
     assert "Successfully imported" in result
     assert "Spreadsheet ID" in result
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.resolve_folder_id", new_callable=AsyncMock)
+async def test_import_to_google_sheets_accepts_validated_inline_xlsx(
+    mock_resolve_folder,
+):
+    """The purpose-built import tool accepts binary XLSX content without a detour."""
+    payload = _xlsx_bytes()
+    mock_resolve_folder.return_value = "resolved_root"
+    mock_service = Mock()
+    mock_service.files().create().execute.return_value = {
+        "id": "sheet123",
+        "name": "Budget",
+        "webViewLink": "https://docs.google.com/spreadsheets/d/sheet123",
+        "mimeType": "application/vnd.google-apps.spreadsheet",
+    }
+
+    result = await _unwrap(import_to_google_sheets)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        file_name="Budget.xlsx",
+        source_format="xlsx",
+        folder_id="root",
+        base64_content=base64.b64encode(payload).decode("ascii"),
+        base64_sha256=hashlib.sha256(payload).hexdigest(),
+    )
+
+    create_kwargs = mock_service.files.return_value.create.call_args.kwargs
+    assert create_kwargs["body"]["mimeType"] == (
+        "application/vnd.google-apps.spreadsheet"
+    )
+    media = create_kwargs["media_body"]
+    assert media.mimetype() == (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert media.resumable() is False
+    assert media.getbytes(0, len(payload)) == payload
+    assert "Successfully imported" in result
+
+
+@pytest.mark.asyncio
+async def test_import_to_google_sheets_rejects_corrupt_inline_xlsx():
+    """Malformed XLSX content never reaches Drive's slow asynchronous importer."""
+    mock_service = Mock()
+
+    with pytest.raises(ValueError, match="valid, intact archive"):
+        await _unwrap(import_to_google_sheets)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_name="Budget.xlsx",
+            source_format="xlsx",
+            base64_content=base64.b64encode(b"not an xlsx archive").decode("ascii"),
+        )
+
+    mock_service.files.return_value.create.return_value.execute.assert_not_called()
 
 
 @pytest.mark.asyncio

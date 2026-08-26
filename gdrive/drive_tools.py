@@ -5,10 +5,9 @@ This module provides MCP tools for interacting with Google Drive API.
 """
 
 import asyncio
+import base64
 import logging
 import io
-import base64
-import binascii
 
 from typing import Optional, List, Dict, Any
 from tempfile import NamedTemporaryFile, SpooledTemporaryFile
@@ -48,8 +47,10 @@ from gdrive.drive_helpers import (
     GOOGLE_SLIDES_MIME_TYPE,
     SHORTCUT_MIME_TYPE,
     UPLOAD_CHUNK_SIZE_BYTES,
+    _decode_base64_upload,
     _resolve_import_media,
     _stream_url_with_validation,
+    _use_resumable_upload,
     build_drive_list_params,
     check_public_link_permission,
     list_all_permissions,
@@ -984,10 +985,13 @@ async def create_drive_file(
     fileUrl: Optional[str] = None,  # Now explicitly Optional
     base64_content: Optional[str] = None,
     content_mime_type: Optional[str] = None,
+    base64_sha256: Optional[str] = None,
 ) -> str:
     """
     Creates a new file in Google Drive, supporting creation within shared drives.
     Accepts direct text content, inline base64 bytes, or a fileUrl to fetch content from.
+    This stores the supplied bytes without converting them to Google Docs, Sheets, or
+    Slides. Use the matching import_to_google_* tool for Google-native conversion.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
@@ -998,6 +1002,7 @@ async def create_drive_file(
         fileUrl (Optional[str]): If provided, fetches the file content from this URL. Supports file://, http://, and https:// protocols.
         base64_content (Optional[str]): Standard base64-encoded file bytes.
         content_mime_type (Optional[str]): MIME type for base64_content uploads.
+        base64_sha256 (Optional[str]): Expected SHA-256 of decoded base64_content. Recommended for binary payload integrity checks.
 
     Returns:
         str: Confirmation message of the successful file creation with file link.
@@ -1024,13 +1029,27 @@ async def create_drive_file(
         raise ValueError("'content_mime_type' can only be used with 'base64_content'.")
     if base64_content is not None and not content_mime_type:
         raise ValueError("'content_mime_type' is required when using 'base64_content'.")
+    if base64_sha256 is not None and base64_content is None:
+        raise ValueError("'base64_sha256' can only be used with 'base64_content'.")
+    if base64_content is not None and (
+        mime_type.startswith(GOOGLE_APPS_MIME_PREFIX)
+        or content_mime_type.startswith(GOOGLE_APPS_MIME_PREFIX)
+    ):
+        raise ValueError(
+            "Google-native files cannot be created from inline binary bytes with "
+            "create_drive_file. Use import_to_google_doc, import_to_google_sheets, "
+            "or import_to_google_slides so Drive receives separate source and target "
+            "MIME types."
+        )
 
     file_data = None
     if base64_content is not None:
-        try:
-            file_data = base64.b64decode(base64_content, validate=True)
-        except (binascii.Error, ValueError) as exc:
-            raise ValueError("'base64_content' must be valid standard base64.") from exc
+        file_data = _decode_base64_upload(
+            base64_content,
+            tool_name="create_drive_file",
+            mime_type=content_mime_type,
+            expected_sha256=base64_sha256,
+        )
 
     # Create folder (no content or media_body). Prefer create_drive_folder for new code.
     if mime_type == FOLDER_MIME_TYPE:
@@ -1051,7 +1070,7 @@ async def create_drive_file(
         media = MediaIoBaseUpload(
             io.BytesIO(file_data),
             mimetype=content_mime_type,
-            resumable=True,
+            resumable=_use_resumable_upload(len(file_data)),
             chunksize=UPLOAD_CHUNK_SIZE_BYTES,
         )
 
@@ -1277,6 +1296,8 @@ async def _import_with_conversion(
     file_url: Optional[str],
     source_format: Optional[str],
     folder_id: str,
+    base64_content: Optional[str],
+    base64_sha256: Optional[str],
 ) -> str:
     """
     Shared implementation for the import_to_google_* tools.
@@ -1306,6 +1327,8 @@ async def _import_with_conversion(
         file_path=file_path,
         file_url=file_url,
         source_format=source_format,
+        base64_content=base64_content,
+        base64_sha256=base64_sha256,
         format_map=format_map,
     )
 
@@ -1385,13 +1408,16 @@ async def import_to_google_doc(
     file_url: Optional[str] = None,
     source_format: Optional[str] = None,
     folder_id: str = "root",
+    base64_content: Optional[str] = None,
+    base64_sha256: Optional[str] = None,
 ) -> str:
     """
     Imports a file (Markdown, DOCX, TXT, HTML, RTF, ODT) into Google Docs format with automatic conversion.
 
     Google Drive automatically converts the source file to native Google Docs format,
     preserving formatting like headings, lists, bold, italic, etc.
-    For batch operations, prefer file_path for files on disk so callers do not need
+    Binary sources may be passed directly as base64_content. For batch operations,
+    prefer file_path for files on disk so callers do not need
     to load full file contents into their context.
 
     Args:
@@ -1403,6 +1429,8 @@ async def import_to_google_doc(
         source_format (Optional[str]): Source format hint ('md', 'markdown', 'docx', 'txt', 'html', 'rtf', 'odt').
                                        Auto-detected from file_name extension if not provided.
         folder_id (str): The ID of the parent folder. Defaults to 'root'.
+        base64_content (Optional[str]): Standard base64-encoded bytes for a binary source such as DOCX or ODT.
+        base64_sha256 (Optional[str]): Expected SHA-256 of decoded base64_content. Recommended for binary payload integrity checks.
 
     Returns:
         str: Confirmation message with the new Google Doc link.
@@ -1434,6 +1462,8 @@ async def import_to_google_doc(
         file_url=file_url,
         source_format=source_format,
         folder_id=folder_id,
+        base64_content=base64_content,
+        base64_sha256=base64_sha256,
     )
 
 
@@ -1456,13 +1486,16 @@ async def import_to_google_slides(
     file_url: Optional[str] = None,
     source_format: Optional[str] = None,
     folder_id: str = "root",
+    base64_content: Optional[str] = None,
+    base64_sha256: Optional[str] = None,
 ) -> str:
     """
     Imports a presentation (PPTX, PPT, ODP) into Google Slides format with automatic conversion.
 
     Google Drive automatically converts the source presentation to native Google Slides format,
     preserving slides, layouts, text, and images.
-    For batch operations, prefer file_path for files on disk so callers do not need
+    Binary sources may be passed directly as base64_content. For batch operations,
+    prefer file_path for files on disk so callers do not need
     to load full file contents into their context.
 
     Args:
@@ -1473,6 +1506,8 @@ async def import_to_google_slides(
         source_format (Optional[str]): Source format hint ('pptx', 'ppt', 'odp').
                                        Auto-detected from file_name extension if not provided.
         folder_id (str): The ID of the parent folder. Defaults to 'root'.
+        base64_content (Optional[str]): Standard base64-encoded bytes for a PPTX or ODP source.
+        base64_sha256 (Optional[str]): Expected SHA-256 of decoded base64_content. Recommended for binary payload integrity checks.
 
     Returns:
         str: Confirmation message with the new Google Slides link.
@@ -1498,6 +1533,8 @@ async def import_to_google_slides(
         file_url=file_url,
         source_format=source_format,
         folder_id=folder_id,
+        base64_content=base64_content,
+        base64_sha256=base64_sha256,
     )
 
 
@@ -1521,13 +1558,16 @@ async def import_to_google_sheets(
     file_url: Optional[str] = None,
     source_format: Optional[str] = None,
     folder_id: str = "root",
+    base64_content: Optional[str] = None,
+    base64_sha256: Optional[str] = None,
 ) -> str:
     """
     Imports a spreadsheet (XLSX, XLS, ODS, CSV, TSV) into Google Sheets format with automatic conversion.
 
     Google Drive automatically converts the source spreadsheet to native Google Sheets format,
     preserving rows, columns, sheets, and values.
-    For batch operations, prefer file_path for files on disk so callers do not need
+    Binary sources may be passed directly as base64_content. For batch operations,
+    prefer file_path for files on disk so callers do not need
     to load full file contents into their context.
 
     Args:
@@ -1539,6 +1579,8 @@ async def import_to_google_sheets(
         source_format (Optional[str]): Source format hint ('xlsx', 'xls', 'ods', 'csv', 'tsv').
                                        Auto-detected from file_name extension if not provided.
         folder_id (str): The ID of the parent folder. Defaults to 'root'.
+        base64_content (Optional[str]): Standard base64-encoded bytes for an XLSX, XLS, or ODS source.
+        base64_sha256 (Optional[str]): Expected SHA-256 of decoded base64_content. Recommended for binary payload integrity checks.
 
     Returns:
         str: Confirmation message with the new Google Sheets link.
@@ -1567,6 +1609,8 @@ async def import_to_google_sheets(
         file_url=file_url,
         source_format=source_format,
         folder_id=folder_id,
+        base64_content=base64_content,
+        base64_sha256=base64_sha256,
     )
 
 
