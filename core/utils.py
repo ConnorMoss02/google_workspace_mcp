@@ -407,29 +407,102 @@ def extract_office_xml_text(file_bytes: bytes, mime_type: str) -> Optional[str]:
                         # Runs are not stripped individually either: under
                         # xml:space="preserve" the leading/trailing spaces of a run
                         # are the real spacing between words.
-                        paragraphs = []
-                        for para in xml_root.iter():
-                            if not para.tag.endswith("}p"):
+                        # Every text node belongs to exactly one LINE, and every
+                        # line is assembled by the same rule: concatenate its runs
+                        # with no separator, strip once.
+                        #
+                        # Word splits a single token across runs routinely (spell
+                        # check state, formatting, tracked changes, hyperlinks), so
+                        # stripping each run and joining with " " turns
+                        # "ProjectX2024" into "Project X2024" and a search for the
+                        # identifier finds nothing.
+                        #
+                        # A line is normally a paragraph (w:p / a:p). Paragraphs
+                        # NEST — a text box inside a body paragraph carries its own
+                        # w:p — so a node is assigned to its CLOSEST paragraph
+                        # ancestor, never to every ancestor. Text with no paragraph
+                        # ancestor at all still forms a line, owned by its nearest
+                        # non-run container, so it is neither dropped nor split.
+                        # ElementTree has no parent links, hence the parent map.
+                        parents = {
+                            child: parent
+                            for parent in xml_root.iter()
+                            for child in parent
+                        }
+
+                        def _line_owner(node):
+                            """Closest paragraph ancestor, else nearest non-run container."""
+                            cur = parents.get(node)
+                            while cur is not None:
+                                if cur.tag.endswith("}p"):
+                                    return cur
+                                if not cur.tag.endswith("}r"):
+                                    parent = parents.get(cur)
+                                    while parent is not None:
+                                        if parent.tag.endswith("}p"):
+                                            return parent
+                                        parent = parents.get(parent)
+                                    return cur
+                                cur = parents.get(cur)
+                            return None
+
+                        # Markup-compatibility: Word writes a text box TWICE —
+                        # once under mc:Choice for modern readers and once under
+                        # mc:Fallback (VML) for old ones. Both carry the same
+                        # text, so scraping the subtree blindly emits it twice and
+                        # the duplicate is indistinguishable from a genuinely
+                        # repeated paragraph. Per the spec a consumer takes the
+                        # first Choice it understands, else the Fallback; we cannot
+                        # evaluate the Requires attribute, so take the first Choice
+                        # when there is one and ignore the rest of the alternatives.
+                        skip = set()
+                        for alt in xml_root.iter():
+                            if not alt.tag.endswith("}AlternateContent"):
                                 continue
-                            runs = [
-                                t.text
-                                for t in para.iter()
-                                if t.tag.endswith("}t") and t.text
-                            ]
-                            if runs:
-                                line = "".join(runs).strip()
-                                if line:
-                                    paragraphs.append(line)
-                        if paragraphs:
-                            member_texts.extend(paragraphs)
-                        else:
-                            # Fall back to the flat scan for text carried outside
-                            # any paragraph element (some shapes and tables).
-                            for elem in xml_root.iter():
-                                if elem.tag.endswith("}t") and elem.text:
-                                    cleaned_text = elem.text.strip()
-                                    if cleaned_text:
-                                        member_texts.append(cleaned_text)
+                            children = list(alt)
+                            choices = [c for c in children if c.tag.endswith("}Choice")]
+                            ignored = (
+                                choices[1:]
+                                + [c for c in children if c.tag.endswith("}Fallback")]
+                                if choices
+                                else []
+                            )
+                            for branch in ignored:
+                                for node in branch.iter():
+                                    skip.add(id(node))
+
+                        lines = {}
+                        order = []
+                        for node in xml_root.iter():
+                            if id(node) in skip:
+                                continue
+                            tag = node.tag
+                            piece = None
+                            if tag.endswith("}t") and node.text:
+                                piece = node.text
+                            elif (
+                                tag.endswith("}tab")
+                                or tag.endswith("}br")
+                                or tag.endswith("}cr")
+                            ):
+                                # Only inside a run: w:tab under w:pPr/w:tabs is a tab
+                                # STOP definition, not a tab character.
+                                parent = parents.get(node)
+                                if parent is not None and parent.tag.endswith("}r"):
+                                    piece = "\t" if tag.endswith("}tab") else "\n"
+                            if piece is None:
+                                continue
+                            owner = _line_owner(node)
+                            key = id(owner) if owner is not None else id(node)
+                            if key not in lines:
+                                lines[key] = []
+                                order.append(key)  # first appearance = document order
+                            lines[key].append(piece)
+
+                        for key in order:
+                            line = "".join(lines[key]).strip()
+                            if line:
+                                member_texts.append(line)
 
                     if member_texts:
                         # Word/PowerPoint entries are one paragraph each, so join

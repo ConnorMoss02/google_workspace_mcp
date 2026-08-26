@@ -10,9 +10,15 @@ import zipfile
 
 from core.utils import extract_office_xml_text
 
-W_NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+W_NS = (
+    'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+    'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" '
+    'xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" '
+    'xmlns:v="urn:schemas-microsoft-com:vml"'
+)
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 
 
 def _docx(body: str, **members: str) -> bytes:
@@ -57,8 +63,41 @@ class TestRunsWithinAParagraph:
         assert extract_office_xml_text(_docx(body), DOCX_MIME) == "hello world"
 
     def test_leading_and_trailing_whitespace_of_a_paragraph_is_trimmed(self):
-        body = '<w:p><w:r><w:t xml:space="preserve">  padded  </w:t></w:r></w:p>'
-        assert extract_office_xml_text(_docx(body), DOCX_MIME) == "padded"
+        """Padded paragraph in the MIDDLE. A lone one is stripped by the final
+        whole-output strip, so the per-paragraph property would go untested."""
+        body = (
+            _p("First.")
+            + '<w:p><w:r><w:t xml:space="preserve">  padded  </w:t></w:r></w:p>'
+            + _p("Last.")
+        )
+        assert (
+            extract_office_xml_text(_docx(body), DOCX_MIME) == "First.\npadded\nLast."
+        )
+
+    def test_whitespace_only_paragraph_produces_no_blank_line(self):
+        body = (
+            _p("First.")
+            + '<w:p><w:r><w:t xml:space="preserve">   </w:t></w:r></w:p>'
+            + _p("Second.")
+        )
+        assert extract_office_xml_text(_docx(body), DOCX_MIME) == "First.\nSecond."
+
+    def test_runs_nested_in_a_hyperlink_still_join(self):
+        """w:hyperlink puts runs a level deeper; the ancestor walk must reach it."""
+        body = (
+            '<w:p><w:r><w:t xml:space="preserve">see </w:t></w:r>'
+            "<w:hyperlink><w:r><w:t>here</w:t></w:r></w:hyperlink>"
+            '<w:r><w:t xml:space="preserve"> now</w:t></w:r></w:p>'
+        )
+        assert extract_office_xml_text(_docx(body), DOCX_MIME) == "see here now"
+
+    def test_tracked_insertion_does_not_split_a_token(self):
+        """The flagship regression, reappearing through w:ins nesting."""
+        body = (
+            "<w:p><w:r><w:t>Project</w:t></w:r>"
+            "<w:ins><w:r><w:t>X2024</w:t></w:r></w:ins></w:p>"
+        )
+        assert extract_office_xml_text(_docx(body), DOCX_MIME) == "ProjectX2024"
 
 
 class TestParagraphBoundaries:
@@ -75,8 +114,7 @@ class TestHeadersFootersAndNotes:
     def test_header_text_is_included(self):
         blob = _docx(_p("body text"), header1=_hdr(_p("CONFIDENTIAL")))
         out = extract_office_xml_text(blob, DOCX_MIME)
-        assert "body text" in out
-        assert "CONFIDENTIAL" in out
+        assert out == "body text\n\nCONFIDENTIAL"
 
     def test_body_comes_before_header_text(self):
         blob = _docx(_p("body text"), header1=_hdr(_p("CONFIDENTIAL")))
@@ -104,12 +142,134 @@ class TestHeadersFootersAndNotes:
         assert "NOT DOCUMENT TEXT" not in extract_office_xml_text(blob, DOCX_MIME)
 
 
-class TestFallbackAndOtherFormats:
-    def test_text_outside_any_paragraph_is_still_found(self):
-        """Some shapes and tables carry w:t outside a w:p; do not lose them."""
-        blob = _docx("<w:tbl><w:r><w:t>orphan cell</w:t></w:r></w:tbl>")
-        assert "orphan cell" in extract_office_xml_text(blob, DOCX_MIME)
+class TestNestedParagraphs:
+    def test_text_box_inside_a_paragraph_is_not_emitted_twice(self):
+        """Paragraphs nest: a text box inside a w:p carries its own w:p.
 
+        Collecting with para.iter() attributes the inner text to BOTH the inner
+        and the outer paragraph, so it appears twice.
+        """
+        body = (
+            "<w:p><w:r><w:t>outer</w:t></w:r>"
+            "<w:txbxContent><w:p><w:r><w:t>INNER</w:t></w:r></w:p></w:txbxContent>"
+            "</w:p>"
+        )
+        out = extract_office_xml_text(_docx(body), DOCX_MIME)
+        assert out.count("INNER") == 1, out
+
+    def test_outer_and_inner_paragraph_text_are_both_present(self):
+        body = (
+            "<w:p><w:r><w:t>outer</w:t></w:r>"
+            "<w:txbxContent><w:p><w:r><w:t>INNER</w:t></w:r></w:p></w:txbxContent>"
+            "</w:p>"
+        )
+        out = extract_office_xml_text(_docx(body), DOCX_MIME)
+        assert "outer" in out
+        assert "INNER" in out
+
+
+class TestMarkupCompatibility:
+    """Word writes a text box TWICE: mc:Choice for modern readers, mc:Fallback
+    (VML) for old ones. Both carry the same text."""
+
+    _CHOICE = (
+        '<mc:Choice Requires="wps"><w:drawing><wps:txbx><w:txbxContent>'
+        "<w:p><w:r><w:t>BOXED</w:t></w:r></w:p>"
+        "</w:txbxContent></wps:txbx></w:drawing></mc:Choice>"
+    )
+    _FALLBACK = (
+        "<mc:Fallback><w:pict><v:textbox><w:txbxContent>"
+        "<w:p><w:r><w:t>BOXED</w:t></w:r></w:p>"
+        "</w:txbxContent></v:textbox></w:pict></mc:Fallback>"
+    )
+
+    def test_text_box_content_is_not_emitted_once_per_alternative(self):
+        body = (
+            "<w:p><w:r><w:t>before</w:t></w:r><w:r><mc:AlternateContent>"
+            + self._CHOICE
+            + self._FALLBACK
+            + "</mc:AlternateContent></w:r>"
+            "<w:r><w:t>after</w:t></w:r></w:p>"
+        )
+        out = extract_office_xml_text(_docx(body), DOCX_MIME)
+        assert out.count("BOXED") == 1, out
+
+    def test_fallback_only_content_is_still_extracted(self):
+        """No Choice to prefer, so the Fallback must NOT be skipped."""
+        body = (
+            "<w:p><w:r><mc:AlternateContent>"
+            + self._FALLBACK
+            + "</mc:AlternateContent></w:r></w:p>"
+        )
+        out = extract_office_xml_text(_docx(body), DOCX_MIME)
+        assert "BOXED" in out
+
+
+class TestTables:
+    def test_real_table_cells_are_separate_lines(self):
+        """A real table is w:tbl > w:tr > w:tc > w:p, i.e. the PARAGRAPH path."""
+        body = (
+            "<w:tbl><w:tr>"
+            "<w:tc><w:p><w:r><w:t>cell A</w:t></w:r></w:p></w:tc>"
+            "<w:tc><w:p><w:r><w:t>cell B</w:t></w:r></w:p></w:tc>"
+            "</w:tr></w:tbl>"
+        )
+        assert extract_office_xml_text(_docx(body), DOCX_MIME) == "cell A\ncell B"
+
+
+class TestTextOutsideAnyParagraph:
+    """Defensive path: text with no w:p ancestor, neither dropped nor mangled."""
+
+    def test_orphan_runs_join_like_a_paragraph(self):
+        blob = _docx(
+            _p("body text")
+            + "<w:tbl><w:r><w:t>Project</w:t></w:r><w:r><w:t>X2024</w:t></w:r></w:tbl>"
+        )
+        assert extract_office_xml_text(blob, DOCX_MIME) == "body text\nProjectX2024"
+
+    def test_orphan_text_keeps_its_document_position(self):
+        blob = _docx(
+            "<w:tbl><w:r><w:t>ORPHAN FIRST</w:t></w:r></w:tbl>" + _p("body text")
+        )
+        assert extract_office_xml_text(blob, DOCX_MIME) == "ORPHAN FIRST\nbody text"
+
+
+class TestTabsAndBreaks:
+    def test_tab_between_runs_is_a_tab_not_a_fused_token(self):
+        body = (
+            "<w:p><w:r><w:t>A</w:t></w:r><w:r><w:tab/></w:r>"
+            "<w:r><w:t>B</w:t></w:r></w:p>"
+        )
+        assert extract_office_xml_text(_docx(body), DOCX_MIME) == "A\tB"
+
+    def test_break_inside_a_run_becomes_a_newline(self):
+        body = "<w:p><w:r><w:t>A</w:t><w:br/><w:t>B</w:t></w:r></w:p>"
+        assert extract_office_xml_text(_docx(body), DOCX_MIME) == "A\nB"
+
+    def test_tab_stop_definitions_are_not_tab_characters(self):
+        """w:tab under w:pPr/w:tabs defines a stop; it is not content."""
+        body = (
+            "<w:p><w:pPr><w:tabs><w:tab w:val='left' w:pos='720'/></w:tabs></w:pPr>"
+            "<w:r><w:t>AB</w:t></w:r></w:p>"
+        )
+        assert extract_office_xml_text(_docx(body), DOCX_MIME) == "AB"
+
+
+class TestPowerPoint:
+    def test_slide_runs_join_without_a_space(self):
+        buf = io.BytesIO()
+        a_ns = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr(
+                "ppt/slides/slide1.xml",
+                f'<?xml version="1.0"?><root {a_ns}>'
+                "<a:p><a:r><a:t>Slide</a:t></a:r><a:r><a:t>Title1</a:t></a:r></a:p>"
+                "</root>",
+            )
+        assert extract_office_xml_text(buf.getvalue(), PPTX_MIME) == "SlideTitle1"
+
+
+class TestFallbackAndOtherFormats:
     def test_corrupt_zip_returns_none(self):
         assert extract_office_xml_text(b"definitely not a zip", DOCX_MIME) is None
 
@@ -126,5 +286,7 @@ class TestFallbackAndOtherFormats:
                 "</row></sheetData></worksheet>",
             )
         out = extract_office_xml_text(buf.getvalue(), XLSX_MIME)
-        assert out is not None
-        assert "alpha" in out and "beta" in out
+        # Exact, not containment: containment would also pass if spreadsheet
+        # values became newline-joined or concatenated, which is the very thing
+        # this test exists to prevent.
+        assert out == "alpha beta"
