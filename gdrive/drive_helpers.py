@@ -600,7 +600,11 @@ def _decode_base64_upload(
                         f"({total_uncompressed // (1024 * 1024)} MB) exceeds the "
                         f"{MAX_ZIP_UNCOMPRESSED_BYTES // (1024 * 1024)} MB limit."
                     )
-                if len(file_data) > 0 and total_uncompressed // max(len(file_data), 1) > MAX_ZIP_COMPRESSION_RATIO:
+                if (
+                    len(file_data) > 0
+                    and total_uncompressed // max(len(file_data), 1)
+                    > MAX_ZIP_COMPRESSION_RATIO
+                ):
                     raise ValueError(
                         f"[{tool_name}] Inline {mime_type} archive compression ratio "
                         f"exceeds {MAX_ZIP_COMPRESSION_RATIO}x."

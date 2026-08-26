@@ -275,7 +275,9 @@ async def test_create_drive_file_rejects_oversized_base64_before_decode():
     "gdrive.drive_helpers.MAX_ZIP_MEMBER_COUNT",
     5,
 )
-async def test_create_drive_file_rejects_zip_excessive_member_count(mock_resolve_folder):
+async def test_create_drive_file_rejects_zip_excessive_member_count(
+    mock_resolve_folder,
+):
     """ZIP archives with too many members are rejected before testzip()."""
     mock_resolve_folder.return_value = "folder123"
     mock_service = Mock()
