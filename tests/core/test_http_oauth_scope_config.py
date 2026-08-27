@@ -262,8 +262,8 @@ def test_token_expiry_env_defaults_leave_fastmcp_behaviour_unchanged(monkeypatch
 
     server_module.configure_server_for_http()
 
-    assert captured["token_expiry_threshold_seconds"] == 0
-    assert captured["fastmcp_access_token_expiry_seconds"] is None
+    assert "token_expiry_threshold_seconds" not in captured
+    assert "fastmcp_access_token_expiry_seconds" not in captured
 
 
 def test_token_expiry_env_is_forwarded_to_the_provider(monkeypatch):
@@ -285,5 +285,50 @@ def test_token_expiry_env_ignores_unusable_values(monkeypatch, value):
 
     server_module.configure_server_for_http()
 
+    assert "token_expiry_threshold_seconds" not in captured
+    assert "fastmcp_access_token_expiry_seconds" not in captured
+
+
+def test_zero_is_valid_only_for_token_expiry_threshold(monkeypatch):
+    monkeypatch.setenv(server_module._OAUTH_TOKEN_EXPIRY_THRESHOLD_ENV, "0")
+    monkeypatch.setenv(server_module._OAUTH_ACCESS_TOKEN_EXPIRY_ENV, "0")
+    captured = _capture_provider_kwargs(monkeypatch)
+
+    server_module.configure_server_for_http()
+
     assert captured["token_expiry_threshold_seconds"] == 0
-    assert captured["fastmcp_access_token_expiry_seconds"] is None
+    assert "fastmcp_access_token_expiry_seconds" not in captured
+
+
+def test_token_expiry_env_rejects_values_above_safe_limits(monkeypatch):
+    monkeypatch.setenv(
+        server_module._OAUTH_TOKEN_EXPIRY_THRESHOLD_ENV,
+        str(server_module._MAX_OAUTH_TOKEN_EXPIRY_THRESHOLD_SECONDS + 1),
+    )
+    monkeypatch.setenv(
+        server_module._OAUTH_ACCESS_TOKEN_EXPIRY_ENV,
+        str(server_module._MAX_OAUTH_ACCESS_TOKEN_EXPIRY_SECONDS + 1),
+    )
+    captured = _capture_provider_kwargs(monkeypatch)
+
+    server_module.configure_server_for_http()
+
+    assert "token_expiry_threshold_seconds" not in captured
+    assert "fastmcp_access_token_expiry_seconds" not in captured
+
+
+def test_token_expiry_env_accepts_safe_limit_boundaries(monkeypatch):
+    monkeypatch.setenv(
+        server_module._OAUTH_TOKEN_EXPIRY_THRESHOLD_ENV,
+        str(server_module._MAX_OAUTH_TOKEN_EXPIRY_THRESHOLD_SECONDS),
+    )
+    monkeypatch.setenv(
+        server_module._OAUTH_ACCESS_TOKEN_EXPIRY_ENV,
+        str(server_module._MAX_OAUTH_ACCESS_TOKEN_EXPIRY_SECONDS),
+    )
+    captured = _capture_provider_kwargs(monkeypatch)
+
+    server_module.configure_server_for_http()
+
+    assert captured["token_expiry_threshold_seconds"] == 300
+    assert captured["fastmcp_access_token_expiry_seconds"] == 2_592_000
