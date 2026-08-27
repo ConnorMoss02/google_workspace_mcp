@@ -13,6 +13,7 @@ from core.warning_filters import install_startup_warning_filters
 install_startup_warning_filters()
 
 from auth.auth_info_middleware import AuthInfoMiddleware
+from core.camel_case_middleware import CamelCaseArgumentsMiddleware
 from auth.google_auth import handle_auth_callback, start_auth_flow, check_client_secrets
 from auth.gateway_identity import get_verified_gateway_principal
 from auth.mcp_session_middleware import MCPSessionMiddleware
@@ -364,6 +365,11 @@ server = SecureFastMCP(
 # Add the AuthInfo middleware to inject authentication into FastMCP context
 auth_info_middleware = AuthInfoMiddleware()
 server.add_middleware(auth_info_middleware)
+
+# Accept camelCase argument names (calendarId, timeMin, ...) from callers that
+# mirror the Google API field names, mapping them onto the snake_case tool
+# parameters. See https://github.com/taylorwilsdon/google_workspace_mcp/issues/918
+server.add_middleware(CamelCaseArgumentsMiddleware())
 
 
 def _parse_allowed_redirect_uris(value: Optional[str]) -> Optional[List[str]]:
