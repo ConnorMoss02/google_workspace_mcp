@@ -7,8 +7,8 @@ This module provides MCP tools for interacting with the Gmail API.
 import logging
 import asyncio
 import base64
-import json
 import binascii
+import json
 import re
 import mimetypes
 import html
@@ -3525,11 +3525,13 @@ async def list_gmail_labels(
         )
 
     if not labels:
-        return (
-            "No labels found."
-            if prefix is None
-            else f"No labels found with prefix {prefix!r}."
-        )
+        parts = ["No"]
+        parts.append("user" if not include_system else "")
+        parts.append("labels found")
+        if prefix is not None:
+            parts.append(f"with prefix {prefix!r}")
+        msg = " ".join(p for p in parts if p) + "."
+        return msg
 
     lines = [f"Found {len(labels)} labels:", ""]
 
