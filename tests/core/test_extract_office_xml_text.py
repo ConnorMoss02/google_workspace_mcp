@@ -234,7 +234,7 @@ class TestHeadersFootersAndNotes:
             zf.writestr(
                 "word/document.xml",
                 f'<?xml version="1.0"?><w:document {W_NS}><w:body>'
-                f'{_p("body")}'
+                f"{_p('body')}"
                 '<w:sectPr><w:headerReference r:id="rExt" w:type="default"/>'
                 "</w:sectPr></w:body></w:document>",
             )
