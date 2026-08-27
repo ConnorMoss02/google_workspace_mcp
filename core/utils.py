@@ -3,8 +3,10 @@ import io
 import json
 import logging
 import os
+import posixpath
 import re
 import tempfile
+import urllib.parse
 import zipfile
 import ssl
 import asyncio
@@ -25,6 +27,42 @@ from auth.oauth_config import is_oauth21_enabled, is_external_oauth21_provider
 logger = logging.getLogger(__name__)
 
 GOOGLE_API_WRITE_RETRIES = 3
+
+_WORDPROCESSINGML_NAMESPACES = {
+    "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+    "http://purl.oclc.org/ooxml/wordprocessingml/main",
+}
+_DRAWINGML_NAMESPACES = {
+    "http://schemas.openxmlformats.org/drawingml/2006/main",
+    "http://purl.oclc.org/ooxml/drawingml/main",
+}
+_MARKUP_COMPATIBILITY_NAMESPACE = (
+    "http://schemas.openxmlformats.org/markup-compatibility/2006"
+)
+_PACKAGE_RELATIONSHIPS_NAMESPACE = (
+    "http://schemas.openxmlformats.org/package/2006/relationships"
+)
+_OFFICE_RELATIONSHIP_BASES = {
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+    "https://schemas.openxmlformats.org/officeDocument/2006/relationships",
+    "http://purl.oclc.org/ooxml/officeDocument/relationships",
+}
+_WORD_TEXT_RELATIONSHIP_KINDS = {"header", "footer", "footnotes", "endnotes"}
+_WORD_TEXT_RELATIONSHIP_TYPES = {
+    f"{base}/{kind}": kind
+    for base in _OFFICE_RELATIONSHIP_BASES
+    for kind in _WORD_TEXT_RELATIONSHIP_KINDS
+}
+_SUPPORTED_TEXT_CHOICE_NAMESPACES = {
+    *_WORDPROCESSINGML_NAMESPACES,
+    *_DRAWINGML_NAMESPACES,
+    "http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas",
+    "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup",
+    "http://schemas.microsoft.com/office/word/2010/wordprocessingShape",
+    "http://schemas.microsoft.com/office/word/2010/wordml",
+    "http://schemas.microsoft.com/office/word/2012/wordml",
+    "http://schemas.microsoft.com/office/drawing/2010/main",
+}
 
 
 class TransientNetworkError(Exception):
@@ -284,6 +322,204 @@ def check_credentials_directory_permissions(credentials_dir: str = None) -> None
     )
 
 
+def _xml_name(tag: str) -> tuple[Optional[str], str]:
+    """Return an ElementTree tag's namespace URI and local name."""
+    if tag.startswith("{") and "}" in tag:
+        namespace, local_name = tag[1:].split("}", 1)
+        return namespace, local_name
+    return None, tag
+
+
+def _parse_xml_with_choice_namespaces(
+    xml_content: bytes,
+) -> tuple[Any, dict[Any, dict[str, str]]]:
+    """Parse XML and retain the in-scope prefix map for each mc:Choice."""
+    namespaces: dict[str, str] = {}
+    namespace_stack: list[tuple[str, Any]] = []
+    choice_namespaces: dict[Any, dict[str, str]] = {}
+    missing = object()
+    xml_root = None
+
+    for event, value in ET.iterparse(
+        io.BytesIO(xml_content), events=("start-ns", "start", "end-ns")
+    ):
+        if event == "start-ns":
+            prefix, uri = value
+            prefix = prefix or ""
+            namespace_stack.append((prefix, namespaces.get(prefix, missing)))
+            namespaces[prefix] = uri
+        elif event == "end-ns":
+            prefix, previous = namespace_stack.pop()
+            if previous is missing:
+                namespaces.pop(prefix, None)
+            else:
+                namespaces[prefix] = previous
+        else:
+            element = value
+            if xml_root is None:
+                xml_root = element
+            if element.tag == f"{{{_MARKUP_COMPATIBILITY_NAMESPACE}}}Choice":
+                choice_namespaces[element] = namespaces.copy()
+
+    if xml_root is None:
+        raise ET.ParseError("XML member has no root element")
+    return xml_root, choice_namespaces
+
+
+def _resolve_internal_part_target(source_part: str, target: str) -> Optional[str]:
+    """Resolve an OPC internal relationship target to a ZIP member name."""
+    parsed = urllib.parse.urlsplit(target)
+    if parsed.scheme or parsed.netloc or not parsed.path:
+        return None
+
+    target_path = urllib.parse.unquote(parsed.path)
+    if "\\" in target_path:
+        return None
+    if target_path.startswith("/"):
+        resolved = posixpath.normpath(target_path.lstrip("/"))
+    else:
+        resolved = posixpath.normpath(
+            posixpath.join(posixpath.dirname(source_part), target_path)
+        )
+    if resolved in {"", ".", ".."} or resolved.startswith("../"):
+        return None
+    return resolved
+
+
+def _relationship_id(element: Any) -> Optional[str]:
+    """Return an r:id attribute from either Transitional or Strict OOXML."""
+    for attribute, value in element.attrib.items():
+        namespace, local_name = _xml_name(attribute)
+        if namespace in _OFFICE_RELATIONSHIP_BASES and local_name == "id":
+            return value
+    return None
+
+
+def _word_related_text_targets(zf: zipfile.ZipFile, document_root: Any) -> list[str]:
+    """Return active Word text parts using OPC relationships, not filenames."""
+    try:
+        relationships_root = ET.fromstring(zf.read("word/_rels/document.xml.rels"))
+    except KeyError:
+        return []
+
+    relationships: list[tuple[str, str, str]] = []
+    relationships_by_id: dict[str, tuple[str, str]] = {}
+    for relationship in relationships_root.iter():
+        if _xml_name(relationship.tag) != (
+            _PACKAGE_RELATIONSHIPS_NAMESPACE,
+            "Relationship",
+        ):
+            continue
+        if relationship.get("TargetMode", "Internal").lower() != "internal":
+            continue
+        relationship_id = relationship.get("Id")
+        kind = _WORD_TEXT_RELATIONSHIP_TYPES.get(relationship.get("Type", ""))
+        target = relationship.get("Target")
+        if not relationship_id or not kind or not target:
+            continue
+        resolved = _resolve_internal_part_target("word/document.xml", target)
+        if resolved is None:
+            logger.warning(
+                "Ignoring invalid internal Word relationship target %r", target
+            )
+            continue
+        relationships.append((relationship_id, kind, resolved))
+        relationships_by_id[relationship_id] = (kind, resolved)
+
+    active_header_footer_ids: dict[str, list[str]] = {"header": [], "footer": []}
+    for element in document_root.iter():
+        namespace, local_name = _xml_name(element.tag)
+        if namespace not in _WORDPROCESSINGML_NAMESPACES or local_name not in {
+            "headerReference",
+            "footerReference",
+        }:
+            continue
+        kind = "header" if local_name == "headerReference" else "footer"
+        relationship_id = _relationship_id(element)
+        if relationship_id and relationship_id not in active_header_footer_ids[kind]:
+            active_header_footer_ids[kind].append(relationship_id)
+
+    targets: list[str] = []
+    seen: set[str] = set()
+
+    def add_target(target: str) -> None:
+        if target not in seen:
+            seen.add(target)
+            targets.append(target)
+
+    for kind in ("header", "footer"):
+        for relationship_id in active_header_footer_ids[kind]:
+            relationship = relationships_by_id.get(relationship_id)
+            if relationship is not None and relationship[0] == kind:
+                add_target(relationship[1])
+
+    for wanted_kind in ("footnotes", "endnotes"):
+        for _, kind, target in relationships:
+            if kind == wanted_kind:
+                add_target(target)
+
+    return targets
+
+
+def _branch_has_extractable_text(branch: Any) -> bool:
+    """Whether an AlternateContent branch has text or an explicit separator."""
+    parents = {child: parent for parent in branch.iter() for child in parent}
+    for element in branch.iter():
+        namespace, local_name = _xml_name(element.tag)
+        if local_name == "t" and element.text:
+            return True
+        if namespace in _WORDPROCESSINGML_NAMESPACES and local_name in {
+            "tab",
+            "br",
+            "cr",
+        }:
+            parent = parents.get(element)
+            if parent is not None and _xml_name(parent.tag)[1] == "r":
+                return True
+        if namespace in _DRAWINGML_NAMESPACES and local_name == "br":
+            parent = parents.get(element)
+            if parent is not None and _xml_name(parent.tag)[1] == "p":
+                return True
+    return False
+
+
+def _alternate_content_skip_set(
+    xml_root: Any, choice_namespaces: dict[Any, dict[str, str]]
+) -> set[int]:
+    """Return node IDs belonging to unselected mc:AlternateContent branches."""
+    alternate_tag = f"{{{_MARKUP_COMPATIBILITY_NAMESPACE}}}AlternateContent"
+    choice_tag = f"{{{_MARKUP_COMPATIBILITY_NAMESPACE}}}Choice"
+    fallback_tag = f"{{{_MARKUP_COMPATIBILITY_NAMESPACE}}}Fallback"
+    skip: set[int] = set()
+
+    for alternate in xml_root.iter(alternate_tag):
+        children = list(alternate)
+        choices = [child for child in children if child.tag == choice_tag]
+        fallback = next(
+            (child for child in children if child.tag == fallback_tag), None
+        )
+        selected = None
+        for choice in choices:
+            prefixes = choice.get("Requires", "").split()
+            namespaces = choice_namespaces.get(choice, {})
+            if prefixes and all(
+                namespaces.get(prefix) in _SUPPORTED_TEXT_CHOICE_NAMESPACES
+                for prefix in prefixes
+            ):
+                if _branch_has_extractable_text(choice):
+                    selected = choice
+                    break
+        if selected is None and fallback is not None:
+            selected = fallback
+
+        for branch in choices + ([fallback] if fallback is not None else []):
+            if branch is selected:
+                continue
+            skip.update(id(node) for node in branch.iter())
+
+    return skip
+
+
 def extract_office_xml_text(file_bytes: bytes, mime_type: str) -> Optional[str]:
     """
     Very light-weight XML scraper for Word, Excel, PowerPoint files.
@@ -296,22 +532,28 @@ def extract_office_xml_text(file_bytes: bytes, mime_type: str) -> Optional[str]:
     try:
         with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
             targets: List[str] = []
+            parsed_members: dict[str, tuple[Any, dict[Any, dict[str, str]]]] = {}
             # Map MIME → iterable of XML files to inspect
             if (
                 mime_type
                 == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             ):
-                # Body first, then headers/footers/footnotes/endnotes. Text that
-                # lives only in a header — confidentiality banners, running
-                # titles, document numbers — is otherwise invisible to callers.
                 targets = ["word/document.xml"]
-                targets += sorted(
-                    n
-                    for n in zf.namelist()
-                    if re.fullmatch(
-                        r"word/(header\d*|footer\d*|footnotes|endnotes)\.xml", n
+                try:
+                    document_content = zf.read("word/document.xml")
+                except KeyError:
+                    # The normal member-processing path below owns reporting a
+                    # missing main part.
+                    pass
+                else:
+                    document_root, choice_namespaces = (
+                        _parse_xml_with_choice_namespaces(document_content)
                     )
-                )
+                    parsed_members["word/document.xml"] = (
+                        document_root,
+                        choice_namespaces,
+                    )
+                    targets.extend(_word_related_text_targets(zf, document_root))
             elif (
                 mime_type
                 == "application/vnd.openxmlformats-officedocument.presentationml.presentation"
@@ -358,8 +600,20 @@ def extract_office_xml_text(file_bytes: bytes, mime_type: str) -> Optional[str]:
             pieces: List[str] = []
             for member in targets:
                 try:
-                    xml_content = zf.read(member)
-                    xml_root = ET.fromstring(xml_content)
+                    if member in parsed_members:
+                        xml_root, choice_namespaces = parsed_members[member]
+                    else:
+                        xml_content = zf.read(member)
+                        if (
+                            mime_type
+                            == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        ):
+                            xml_root = ET.fromstring(xml_content)
+                            choice_namespaces = {}
+                        else:
+                            xml_root, choice_namespaces = (
+                                _parse_xml_with_choice_namespaces(xml_content)
+                            )
                     member_texts: List[str] = []
 
                     if (
@@ -394,36 +648,14 @@ def extract_office_xml_text(file_bytes: bytes, mime_type: str) -> Optional[str]:
                             else:  # Direct value (number, boolean, inline string if not 's')
                                 member_texts.append(value_element.text)
                     else:  # Word or PowerPoint
-                        # Group runs by their containing paragraph (w:p / a:p) and
-                        # join the runs of one paragraph with NO separator.
+                        # Runs belonging to one paragraph concatenate without an
+                        # invented separator. Word routinely splits a token across
+                        # runs for formatting, spell-check state, and tracked
+                        # changes; real spacing is carried by the text itself.
                         #
-                        # Word splits a single word across runs routinely — spell
-                        # check state, formatting, tracked changes. Stripping each
-                        # run and joining with " " turns "ProjectX2024" into
-                        # "ProjectX 2024", so a search for the identifier finds
-                        # nothing. That is a false negative indistinguishable from
-                        # the term genuinely being absent.
-                        #
-                        # Runs are not stripped individually either: under
-                        # xml:space="preserve" the leading/trailing spaces of a run
-                        # are the real spacing between words.
-                        # Every text node belongs to exactly one LINE, and every
-                        # line is assembled by the same rule: concatenate its runs
-                        # with no separator, strip once.
-                        #
-                        # Word splits a single token across runs routinely (spell
-                        # check state, formatting, tracked changes, hyperlinks), so
-                        # stripping each run and joining with " " turns
-                        # "ProjectX2024" into "Project X2024" and a search for the
-                        # identifier finds nothing.
-                        #
-                        # A line is normally a paragraph (w:p / a:p). Paragraphs
-                        # NEST — a text box inside a body paragraph carries its own
-                        # w:p — so a node is assigned to its CLOSEST paragraph
-                        # ancestor, never to every ancestor. Text with no paragraph
-                        # ancestor at all still forms a line, owned by its nearest
-                        # non-run container, so it is neither dropped nor split.
-                        # ElementTree has no parent links, hence the parent map.
+                        # Nested text-box paragraphs interrupt their outer
+                        # paragraph. Flushing when the closest owner changes keeps
+                        # XML order without attributing the nested text twice.
                         parents = {
                             child: parent
                             for parent in xml_root.iter()
@@ -433,76 +665,71 @@ def extract_office_xml_text(file_bytes: bytes, mime_type: str) -> Optional[str]:
                         def _line_owner(node):
                             """Closest paragraph ancestor, else nearest non-run container."""
                             cur = parents.get(node)
+                            nearest_non_run = None
                             while cur is not None:
-                                if cur.tag.endswith("}p"):
+                                _, local_name = _xml_name(cur.tag)
+                                if local_name == "p":
                                     return cur
-                                if not cur.tag.endswith("}r"):
-                                    parent = parents.get(cur)
-                                    while parent is not None:
-                                        if parent.tag.endswith("}p"):
-                                            return parent
-                                        parent = parents.get(parent)
-                                    return cur
+                                if nearest_non_run is None and local_name != "r":
+                                    nearest_non_run = cur
                                 cur = parents.get(cur)
-                            return None
+                            return nearest_non_run
 
-                        # Markup-compatibility: Word writes a text box TWICE —
-                        # once under mc:Choice for modern readers and once under
-                        # mc:Fallback (VML) for old ones. Both carry the same
-                        # text, so scraping the subtree blindly emits it twice and
-                        # the duplicate is indistinguishable from a genuinely
-                        # repeated paragraph. Per the spec a consumer takes the
-                        # first Choice it understands, else the Fallback; we cannot
-                        # evaluate the Requires attribute, so take the first Choice
-                        # when there is one and ignore the rest of the alternatives.
-                        skip = set()
-                        for alt in xml_root.iter():
-                            if not alt.tag.endswith("}AlternateContent"):
-                                continue
-                            children = list(alt)
-                            choices = [c for c in children if c.tag.endswith("}Choice")]
-                            ignored = (
-                                choices[1:]
-                                + [c for c in children if c.tag.endswith("}Fallback")]
-                                if choices
-                                else []
-                            )
-                            for branch in ignored:
-                                for node in branch.iter():
-                                    skip.add(id(node))
+                        skip = _alternate_content_skip_set(xml_root, choice_namespaces)
+                        current_owner = None
+                        current_parts: list[str] = []
 
-                        lines = {}
-                        order = []
+                        def flush_line() -> None:
+                            if not current_parts:
+                                return
+                            # Text-space padding is normalized at paragraph
+                            # boundaries, but explicit tabs/breaks remain content.
+                            line = "".join(current_parts).strip(" ")
+                            if line:
+                                member_texts.append(line)
+
                         for node in xml_root.iter():
                             if id(node) in skip:
                                 continue
-                            tag = node.tag
+                            namespace, local_name = _xml_name(node.tag)
                             piece = None
-                            if tag.endswith("}t") and node.text:
+                            if local_name == "t" and node.text:
                                 piece = node.text
-                            elif (
-                                tag.endswith("}tab")
-                                or tag.endswith("}br")
-                                or tag.endswith("}cr")
+                            elif namespace in _WORDPROCESSINGML_NAMESPACES and (
+                                local_name in {"tab", "br", "cr"}
                             ):
-                                # Only inside a run: w:tab under w:pPr/w:tabs is a tab
-                                # STOP definition, not a tab character.
+                                # A Word tab/break is content only directly under
+                                # w:r; w:tab under w:pPr/w:tabs is a tab stop.
                                 parent = parents.get(node)
-                                if parent is not None and parent.tag.endswith("}r"):
-                                    piece = "\t" if tag.endswith("}tab") else "\n"
+                                if (
+                                    parent is not None
+                                    and _xml_name(parent.tag)[1] == "r"
+                                ):
+                                    piece = "\t" if local_name == "tab" else "\n"
+                            elif (
+                                namespace in _DRAWINGML_NAMESPACES
+                                and local_name == "br"
+                            ):
+                                # DrawingML a:br is a direct a:p child between
+                                # runs, unlike Word's w:br-under-w:r structure.
+                                parent = parents.get(node)
+                                if (
+                                    parent is not None
+                                    and _xml_name(parent.tag)[1] == "p"
+                                ):
+                                    piece = "\n"
                             if piece is None:
                                 continue
                             owner = _line_owner(node)
-                            key = id(owner) if owner is not None else id(node)
-                            if key not in lines:
-                                lines[key] = []
-                                order.append(key)  # first appearance = document order
-                            lines[key].append(piece)
+                            if owner is None:
+                                owner = node
+                            if current_owner is not None and owner is not current_owner:
+                                flush_line()
+                                current_parts = []
+                            current_owner = owner
+                            current_parts.append(piece)
 
-                        for key in order:
-                            line = "".join(lines[key]).strip()
-                            if line:
-                                member_texts.append(line)
+                        flush_line()
 
                     if member_texts:
                         # Word/PowerPoint entries are one paragraph each, so join
@@ -532,7 +759,7 @@ def extract_office_xml_text(file_bytes: bytes, mime_type: str) -> Optional[str]:
                 return None
 
             # Join content from different members (sheets/slides) with double newlines for separation
-            text = "\n\n".join(pieces).strip()
+            text = "\n\n".join(pieces).strip(" ")
             return text or None  # Ensure None is returned if text is empty after strip
 
     except zipfile.BadZipFile:
