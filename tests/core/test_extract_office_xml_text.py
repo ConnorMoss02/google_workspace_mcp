@@ -212,6 +212,45 @@ class TestHeadersFootersAndNotes:
         )
         assert extract_office_xml_text(blob, DOCX_MIME) == "body"
 
+    def test_traversal_target_is_rejected(self):
+        blob = _docx(
+            _p("body"),
+            relationships=[("rTraversal", "header", "../../etc/passwd")],
+            references=[("header", "rTraversal")],
+        )
+        assert extract_office_xml_text(blob, DOCX_MIME) == "body"
+
+    def test_absolute_url_target_is_rejected(self):
+        blob = _docx(
+            _p("body"),
+            relationships=[("rUrl", "header", "https://evil.example/header1.xml")],
+            references=[("header", "rUrl")],
+        )
+        assert extract_office_xml_text(blob, DOCX_MIME) == "body"
+
+    def test_external_target_mode_is_rejected(self):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr(
+                "word/document.xml",
+                f'<?xml version="1.0"?><w:document {W_NS}><w:body>'
+                f'{_p("body")}'
+                '<w:sectPr><w:headerReference r:id="rExt" w:type="default"/>'
+                "</w:sectPr></w:body></w:document>",
+            )
+            zf.writestr(
+                "word/header1.xml",
+                _hdr(_p("EXTERNAL HEADER")),
+            )
+            zf.writestr(
+                "word/_rels/document.xml.rels",
+                f'<?xml version="1.0"?><Relationships xmlns="{REL_NS}">'
+                f'<Relationship Id="rExt" Type="{REL_BASE}/header" '
+                f'Target="header1.xml" TargetMode="External"/>'
+                "</Relationships>",
+            )
+        assert extract_office_xml_text(buf.getvalue(), DOCX_MIME) == "body"
+
 
 class TestNestedParagraphs:
     def test_text_box_inside_a_paragraph_is_not_emitted_twice(self):
@@ -322,6 +361,18 @@ class TestMarkupCompatibility:
             "</mc:Fallback></mc:AlternateContent></w:r></w:p>"
         )
         assert extract_office_xml_text(_docx(body), DOCX_MIME) == "FALLBACK TEXT"
+
+    def test_choice_only_unsupported_retains_text(self):
+        """Choice-only AlternateContent with unsupported Requires must not
+        discard all text; the Choice is the only branch available."""
+        body = (
+            "<w:p><w:r><mc:AlternateContent>"
+            '<mc:Choice Requires="future"><future:shape>'
+            "<w:p><w:r><w:t>ONLY BRANCH</w:t></w:r></w:p>"
+            "</future:shape></mc:Choice>"
+            "</mc:AlternateContent></w:r></w:p>"
+        )
+        assert "ONLY BRANCH" in extract_office_xml_text(_docx(body), DOCX_MIME)
 
 
 class TestTables:

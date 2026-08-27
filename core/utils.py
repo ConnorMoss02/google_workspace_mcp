@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Annotated, Any, List, Optional
 
 from pydantic import BeforeValidator
-from defusedxml import ElementTree as ET
+from defusedxml import DefusedXmlException, ElementTree as ET
 
 from fastmcp.exceptions import ToolError
 from googleapiclient.errors import HttpError
@@ -57,6 +57,7 @@ _SUPPORTED_TEXT_CHOICE_NAMESPACES = {
     *_WORDPROCESSINGML_NAMESPACES,
     *_DRAWINGML_NAMESPACES,
     "http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas",
+    "http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing",
     "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup",
     "http://schemas.microsoft.com/office/word/2010/wordprocessingShape",
     "http://schemas.microsoft.com/office/word/2010/wordml",
@@ -399,7 +400,7 @@ def _word_related_text_targets(zf: zipfile.ZipFile, document_root: Any) -> list[
     """Return active Word text parts using OPC relationships, not filenames."""
     try:
         relationships_root = ET.fromstring(zf.read("word/_rels/document.xml.rels"))
-    except KeyError:
+    except (KeyError, ET.ParseError, DefusedXmlException):
         return []
 
     relationships: list[tuple[str, str, str]] = []
@@ -499,6 +500,7 @@ def _alternate_content_skip_set(
             (child for child in children if child.tag == fallback_tag), None
         )
         selected = None
+        last_resort = None
         for choice in choices:
             prefixes = choice.get("Requires", "").split()
             namespaces = choice_namespaces.get(choice, {})
@@ -509,8 +511,12 @@ def _alternate_content_skip_set(
                 if _branch_has_extractable_text(choice):
                     selected = choice
                     break
+            elif last_resort is None and _branch_has_extractable_text(choice):
+                last_resort = choice
         if selected is None and fallback is not None:
             selected = fallback
+        if selected is None and last_resort is not None:
+            selected = last_resort
 
         for branch in choices + ([fallback] if fallback is not None else []):
             if branch is selected:
