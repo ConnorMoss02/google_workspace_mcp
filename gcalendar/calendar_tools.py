@@ -414,6 +414,7 @@ async def get_events(
     query: Optional[str] = None,
     detailed: bool = False,
     include_attachments: bool = False,
+    single_events: bool = True,
 ) -> str:
     """
     Retrieves events from a specified Google Calendar. Can retrieve a single event by ID or multiple events within a time range.
@@ -423,18 +424,19 @@ async def get_events(
         user_google_email (str): The user's Google email address. Required.
         calendar_id (str): The ID of the calendar to query. Use 'primary' for the user's primary calendar. Defaults to 'primary'. Calendar IDs can be obtained using `list_calendars`.
         event_id (Optional[str]): The ID of a specific event to retrieve. If provided, retrieves only this event and ignores time filtering parameters.
-        time_min (Optional[str]): The start of the time range (inclusive) in RFC3339 format (e.g., '2024-05-12T10:00:00Z' or '2024-05-12'). If omitted, defaults to the current time. Ignored if event_id is provided.
+        time_min (Optional[str]): The start of the time range (inclusive) in RFC3339 format (e.g., '2024-05-12T10:00:00Z' or '2024-05-12'). If omitted, defaults to the current time when single_events=True. It is omitted from unexpanded queries so recurring masters that began in the past but still have future occurrences remain discoverable. Ignored if event_id is provided.
         time_max (Optional[str]): The end of the time range (exclusive) in RFC3339 format. If omitted, events starting from `time_min` onwards are considered (up to `max_results`). Ignored if event_id is provided.
         max_results (int): The maximum number of events to return. Defaults to 25. Ignored if event_id is provided.
         query (Optional[str]): A keyword to search for within event fields (summary, description, location). Ignored if event_id is provided.
-        detailed (bool): Whether to return detailed event information including description, location, colour (colorId), attendees, and attendee details (response status, organizer, optional flags). Recurring instances also report the parent series ID needed to edit the whole series, and events that are not ordinary confirmed meetings report their event type (outOfOffice, workingLocation, focusTime) and status. Defaults to False.
+        detailed (bool): Whether to return detailed event information including description, location, colour (colorId), attendees, and attendee details (response status, organizer, optional flags). Recurring instances also report the parent series ID needed to edit the whole series; recurring masters report their raw RFC5545 recurrence rules; and events that are not ordinary confirmed meetings report their event type (outOfOffice, workingLocation, focusTime) and status. Defaults to False.
         include_attachments (bool): Whether to include attachment information in detailed event output. When True, shows attachment details (fileId, fileUrl, mimeType, title) for events that have attachments. Only applies when detailed=True. Set this to True when you need to view or access files that have been attached to calendar events, such as meeting documents, presentations, or other shared files. Defaults to False.
+        single_events (bool): Whether to expand recurring series into individual instances. Defaults to True for backwards compatibility. Set to False with detailed=True to retrieve recurring master events and their exact RFC5545 recurrence rules instead of inferring cadence from expanded instances.
 
     Returns:
         str: A formatted list of events (summary, start and end times, link) within the specified range, or detailed information for a single event if event_id is provided.
     """
     logger.info(
-        f"[get_events] Raw parameters - event_id: '{event_id}', time_min: '{time_min}', time_max: '{time_max}', query_len={len(query) if query else 0}, detailed: {detailed}, include_attachments: {include_attachments}"
+        f"[get_events] Raw parameters - event_id: '{event_id}', time_min: '{time_min}', time_max: '{time_max}', query_len={len(query) if query else 0}, detailed: {detailed}, include_attachments: {include_attachments}, single_events: {single_events}"
     )
 
     # Handle single event retrieval
@@ -452,13 +454,20 @@ async def get_events(
         formatted_time_min = _correct_time_format_for_api(time_min, "time_min", None)
         if formatted_time_min:
             effective_time_min = formatted_time_min
-        else:
+        elif single_events:
             utc_now = datetime.datetime.now(datetime.timezone.utc)
             effective_time_min = utc_now.isoformat().replace("+00:00", "Z")
+        else:
+            effective_time_min = None
         if time_min is None:
-            logger.info(
-                f"time_min not provided, defaulting to current UTC time: {effective_time_min}"
-            )
+            if single_events:
+                logger.info(
+                    f"time_min not provided, defaulting to current UTC time: {effective_time_min}"
+                )
+            else:
+                logger.info(
+                    "time_min not provided for unexpanded events; omitting it so older recurring masters remain discoverable"
+                )
         else:
             logger.info(
                 f"time_min processing: original='{time_min}', formatted='{formatted_time_min}', effective='{effective_time_min}'"
@@ -477,12 +486,19 @@ async def get_events(
         # Build the request parameters dynamically
         request_params = {
             "calendarId": calendar_id,
-            "timeMin": effective_time_min,
             "timeMax": effective_time_max,
             "maxResults": max_results,
-            "singleEvents": True,
-            "orderBy": "startTime",
+            "singleEvents": single_events,
         }
+
+        if effective_time_min:
+            request_params["timeMin"] = effective_time_min
+
+        # The Calendar API only permits start-time ordering when recurring
+        # series are expanded. Unexpanded results retain the API's stable
+        # default ordering and expose the master event's recurrence array.
+        if single_events:
+            request_params["orderBy"] = "startTime"
 
         if query:
             request_params["q"] = query

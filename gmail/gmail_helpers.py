@@ -199,37 +199,49 @@ def _parse_date_header(
 
 
 def _parse_message_id_chain(header_value: Optional[str]) -> list[str]:
-    """Extract Message-IDs from a reply header value."""
+    """Extract RFC Message-IDs from a reply header value."""
     if not header_value:
         return []
 
     message_ids = re.findall(r"<[^>]+>", header_value)
-    if message_ids:
-        return message_ids
-
-    return header_value.split()
+    return message_ids or header_value.split()
 
 
 def _derive_reply_headers(
     thread_message_ids: list[str],
     in_reply_to: Optional[str],
     references: Optional[str],
+    target: Optional[Mapping[str, Any]] = None,
 ) -> tuple[Optional[str], Optional[str]]:
-    """Fill missing reply headers while preserving caller intent."""
+    """Fill reply headers, defaulting to the latest automatically eligible message.
+
+    Automatic targets are non-draft, non-trash messages with an RFC Message-ID.
+    """
     derived_in_reply_to = in_reply_to
     derived_references = references
 
-    if not thread_message_ids:
+    if not thread_message_ids and not target:
         return derived_in_reply_to, derived_references
 
+    target_message_id = target.get("message_id") if target else None
     if not derived_in_reply_to:
-        reference_chain = _parse_message_id_chain(derived_references)
-        derived_in_reply_to = (
-            reference_chain[-1] if reference_chain else thread_message_ids[-1]
-        )
+        # References describe ancestry; only In-Reply-To explicitly selects an
+        # older reply parent. Without one, rebuild both headers from the latest
+        # eligible message in the thread.
+        derived_in_reply_to = target_message_id or thread_message_ids[-1]
+        derived_references = None
 
     if not derived_references:
-        if derived_in_reply_to and derived_in_reply_to in thread_message_ids:
+        if target_message_id and derived_in_reply_to == target_message_id:
+            reference_chain = _parse_message_id_chain(target.get("references"))
+            if not reference_chain:
+                parent_ids = _parse_message_id_chain(target.get("in_reply_to"))
+                if len(parent_ids) == 1:
+                    reference_chain = parent_ids
+            if target_message_id not in reference_chain:
+                reference_chain.append(target_message_id)
+            derived_references = " ".join(reference_chain)
+        elif derived_in_reply_to and derived_in_reply_to in thread_message_ids:
             reply_index = thread_message_ids.index(derived_in_reply_to)
             derived_references = " ".join(thread_message_ids[: reply_index + 1])
         elif derived_in_reply_to:
