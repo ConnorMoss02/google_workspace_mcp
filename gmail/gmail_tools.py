@@ -8,12 +8,13 @@ import logging
 import asyncio
 import base64
 import binascii
+import json
 import re
 import mimetypes
 import html
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Annotated, Optional, List, Dict, Literal, Any
+from typing import Annotated, Optional, List, Dict, Literal, Any, Union
 from urllib.parse import unquote, urlparse, urlunsplit
 
 from email.message import EmailMessage
@@ -24,6 +25,7 @@ import httpx
 from mcp.types import ToolAnnotations
 
 from pydantic import Field
+from pydantic.json_schema import SkipJsonSchema
 
 from auth.oauth_config import is_stateless_mode
 from auth.service_decorator import require_google_service
@@ -81,6 +83,12 @@ GMAIL_SEARCH_HEADER_BATCH_SIZE = 10
 GMAIL_REQUEST_DELAY = 0.1
 GMAIL_RATE_LIMIT_BACKOFF = 2.0
 HTML_BODY_TRUNCATE_LIMIT = 20000
+
+# Keep ``None`` valid at runtime without publishing it as an ``anyOf`` branch.
+# Cowork needs a top-level array schema, while Moonshot rejects the previous
+# parent-level array override alongside a nullable ``anyOf``.
+_OptionalLabelIdList = Union[StringList, SkipJsonSchema[None]]
+
 LOW_VALUE_TEXT_PLACEHOLDERS = (
     "your client does not support html",
     "view this email in your browser",
@@ -833,7 +841,17 @@ async def _fetch_thread_reply_context(
     include_bodies: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """Fetch reply metadata for a thread, optionally including message bodies."""
-    header_names = ["Message-ID", "Subject", "From", "Reply-To", "To", "Cc", "Date"]
+    header_names = [
+        "Message-ID",
+        "In-Reply-To",
+        "References",
+        "Subject",
+        "From",
+        "Reply-To",
+        "To",
+        "Cc",
+        "Date",
+    ]
 
     try:
         request_kwargs = {
@@ -855,15 +873,15 @@ async def _fetch_thread_reply_context(
         return None
 
     message_contexts = []
+    eligible_contexts = []
     for msg in messages:
-        # Skip trashed messages so auto-derived In-Reply-To never points at a
-        # message that Gmail's UI cannot render
-        if "TRASH" in msg.get("labelIds", []):
-            continue
+        labels = msg.get("labelIds", [])
         payload = msg.get("payload", {})
         headers = _extract_headers(payload, header_names)
         context = {
             "message_id": headers.get("Message-ID"),
+            "in_reply_to": headers.get("In-Reply-To"),
+            "references": headers.get("References"),
             "subject": headers.get("Subject", ""),
             "from": headers.get("From", ""),
             "reply_to": headers.get("Reply-To", ""),
@@ -876,6 +894,11 @@ async def _fetch_thread_reply_context(
             context["text_body"] = bodies.get("text", "")
             context["html_body"] = bodies.get("html", "")
         message_contexts.append(context)
+        # Automatic selection only considers actual sent or received messages.
+        # Keep every context above so an explicit In-Reply-To can still resolve
+        # to the exact message the caller selected.
+        if context["message_id"] and "DRAFT" not in labels and "TRASH" not in labels:
+            eligible_contexts.append(context)
 
     target = None
     if in_reply_to:
@@ -883,19 +906,13 @@ async def _fetch_thread_reply_context(
             if msg.get("message_id") == in_reply_to:
                 target = msg
                 break
-    if target is None and message_contexts:
-        # message_contexts can be empty even though the thread itself has
-        # messages, if every message in it is trashed (see the TRASH skip
-        # above) -- message_contexts[-1] would then raise IndexError.
-        # Leaving target as None is safe: callers already treat a missing
-        # target as "no reply context available" and degrade gracefully
-        # (e.g. draft_gmail_message falls back to an unthreaded draft).
-        target = message_contexts[-1]
+    elif eligible_contexts:
+        target = eligible_contexts[-1]
 
     return {
-        "messages": message_contexts,
+        "messages": eligible_contexts,
         "message_ids": [
-            msg["message_id"] for msg in message_contexts if msg.get("message_id")
+            msg["message_id"] for msg in eligible_contexts if msg.get("message_id")
         ],
         "target": target,
     }
@@ -2320,19 +2337,19 @@ async def send_gmail_message(
     thread_id: Annotated[
         Optional[str],
         Field(
-            description="Optional Gmail thread ID to reply within.",
+            description="Optional Gmail thread ID to reply within. When in_reply_to is omitted, replies to the latest non-draft, non-trash message with an RFC Message-ID.",
         ),
     ] = None,
     in_reply_to: Annotated[
         Optional[str],
         Field(
-            description="Optional RFC Message-ID of the message being replied to (e.g., '<message123@gmail.com>').",
+            description="Optional RFC Message-ID to explicitly reply to a specific message (e.g., '<message123@gmail.com>'). Omit to reply to the latest eligible message in thread_id.",
         ),
     ] = None,
     references: Annotated[
         Optional[str],
         Field(
-            description="Optional chain of Message-IDs for proper threading.",
+            description="Optional Message-ID ancestry chain. Normally omit when thread_id is provided; the server derives the chain through the selected reply target.",
         ),
     ] = None,
     attachments: Annotated[
@@ -2393,9 +2410,13 @@ async def send_gmail_message(
             configured in Gmail settings (Settings > Accounts > Send mail as). If not provided,
             the email will be sent from the authenticated user's primary email address.
         user_google_email (str): The user's Google email address. Required for authentication.
-        thread_id (Optional[str]): Optional Gmail thread ID to reply within. When provided, sends a reply.
-        in_reply_to (Optional[str]): Optional RFC Message-ID of the message being replied to (e.g., '<message123@gmail.com>').
-        references (Optional[str]): Optional chain of RFC Message-IDs for proper threading (e.g., '<msg1@gmail.com> <msg2@gmail.com>').
+        thread_id (Optional[str]): Optional Gmail thread ID to reply within. When
+            in_reply_to is omitted, replies to the latest non-draft, non-trash message
+            with an RFC Message-ID.
+        in_reply_to (Optional[str]): Optional RFC Message-ID to explicitly reply to
+            a specific message. Omit to reply to the latest eligible message.
+        references (Optional[str]): Optional RFC Message-ID ancestry chain. Normally
+            omit when thread_id is provided; the chain is derived automatically.
         include_signature (bool): Whether to append Gmail signature HTML from send-as settings.
             When include_signature is true and Gmail signature retrieval fails for benign reasons
             (e.g., missing gmail.settings.basic scope), the send proceeds without a signature.
@@ -2472,9 +2493,7 @@ async def send_gmail_message(
             to="user@example.com",
             subject="Re: Meeting tomorrow",
             body="Thanks for the update!",
-            thread_id="thread_123",
-            in_reply_to="<message123@gmail.com>",
-            references="<original@gmail.com> <message123@gmail.com>"
+            thread_id="thread_123"
         )
 
         # Send a reply-all with the original quoted, deriving headers and
@@ -2566,14 +2585,15 @@ async def send_gmail_message(
             include_bodies=quote_original,
         )
 
+    target_reply = reply_context.get("target") if reply_context else None
     if thread_id and (not in_reply_to or not references):
         in_reply_to, references = _derive_reply_headers(
             reply_context.get("message_ids", []) if reply_context else [],
             in_reply_to,
             references,
+            target_reply,
         )
 
-    target_reply = reply_context.get("target") if reply_context else None
     if reply_all and target_reply:
         to, cc = _derive_reply_all_recipients(
             target_reply, {user_google_email, sender_email}, to, cc
@@ -2828,19 +2848,19 @@ async def draft_gmail_message(
     thread_id: Annotated[
         Optional[str],
         Field(
-            description="Optional Gmail thread ID to reply within.",
+            description="Optional Gmail thread ID to reply within. When in_reply_to is omitted, replies to the latest non-draft, non-trash message with an RFC Message-ID.",
         ),
     ] = None,
     in_reply_to: Annotated[
         Optional[str],
         Field(
-            description="Optional RFC Message-ID of the message being replied to (e.g., '<message123@gmail.com>').",
+            description="Optional RFC Message-ID to explicitly reply to a specific message (e.g., '<message123@gmail.com>'). Omit to reply to the latest eligible message in thread_id.",
         ),
     ] = None,
     references: Annotated[
         Optional[str],
         Field(
-            description="Optional chain of Message-IDs for proper threading.",
+            description="Optional Message-ID ancestry chain. Normally omit when thread_id is provided; the server derives the chain through the selected reply target.",
         ),
     ] = None,
     attachments: Annotated[
@@ -2880,9 +2900,13 @@ async def draft_gmail_message(
             the draft uses the account's default Send As address, then the primary or first
             usable Send-As entry, falling back to the authenticated user's email when Gmail
             returns no usable entry or settings access is not authorized.
-        thread_id (Optional[str]): Optional Gmail thread ID to reply within. When provided, creates a reply draft.
-        in_reply_to (Optional[str]): Optional RFC Message-ID of the message being replied to (e.g., '<message123@gmail.com>').
-        references (Optional[str]): Optional chain of RFC Message-IDs for proper threading (e.g., '<msg1@gmail.com> <msg2@gmail.com>').
+        thread_id (Optional[str]): Optional Gmail thread ID to reply within. When
+            in_reply_to is omitted, replies to the latest non-draft, non-trash message
+            with an RFC Message-ID.
+        in_reply_to (Optional[str]): Optional RFC Message-ID to explicitly reply to
+            a specific message. Omit to reply to the latest eligible message.
+        references (Optional[str]): Optional RFC Message-ID ancestry chain. Normally
+            omit when thread_id is provided; the chain is derived automatically.
         attachments (List[Dict[str, str]]): Optional list of attachments. Each dict can contain:
             Option 1 - File path (auto-encodes):
               - 'path' (required): File path to attach
@@ -2941,9 +2965,7 @@ async def draft_gmail_message(
             subject="Re: Meeting tomorrow",
             body="Thanks for the update!",
             to="user@example.com",
-            thread_id="thread_123",
-            in_reply_to="<message123@gmail.com>",
-            references="<original@gmail.com> <message123@gmail.com>"
+            thread_id="thread_123"
         )
 
         # Create a reply draft in HTML
@@ -2952,9 +2974,7 @@ async def draft_gmail_message(
             body="<strong>Thanks for the update!</strong>",
             body_format="html",
             to="user@example.com",
-            thread_id="thread_123",
-            in_reply_to="<message123@gmail.com>",
-            references="<original@gmail.com> <message123@gmail.com>"
+            thread_id="thread_123"
         )
     """
     logger.info(
@@ -2987,15 +3007,15 @@ async def draft_gmail_message(
             include_bodies=quote_original,
         )
 
+    target_reply = reply_context.get("target") if reply_context else None
     if thread_id and (not in_reply_to or not references):
         thread_message_ids = (
             reply_context.get("message_ids", []) if reply_context else []
         )
         in_reply_to, references = _derive_reply_headers(
-            thread_message_ids, in_reply_to, references
+            thread_message_ids, in_reply_to, references, target_reply
         )
 
-    target_reply = reply_context.get("target") if reply_context else None
     if thread_id and not to and target_reply:
         to = target_reply.get("reply_to") or target_reply.get("from") or to
     if thread_id and not subject.strip() and target_reply:
@@ -3455,15 +3475,30 @@ async def get_gmail_threads_content_batch(
 )
 @handle_http_errors("list_gmail_labels", is_read_only=True, service_type="gmail")
 @require_google_service("gmail", "gmail_read")
-async def list_gmail_labels(service, user_google_email: str) -> str:
+async def list_gmail_labels(
+    service,
+    user_google_email: str,
+    prefix: Optional[str] = None,
+    compact: bool = False,
+    include_system: bool = True,
+) -> str:
     """
-    Lists all labels in the user's Gmail account.
+    Lists labels in the user's Gmail account.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
+        prefix (Optional[str]): Return only labels whose name starts with this
+            exact (case-sensitive) string. users.labels.list accepts no filter,
+            so the full list is fetched and narrowed here: this shrinks what the
+            caller receives, not the API call.
+        compact (bool): Return minimal JSON {"count", "labels": [{"id", "name"}]}
+            sorted by name, instead of the formatted text list. For callers
+            that parse the result, e.g. a label cache refresh.
+        include_system (bool): Include Gmail system labels (INBOX, SENT, ...).
+            Set False to return user labels only.
 
     Returns:
-        str: A formatted list of all labels with their IDs, names, and types.
+        str: A formatted list of labels, or minimal JSON when compact=True.
     """
     logger.info(f"[list_gmail_labels] Invoked. Email: '{user_google_email}'")
 
@@ -3472,8 +3507,31 @@ async def list_gmail_labels(service, user_google_email: str) -> str:
     )
     labels = response.get("labels", [])
 
+    if not include_system:
+        labels = [lab for lab in labels if lab.get("type") != "system"]
+    if prefix is not None:
+        labels = [lab for lab in labels if lab.get("name", "").startswith(prefix)]
+
+    if compact:
+        return json.dumps(
+            {
+                "count": len(labels),
+                "labels": sorted(
+                    ({"id": lab["id"], "name": lab["name"]} for lab in labels),
+                    key=lambda lab: lab["name"],
+                ),
+            },
+            ensure_ascii=False,
+        )
+
     if not labels:
-        return "No labels found."
+        parts = ["No"]
+        parts.append("user" if not include_system else "")
+        parts.append("labels found")
+        if prefix is not None:
+            parts.append(f"with prefix {prefix!r}")
+        msg = " ".join(p for p in parts if p) + "."
+        return msg
 
     lines = [f"Found {len(labels)} labels:", ""]
 
@@ -3765,14 +3823,8 @@ async def modify_gmail_message_labels(
     service,
     user_google_email: str,
     message_id: str,
-    add_label_ids: Annotated[
-        Optional[StringList],
-        Field(json_schema_extra={"type": "array", "items": {"type": "string"}}),
-    ] = None,
-    remove_label_ids: Annotated[
-        Optional[StringList],
-        Field(json_schema_extra={"type": "array", "items": {"type": "string"}}),
-    ] = None,
+    add_label_ids: _OptionalLabelIdList = None,
+    remove_label_ids: _OptionalLabelIdList = None,
 ) -> str:
     """
     Adds or removes labels from a Gmail message.
@@ -3947,14 +3999,8 @@ async def batch_modify_gmail_message_labels(
     service,
     user_google_email: str,
     message_ids: StringList,
-    add_label_ids: Annotated[
-        Optional[StringList],
-        Field(json_schema_extra={"type": "array", "items": {"type": "string"}}),
-    ] = None,
-    remove_label_ids: Annotated[
-        Optional[StringList],
-        Field(json_schema_extra={"type": "array", "items": {"type": "string"}}),
-    ] = None,
+    add_label_ids: _OptionalLabelIdList = None,
+    remove_label_ids: _OptionalLabelIdList = None,
     verify: bool = True,
 ) -> str:
     """
