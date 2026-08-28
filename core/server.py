@@ -24,6 +24,7 @@ from auth.oauth_config import (
     get_oauth_config,
     is_trust_gateway_identity,
 )
+from auth.oauth_proxy_config import get_oauth_proxy_expiry_kwargs
 from auth.oauth_responses import (
     create_error_response,
     create_success_response,
@@ -70,12 +71,6 @@ _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 # header that received the request (a same-origin check).
 _DEFAULT_PORTS = {"http": 80, "https": 443, "ws": 80, "wss": 443}
 _ALLOW_NULL_ORIGIN_CONSENT_ENV = "WORKSPACE_MCP_ALLOW_NULL_ORIGIN_CONSENT"
-_OAUTH_TOKEN_EXPIRY_THRESHOLD_ENV = (
-    "WORKSPACE_MCP_OAUTH_PROXY_TOKEN_EXPIRY_THRESHOLD_SECONDS"
-)
-_OAUTH_ACCESS_TOKEN_EXPIRY_ENV = "WORKSPACE_MCP_OAUTH_PROXY_ACCESS_TOKEN_EXPIRY_SECONDS"
-_MAX_OAUTH_TOKEN_EXPIRY_THRESHOLD_SECONDS = 5 * 60
-_MAX_OAUTH_ACCESS_TOKEN_EXPIRY_SECONDS = 30 * 24 * 60 * 60
 
 
 def _parse_bool_env(value: str) -> bool:
@@ -395,35 +390,6 @@ def _parse_allowed_redirect_uris(value: Optional[str]) -> Optional[List[str]]:
         return None
     uris = [u.strip() for u in value.split(",") if u.strip()]
     return uris or None
-
-
-def _parse_expiry_seconds_env(
-    name: str, *, minimum: int, maximum: int
-) -> Optional[int]:
-    """Read a bounded integer of seconds from the environment.
-
-    Returns None when unset, empty, unparseable, or outside the supported range.
-    Callers omit the corresponding provider argument in that case so FastMCP
-    retains ownership of its default and future compatibility.
-    """
-    raw = os.getenv(name, "").strip()
-    if not raw:
-        return None
-    try:
-        seconds = int(raw)
-    except ValueError:
-        logger.warning("Ignoring %s: %r is not an integer", name, raw)
-        return None
-    if not minimum <= seconds <= maximum:
-        logger.warning(
-            "Ignoring %s: %d is outside the supported range %d-%d seconds",
-            name,
-            seconds,
-            minimum,
-            maximum,
-        )
-        return None
-    return seconds
 
 
 def set_transport_mode(mode: str):
@@ -758,35 +724,7 @@ def configure_server_for_http():
                         "OAuth 2.1: restricting DCR client redirect URIs to allowlist: %s",
                         allowed_client_redirect_uris,
                     )
-                token_expiry_threshold_seconds = _parse_expiry_seconds_env(
-                    _OAUTH_TOKEN_EXPIRY_THRESHOLD_ENV,
-                    minimum=0,
-                    maximum=_MAX_OAUTH_TOKEN_EXPIRY_THRESHOLD_SECONDS,
-                )
-                fastmcp_access_token_expiry_seconds = _parse_expiry_seconds_env(
-                    _OAUTH_ACCESS_TOKEN_EXPIRY_ENV,
-                    minimum=1,
-                    maximum=_MAX_OAUTH_ACCESS_TOKEN_EXPIRY_SECONDS,
-                )
-                if token_expiry_threshold_seconds is not None:
-                    logger.info(
-                        "OAuth 2.1: refreshing upstream tokens %ds before expiry",
-                        token_expiry_threshold_seconds,
-                    )
-                if fastmcp_access_token_expiry_seconds is not None:
-                    logger.info(
-                        "OAuth 2.1: issuing FastMCP access tokens with a %ds lifetime",
-                        fastmcp_access_token_expiry_seconds,
-                    )
-                expiry_kwargs: dict[str, int] = {}
-                if token_expiry_threshold_seconds is not None:
-                    expiry_kwargs["token_expiry_threshold_seconds"] = (
-                        token_expiry_threshold_seconds
-                    )
-                if fastmcp_access_token_expiry_seconds is not None:
-                    expiry_kwargs["fastmcp_access_token_expiry_seconds"] = (
-                        fastmcp_access_token_expiry_seconds
-                    )
+                expiry_kwargs = get_oauth_proxy_expiry_kwargs()
                 provider = GoogleProvider(
                     client_id=config.client_id,
                     client_secret=config.client_secret,
