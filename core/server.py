@@ -691,6 +691,8 @@ def configure_server_for_http():
                     jwt_signing_key_override, config.client_secret
                 )
 
+            expiry_kwargs = get_oauth_proxy_expiry_kwargs()
+
             # Check if external OAuth provider is configured
             if config.is_external_oauth21_provider():
                 # External OAuth mode: use custom provider that handles ya29.* access tokens
@@ -704,6 +706,7 @@ def configure_server_for_http():
                     required_scopes=provider_valid_scopes,
                     resource_server_url=config.get_oauth_base_url(),
                     jwt_signing_key=jwt_signing_key,
+                    **expiry_kwargs,
                 )
                 server.auth = provider
 
@@ -724,7 +727,6 @@ def configure_server_for_http():
                         "OAuth 2.1: restricting DCR client redirect URIs to allowlist: %s",
                         allowed_client_redirect_uris,
                     )
-                expiry_kwargs = get_oauth_proxy_expiry_kwargs()
                 provider = GoogleProvider(
                     client_id=config.client_id,
                     client_secret=config.client_secret,

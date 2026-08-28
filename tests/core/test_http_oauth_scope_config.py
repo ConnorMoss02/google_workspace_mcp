@@ -231,3 +231,52 @@ def test_configure_server_for_http_passes_jwt_key_to_external_provider(monkeypat
         "jwt_signing_key must be a bytes object"
     )
     assert len(captured["jwt_signing_key"]) > 0, "jwt_signing_key must be non-empty"
+
+
+def test_configure_server_for_http_passes_expiry_config_to_external_provider(
+    monkeypatch,
+):
+    captured = {}
+
+    class FakeExternalOAuthProvider:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setenv(
+        "FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY",
+        "this-is-a-long-enough-jwt-signing-key",
+    )
+    monkeypatch.setenv(
+        "WORKSPACE_MCP_OAUTH_PROXY_TOKEN_EXPIRY_THRESHOLD_SECONDS", "120"
+    )
+    monkeypatch.setenv("WORKSPACE_MCP_OAUTH_PROXY_ACCESS_TOKEN_EXPIRY_SECONDS", "86400")
+    monkeypatch.setattr(server_module, "get_transport_mode", lambda: "streamable-http")
+    monkeypatch.setattr(server_module, "set_auth_provider", lambda provider: None)
+    monkeypatch.setattr(server_module, "_auth_provider", server_module._auth_provider)
+    monkeypatch.setattr(server_module.server, "auth", server_module.server.auth)
+    monkeypatch.setattr(
+        server_module,
+        "get_current_scopes",
+        lambda: ["https://www.googleapis.com/auth/userinfo.email", "openid"],
+    )
+    monkeypatch.setattr(
+        "auth.external_oauth_provider.ExternalOAuthProvider",
+        FakeExternalOAuthProvider,
+    )
+    monkeypatch.setattr(
+        "auth.oauth_config.get_oauth_config",
+        lambda: SimpleNamespace(
+            is_oauth21_enabled=lambda: True,
+            is_configured=lambda: True,
+            is_external_oauth21_provider=lambda: True,
+            client_id="client-id",
+            client_secret=None,
+            get_oauth_base_url=lambda: "https://workspace-mcp.example.test",
+            redirect_path="/oauth2callback",
+        ),
+    )
+
+    server_module.configure_server_for_http()
+
+    assert captured["token_expiry_threshold_seconds"] == 120
+    assert captured["fastmcp_access_token_expiry_seconds"] == 86400
