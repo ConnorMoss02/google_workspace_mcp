@@ -24,6 +24,7 @@ from auth.oauth_config import (
     get_oauth_config,
     is_trust_gateway_identity,
 )
+from auth.oauth_proxy_config import get_oauth_proxy_expiry_kwargs
 from auth.oauth_responses import (
     create_error_response,
     create_success_response,
@@ -690,6 +691,8 @@ def configure_server_for_http():
                     jwt_signing_key_override, config.client_secret
                 )
 
+            expiry_kwargs = get_oauth_proxy_expiry_kwargs()
+
             # Check if external OAuth provider is configured
             if config.is_external_oauth21_provider():
                 # External OAuth mode: use custom provider that handles ya29.* access tokens
@@ -703,6 +706,7 @@ def configure_server_for_http():
                     required_scopes=provider_valid_scopes,
                     resource_server_url=config.get_oauth_base_url(),
                     jwt_signing_key=jwt_signing_key,
+                    **expiry_kwargs,
                 )
                 server.auth = provider
 
@@ -733,6 +737,7 @@ def configure_server_for_http():
                     client_storage=client_storage,
                     jwt_signing_key=jwt_signing_key,
                     allowed_client_redirect_uris=allowed_client_redirect_uris,
+                    **expiry_kwargs,
                 )
                 if provider.client_registration_options is not None:
                     # Keep protocol-level auth limited to base identity scopes, but
