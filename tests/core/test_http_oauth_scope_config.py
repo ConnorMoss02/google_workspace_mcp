@@ -5,6 +5,27 @@ import pytest
 import core.server as server_module
 
 
+def test_close_auth_provider_releases_resources_and_clears_globals(monkeypatch):
+    closed = []
+    session_store_providers = []
+    provider = SimpleNamespace(close=lambda: closed.append(True))
+
+    monkeypatch.setattr(server_module, "_auth_provider", provider)
+    monkeypatch.setattr(server_module.server, "auth", provider)
+    monkeypatch.setattr(
+        server_module,
+        "set_auth_provider",
+        lambda value: session_store_providers.append(value),
+    )
+
+    server_module.close_auth_provider()
+
+    assert closed == [True]
+    assert session_store_providers == [None]
+    assert server_module._auth_provider is None
+    assert server_module.server.auth is None
+
+
 def test_configure_server_for_http_allows_legacy_oauth_callback(monkeypatch):
     calls = []
 
