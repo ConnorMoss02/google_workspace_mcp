@@ -44,17 +44,28 @@ def load_client_secrets_file(client_secrets_path: str) -> Dict[str, Any]:
         The "web" or "installed" section of the client secrets file.
 
     Raises:
-        ValueError: If the file has no "web" or "installed" section.
+        ValueError: If the top-level value is not a JSON object, or the
+            "web"/"installed" section is missing or not an object.
         IOError: If the file cannot be read.
         json.JSONDecodeError: If the file is not valid JSON.
     """
     with open(client_secrets_path, "r") as f:
         client_config = json.load(f)
+    if not isinstance(client_config, dict):
+        raise ValueError(
+            f"Client secrets file {client_secrets_path} has unexpected format. "
+            "Expected a top-level JSON object with a 'web' or 'installed' section."
+        )
     # The file usually contains a top-level key like "web" or "installed"
-    if "web" in client_config:
-        return client_config["web"]
-    if "installed" in client_config:
-        return client_config["installed"]
+    for section_name in ("web", "installed"):
+        if section_name in client_config:
+            section = client_config[section_name]
+            if not isinstance(section, dict):
+                raise ValueError(
+                    f"Client secrets file {client_secrets_path} has unexpected format. "
+                    f"The '{section_name}' section must be a JSON object."
+                )
+            return section
     raise ValueError(
         f"Client secrets file {client_secrets_path} has unexpected format. "
         "Expected a 'web' or 'installed' section."

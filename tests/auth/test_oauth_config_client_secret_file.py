@@ -12,7 +12,7 @@ import os
 import pytest
 
 from auth import oauth_config as oauth_config_module
-from auth.client_secrets import get_client_secrets_path
+from auth.client_secrets import get_client_secrets_path, load_client_secrets_file
 from auth.oauth_config import OAuthConfig
 
 _OAUTH_ENV_VARS = (
@@ -57,6 +57,30 @@ def test_get_client_secrets_path_priority(monkeypatch):
 
     monkeypatch.delenv("GOOGLE_CLIENT_SECRETS")
     assert get_client_secrets_path().endswith(os.path.join("client_secret.json"))
+
+
+def test_load_client_secrets_file_rejects_null_document(tmp_path):
+    path = tmp_path / "client_secret.json"
+    path.write_text("null")
+
+    with pytest.raises(ValueError, match="top-level JSON object"):
+        load_client_secrets_file(str(path))
+
+
+def test_load_client_secrets_file_rejects_non_object_top_level(tmp_path):
+    path = tmp_path / "client_secret.json"
+    path.write_text(json.dumps(["web"]))
+
+    with pytest.raises(ValueError, match="top-level JSON object"):
+        load_client_secrets_file(str(path))
+
+
+def test_load_client_secrets_file_rejects_non_object_web_section(tmp_path):
+    path = tmp_path / "client_secret.json"
+    path.write_text(json.dumps({"web": None}))
+
+    with pytest.raises(ValueError, match="'web' section must be a JSON object"):
+        load_client_secrets_file(str(path))
 
 
 def test_file_provides_credentials_when_env_unset(monkeypatch, tmp_path):
