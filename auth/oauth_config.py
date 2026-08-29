@@ -8,11 +8,16 @@ sensible defaults for all OAuth-related settings.
 Supports both OAuth 2.0 and OAuth 2.1 with automatic client capability detection.
 """
 
+import logging
 import os
 from ipaddress import ip_address
 from threading import RLock
 from urllib.parse import urlparse
 from typing import List, Optional, Dict, Any
+
+from auth.client_secrets import get_client_secrets_path, load_client_secrets_file
+
+logger = logging.getLogger(__name__)
 
 
 _ASYMMETRIC_JWT_ALGORITHM_FAMILIES = {
@@ -72,9 +77,11 @@ class OAuthConfig:
         # External URL for reverse proxy scenarios
         self.external_url = os.getenv("WORKSPACE_EXTERNAL_URL")
 
-        # OAuth client configuration
+        # OAuth client configuration. Environment variables take precedence;
+        # values missing from the environment fall back to the client secrets file.
         self.client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID")
         self.client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET")
+        self._apply_client_secrets_file_fallback()
 
         # Branding for the OAuth consent page. FastMCP's OAuth proxy renders the
         # server's name / icon / website on the consent screen; these env vars feed
@@ -242,6 +249,49 @@ class OAuthConfig:
 
         # Ensure FastMCP's Google provider picks up our existing configuration
         self._apply_fastmcp_google_env()
+
+    def _apply_client_secrets_file_fallback(self) -> None:
+        """Fill missing client credentials from the client secrets file.
+
+        Environment variables always take precedence; the file
+        (GOOGLE_CLIENT_SECRET_PATH, the legacy GOOGLE_CLIENT_SECRETS alias, or
+        <repo root>/client_secret.json) is only consulted for values the
+        environment does not provide, so a fully env-configured client never
+        touches the file.
+        """
+        if self.client_id and self.client_secret:
+            return
+
+        path = get_client_secrets_path()
+        explicit = bool(
+            os.getenv("GOOGLE_CLIENT_SECRET_PATH") or os.getenv("GOOGLE_CLIENT_SECRETS")
+        )
+        if not os.path.exists(path):
+            if explicit:
+                raise ValueError(
+                    f"Client secrets file not found at {path}. Set a valid "
+                    "GOOGLE_CLIENT_SECRET_PATH, or provide GOOGLE_OAUTH_CLIENT_ID and "
+                    "GOOGLE_OAUTH_CLIENT_SECRET environment variables."
+                )
+            logger.debug("No client secrets file at default path: %s", path)
+            return
+        try:
+            section = load_client_secrets_file(path)
+        except (OSError, ValueError) as exc:
+            if explicit:
+                raise ValueError(f"Failed to load client secrets file {path}: {exc}")
+            logger.warning(
+                "Ignoring unreadable client secrets file at default path %s: %s",
+                path,
+                exc,
+            )
+            return
+        if not self.client_id:
+            self.client_id = section.get("client_id") or None
+        if not self.client_secret:
+            self.client_secret = section.get("client_secret") or None
+        if self.client_id or self.client_secret:
+            logger.info("Loaded OAuth client credentials from file: %s", path)
 
     def _get_redirect_uri(self) -> str:
         """

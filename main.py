@@ -347,6 +347,21 @@ def _client_secret_field() -> tuple[str, str, str]:
     name = "GOOGLE_OAUTH_CLIENT_SECRET"
     secret = os.getenv(name)
     if not secret:
+        # Mirror the OAuthConfig fallback: a client secrets file may supply it.
+        from auth.client_secrets import (
+            get_client_secrets_path,
+            load_client_secrets_file,
+        )
+
+        path = get_client_secrets_path()
+        if os.path.exists(path):
+            try:
+                section = load_client_secrets_file(path)
+            except (OSError, ValueError):
+                section = None
+            secret = (section or {}).get("client_secret") or None
+            if secret:
+                return name, f"set · via {collapse_home(path)}", "on"
         return name, "not set", "off"
     if len(secret) <= 8:
         return name, "set · unexpectedly short", "warn"

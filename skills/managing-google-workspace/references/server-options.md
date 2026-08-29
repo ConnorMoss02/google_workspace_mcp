@@ -88,3 +88,5 @@ docker run -p 8000:8000 -e GOOGLE_OAUTH_CLIENT_ID=... -e GOOGLE_OAUTH_CLIENT_SEC
 2. `.env` file in project root -- **will not work with `uvx`** (uvx runs outside the repo directory)
 3. `client_secret.json` via `GOOGLE_CLIENT_SECRET_PATH` env var
 4. Default `client_secret.json` in project root
+
+This priority applies to both the per-user Google grant flow and OAuth 2.1 (`MCP_ENABLE_OAUTH21=true`) startup: a `client_secret.json` supplied via `GOOGLE_CLIENT_SECRET_PATH` satisfies the OAuth 2.1 client-secret requirement, with environment variables taking precedence per value.
