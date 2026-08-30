@@ -21,12 +21,16 @@ _CLIENT_SECRETS_ENV = "GOOGLE_CLIENT_SECRETS"
 def get_client_secrets_path() -> str:
     """Resolve the client secrets file path from environment variables.
 
+    A "~" prefix is expanded; the default is <repo root>/client_secret.json.
+
     Returns:
         The path to the client secrets JSON file.
     """
     path = os.getenv(_CLIENT_SECRET_PATH_ENV) or os.getenv(_CLIENT_SECRETS_ENV)
     if path:
-        return path
+        # Container images and MCP client configs routinely pass "~/..." with no
+        # shell to expand it, so resolve it here rather than failing to find it.
+        return os.path.expanduser(path)
     # Assumes this file is in auth/ and client_secret.json is in the root
     return os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),

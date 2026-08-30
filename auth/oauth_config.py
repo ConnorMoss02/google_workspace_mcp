@@ -78,10 +78,11 @@ class OAuthConfig:
         self.external_url = os.getenv("WORKSPACE_EXTERNAL_URL")
 
         # OAuth client configuration. Environment variables take precedence;
-        # values missing from the environment fall back to the client secrets file.
+        # values missing from the environment fall back to the client secrets file
+        # (resolved below, once the OAuth 2.1 flag is known).
         self.client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID")
         self.client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET")
-        self._apply_client_secrets_file_fallback()
+        self.client_secrets_file: Optional[str] = None
 
         # Branding for the OAuth consent page. FastMCP's OAuth proxy renders the
         # server's name / icon / website on the consent screen; these env vars feed
@@ -98,6 +99,11 @@ class OAuthConfig:
         self.supported_code_challenge_methods = (
             ["S256", "plain"] if not self.oauth21_enabled else ["S256"]
         )
+
+        # Only OAuth 2.1 needs client credentials resolved at startup, so an
+        # unusable configured path is fatal there and merely logged in the modes
+        # that resolve credentials lazily (stdio, service account, legacy 2.0).
+        self._apply_client_secrets_file_fallback(required=self.oauth21_enabled)
 
         # External OAuth 2.1 provider configuration
         self.external_oauth21_provider = (
@@ -250,7 +256,7 @@ class OAuthConfig:
         # Ensure FastMCP's Google provider picks up our existing configuration
         self._apply_fastmcp_google_env()
 
-    def _apply_client_secrets_file_fallback(self) -> None:
+    def _apply_client_secrets_file_fallback(self, required: bool) -> None:
         """Fill missing client credentials from the client secrets file.
 
         Environment variables always take precedence; the file
@@ -258,6 +264,11 @@ class OAuthConfig:
         <repo root>/client_secret.json) is only consulted for values the
         environment does not provide, so a fully env-configured client never
         touches the file.
+
+        Args:
+            required: Whether startup depends on these credentials. When True, a
+                file at an explicitly configured path that cannot be read is
+                fatal; otherwise the failure is logged and startup continues.
         """
         if self.client_id and self.client_secret:
             return
@@ -266,31 +277,42 @@ class OAuthConfig:
         explicit = bool(
             os.getenv("GOOGLE_CLIENT_SECRET_PATH") or os.getenv("GOOGLE_CLIENT_SECRETS")
         )
-        if not os.path.exists(path):
-            if explicit:
-                raise ValueError(
-                    f"Client secrets file not found at {path}. Set a valid "
-                    "GOOGLE_CLIENT_SECRET_PATH, or provide GOOGLE_OAUTH_CLIENT_ID and "
-                    "GOOGLE_OAUTH_CLIENT_SECRET environment variables."
-                )
-            logger.debug("No client secrets file at default path: %s", path)
-            return
         try:
             section = load_client_secrets_file(path)
         except (OSError, ValueError) as exc:
-            if explicit:
-                raise ValueError(f"Failed to load client secrets file {path}: {exc}")
+            if explicit and required:
+                raise ValueError(
+                    f"Failed to load client secrets file {path}: {exc}. Set a valid "
+                    "GOOGLE_CLIENT_SECRET_PATH, or provide GOOGLE_OAUTH_CLIENT_ID and "
+                    "GOOGLE_OAUTH_CLIENT_SECRET environment variables."
+                ) from exc
+            log = logger.warning if explicit else logger.debug
+            log("Ignoring client secrets file %s: %s", path, exc)
+            return
+
+        file_client_id = section.get("client_id") or None
+        file_client_secret = section.get("client_secret") or None
+        if self.client_id and file_client_id and file_client_id != self.client_id:
+            # The file describes a different OAuth client, so its secret cannot
+            # authenticate the configured client id. Pairing them would turn a
+            # public client into a confidential one that Google always rejects.
             logger.warning(
-                "Ignoring unreadable client secrets file at default path %s: %s",
+                "Ignoring client secrets file %s: it configures client id %s, not the "
+                "GOOGLE_OAUTH_CLIENT_ID this server runs as.",
                 path,
-                exc,
+                file_client_id,
             )
             return
-        if not self.client_id:
-            self.client_id = section.get("client_id") or None
-        if not self.client_secret:
-            self.client_secret = section.get("client_secret") or None
-        if self.client_id or self.client_secret:
+
+        loaded = False
+        if not self.client_id and file_client_id:
+            self.client_id = file_client_id
+            loaded = True
+        if not self.client_secret and file_client_secret:
+            self.client_secret = file_client_secret
+            loaded = True
+        if loaded:
+            self.client_secrets_file = path
             logger.info("Loaded OAuth client credentials from file: %s", path)
 
     def _get_redirect_uri(self) -> str:

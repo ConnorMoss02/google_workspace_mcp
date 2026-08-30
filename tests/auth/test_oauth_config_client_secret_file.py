@@ -114,15 +114,36 @@ def test_env_takes_precedence_over_file(monkeypatch, tmp_path):
 
 def test_env_id_with_secret_from_file(monkeypatch, tmp_path):
     """Client id via env var, secret only in the client secrets file."""
-    path = _write_client_secret(tmp_path, "web", "file-id", "file-secret")
+    path = _write_client_secret(tmp_path, "web", "shared-id", "file-secret")
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRET_PATH", path)
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "shared-id")
+
+    cfg = OAuthConfig()
+
+    assert cfg.client_id == "shared-id"
+    assert cfg.client_secret == "file-secret"
+    assert cfg.client_secrets_file == path
+    assert cfg.is_public_client() is False
+
+
+def test_file_secret_ignored_when_it_belongs_to_another_client(monkeypatch, tmp_path):
+    """A file for a different client id must not be paired with the env client.
+
+    Google rejects a client_id/client_secret pair that does not belong
+    together, so a public client must stay public rather than silently become
+    a broken confidential one.
+    """
+    path = _write_client_secret(tmp_path, "web", "other-id", "other-secret")
     monkeypatch.setenv("GOOGLE_CLIENT_SECRET_PATH", path)
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "env-id")
+    monkeypatch.setenv("MCP_ENABLE_OAUTH21", "true")
 
     cfg = OAuthConfig()
 
     assert cfg.client_id == "env-id"
-    assert cfg.client_secret == "file-secret"
-    assert cfg.is_public_client() is False
+    assert cfg.client_secret is None
+    assert cfg.client_secrets_file is None
+    assert cfg.is_public_client() is True
 
 
 def test_installed_section_without_secret_stays_public_client(monkeypatch, tmp_path):
@@ -137,22 +158,55 @@ def test_installed_section_without_secret_stays_public_client(monkeypatch, tmp_p
     assert cfg.is_public_client() is True
 
 
-def test_explicit_missing_file_raises(monkeypatch, tmp_path):
+def test_explicit_missing_file_raises_under_oauth21(monkeypatch, tmp_path):
+    monkeypatch.setenv(
+        "GOOGLE_CLIENT_SECRET_PATH", str(tmp_path / "does-not-exist.json")
+    )
+    monkeypatch.setenv("MCP_ENABLE_OAUTH21", "true")
+
+    with pytest.raises(ValueError, match="Failed to load client secrets file"):
+        OAuthConfig()
+
+
+def test_explicit_malformed_file_raises_under_oauth21(monkeypatch, tmp_path):
+    path = tmp_path / "client_secret.json"
+    path.write_text(json.dumps({"unexpected": {}}))
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRET_PATH", str(path))
+    monkeypatch.setenv("MCP_ENABLE_OAUTH21", "true")
+
+    with pytest.raises(ValueError, match="Failed to load client secrets file"):
+        OAuthConfig()
+
+
+def test_explicit_missing_file_is_not_fatal_without_oauth21(monkeypatch, tmp_path):
+    """stdio, service account and legacy 2.0 resolve credentials lazily.
+
+    A stale GOOGLE_CLIENT_SECRET_PATH must not take the whole server down for
+    modes that never need the OAuth 2.1 client credentials at startup.
+    """
     monkeypatch.setenv(
         "GOOGLE_CLIENT_SECRET_PATH", str(tmp_path / "does-not-exist.json")
     )
 
-    with pytest.raises(ValueError, match="Client secrets file not found"):
-        OAuthConfig()
+    cfg = OAuthConfig()
+
+    assert cfg.client_id is None
+    assert cfg.client_secret is None
+    assert cfg.is_configured() is False
 
 
-def test_explicit_malformed_file_raises(monkeypatch, tmp_path):
-    path = tmp_path / "client_secret.json"
-    path.write_text(json.dumps({"unexpected": {}}))
-    monkeypatch.setenv("GOOGLE_CLIENT_SECRET_PATH", str(path))
+def test_explicit_path_expands_user(monkeypatch, tmp_path):
+    """A ~ prefix reaches the server unexpanded from container/client configs."""
+    path = _write_client_secret(tmp_path, "web", "home-id", "home-secret")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRET_PATH", "~/client_secret.json")
 
-    with pytest.raises(ValueError, match="Failed to load client secrets file"):
-        OAuthConfig()
+    assert get_client_secrets_path() == path
+
+    cfg = OAuthConfig()
+
+    assert cfg.client_id == "home-id"
+    assert cfg.client_secret == "home-secret"
 
 
 def test_default_path_used_when_no_path_env(monkeypatch, tmp_path):

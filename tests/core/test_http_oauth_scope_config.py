@@ -184,7 +184,7 @@ def test_configure_server_for_http_accepts_client_secret_from_file(
     """
     secret_path = tmp_path / "client_secret.json"
     secret_path.write_text(
-        json.dumps({"web": {"client_id": "file-id", "client_secret": "file-secret"}})
+        json.dumps({"web": {"client_id": "env-id", "client_secret": "file-secret"}})
     )
 
     monkeypatch.setenv("MCP_ENABLE_OAUTH21", "true")
