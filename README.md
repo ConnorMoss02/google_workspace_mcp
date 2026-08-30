@@ -14,11 +14,11 @@
 *Full natural language control over Google Calendar, Drive, Gmail, Docs, Sheets, Slides, Forms, Tasks, Contacts, and Chat through all MCP clients, AI assistants and developer tools.*
 *Includes a full featured CLI & Code Mode for use with tools like Claude Code and Codex!*
 
-**The most feature-complete Google Workspace MCP server**, it can do things that Google's own tooling and the built in integrations with Claude and ChatGPT can't come close to. With multi-user support, rich fine-grained editing tools and the most extensive coverage of any Google Workspace tool in existence, Workspace MCP is in a different class. 
+**The most feature-complete Google Workspace MCP server** is in a class of it's own: it can do things that Google's own tooling and the built in integrations with Claude and ChatGPT can't come close to with multi-user support, rich fine-grained editing tools and the most extensive coverage of any Workspace AI integration in existence. 
 
 By leveraging native OAuth 2.1, stateless deployment capability and external auth server & gateway passthrough auth support, it's also the only Workspace MCP you can host for your whole organization centrally & securely!
 
-###### Support for all free Google accounts & Google Workspace plans (Starter, Standard, Plus, Enterprise, Non Profit) with expanded app options like Chat & Spaces. <br/><br /> Interested in a private, managed cloud instance? [That can be arranged.](https://workspacemcp.com/workspace-mcp-cloud?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=hero-cloud)
+###### Supports all free Google accounts & Google Workspace plans with expanded app options like Chat & Spaces. <br/>Interested in a managed cloud instance? [That can be arranged](https://workspacemcp.com/workspace-mcp-cloud?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=hero-cloud) (starting at $5/mo).
 
 
 </div>
@@ -253,6 +253,8 @@ Everything you need to run this in production lives in two places. The [document
 
 The **[Advanced Deployment guide](https://workspacemcp.com/docs/deployment?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=deploy-advanced)** covers self-hosting specifics: reverse proxy setup with `WORKSPACE_EXTERNAL_URL` (including the nginx `Origin: null` consent workaround, the `WORKSPACE_MCP_ALLOW_NULL_ORIGIN_CONSENT` escape hatch, and the `Referrer-Policy` pitfall), origin validation and VS Code webview allowlisting, credential store backends (local directory or GCS with CMEK enforcement), and the **[complete environment variable reference](https://workspacemcp.com/docs/deployment?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=deploy-env-vars#environment-variables)**.
 Optional memory-safety knob for container deployments: set `WORKSPACE_MCP_MAX_FILE_BYTES` to a positive byte count (e.g. `5242880` for 5 MiB) to reject Drive / Gmail / Chat downloads that would otherwise be fully buffered in-process. Unset or `0` keeps the historical uncapped behavior.
+
+Advanced OAuth 2.1 deployments affected by concurrent client token refreshes can tune FastMCP's early-refresh threshold and client-facing access-token lifetime. See [`.env.oauth21`](.env.oauth21) for the bounded settings, recommended values, and security tradeoffs. These settings reduce how often the race occurs; they do not add a grace period to FastMCP's one-time-use refresh-token rotation.
 
 ## Security Best Practices
 
