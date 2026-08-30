@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from core.file_limits import FileTooLargeError
 from gdrive.drive_tools import get_drive_file_content, get_drive_file_download_url
 
 
