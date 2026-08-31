@@ -100,12 +100,10 @@ class OAuthConfig:
             ["S256", "plain"] if not self.oauth21_enabled else ["S256"]
         )
 
-        # Only OAuth 2.1 needs client credentials resolved at startup, so an
-        # unusable configured path is fatal there and merely logged in the modes
-        # that resolve credentials lazily (stdio, service account, legacy 2.0).
-        self._apply_client_secrets_file_fallback(required=self.oauth21_enabled)
-
-        # External OAuth 2.1 provider configuration
+        # External OAuth 2.1 provider configuration. Evaluated before client
+        # secrets resolution so it can relax the startup requirement below: in
+        # external-provider mode the Google provider is suppressed, so an
+        # unreadable GOOGLE_CLIENT_SECRET_PATH is merely logged.
         self.external_oauth21_provider = (
             os.getenv("EXTERNAL_OAUTH21_PROVIDER", "false").lower() == "true"
         )
@@ -113,6 +111,15 @@ class OAuthConfig:
             raise ValueError(
                 "EXTERNAL_OAUTH21_PROVIDER requires MCP_ENABLE_OAUTH21=true"
             )
+
+        # Only OAuth 2.1 needs client credentials resolved at startup, so an
+        # unusable configured path is fatal there and merely logged in the modes
+        # that resolve credentials lazily (stdio, service account, legacy 2.0).
+        # External-provider mode also suppresses the Google provider, so it does
+        # not require readable client secrets either.
+        self._apply_client_secrets_file_fallback(
+            required=self.oauth21_enabled and not self.external_oauth21_provider
+        )
 
         # Trusted-gateway identity (provider-agnostic).
         # An MCP-aware reverse proxy (e.g. Pomerium, oauth2-proxy, Cloudflare Access,
