@@ -3607,13 +3607,15 @@ async def manage_gmail_label(
     if action in ["update", "delete"] and not label_id:
         raise Exception("Label ID is required for update and delete actions.")
 
+    # Validated before any request so a bad color costs no API call.
+    color = build_label_color(background_color, text_color)
+
     if action == "create":
         label_object = {
             "name": name,
             "labelListVisibility": label_list_visibility,
             "messageListVisibility": message_list_visibility,
         }
-        color = build_label_color(background_color, text_color)
         if color:
             label_object["color"] = color
         created_label = await asyncio.to_thread(
@@ -3632,11 +3634,9 @@ async def manage_gmail_label(
             "labelListVisibility": label_list_visibility,
             "messageListVisibility": message_list_visibility,
         }
-        color = build_label_color(background_color, text_color) or current_label.get(
-            "color"
-        )
-        if color:
-            label_object["color"] = color
+        label_color = color or current_label.get("color")
+        if label_color:
+            label_object["color"] = label_color
 
         updated_label = await asyncio.to_thread(
             service.users()

@@ -162,7 +162,9 @@ async def test_update_rejects_a_half_specified_color_on_an_uncolored_label(kwarg
     with pytest.raises(ToolExecutionError, match="must be set together"):
         await _update(service, **kwargs)
 
-    service.users.return_value.labels.return_value.update.assert_not_called()
+    labels = service.users.return_value.labels.return_value
+    labels.get.assert_not_called()
+    labels.update.assert_not_called()
 
 
 def test_build_label_color_normalizes_case_and_whitespace():
