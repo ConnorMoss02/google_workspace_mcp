@@ -86,7 +86,7 @@ async def test_create_omits_color_by_default():
 
 
 @pytest.mark.asyncio
-async def test_update_keeps_the_other_half_of_an_existing_color():
+async def test_update_replaces_an_existing_color():
     service = _build_mock_service(
         {
             "id": "Label_1",
@@ -94,11 +94,11 @@ async def test_update_keeps_the_other_half_of_an_existing_color():
             "color": {"backgroundColor": "#fb4c2f", "textColor": "#ffffff"},
         }
     )
-    await _update(service, background_color="#16a766")
+    await _update(service, background_color="#16a766", text_color="#000000")
 
     assert _sent_body(service, "update")["color"] == {
         "backgroundColor": "#16a766",
-        "textColor": "#ffffff",
+        "textColor": "#000000",
     }
 
 
@@ -125,9 +125,9 @@ async def test_update_omits_color_when_the_label_never_had_one():
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"background_color": "#ff0000"},
-        {"text_color": "#123456"},
-        {"background_color": "not-a-color"},
+        {"background_color": "#ff0000", "text_color": "#ffffff"},
+        {"background_color": "#fb4c2f", "text_color": "#123456"},
+        {"background_color": "not-a-color", "text_color": "#ffffff"},
     ],
 )
 async def test_color_outside_the_palette_is_rejected_before_the_request(kwargs):
@@ -139,17 +139,45 @@ async def test_color_outside_the_palette_is_rejected_before_the_request(kwargs):
     service.users.return_value.labels.return_value.create.assert_not_called()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kwargs", [{"background_color": "#fb4c2f"}, {"text_color": "#ffffff"}]
+)
+async def test_create_rejects_a_half_specified_color(kwargs):
+    service = _build_mock_service()
+
+    with pytest.raises(ToolExecutionError, match="must be set together"):
+        await _create(service, **kwargs)
+
+    service.users.return_value.labels.return_value.create.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kwargs", [{"background_color": "#fb4c2f"}, {"text_color": "#ffffff"}]
+)
+async def test_update_rejects_a_half_specified_color_on_an_uncolored_label(kwargs):
+    service = _build_mock_service()
+
+    with pytest.raises(ToolExecutionError, match="must be set together"):
+        await _update(service, **kwargs)
+
+    service.users.return_value.labels.return_value.update.assert_not_called()
+
+
 def test_build_label_color_normalizes_case_and_whitespace():
-    assert build_label_color(" #FB4C2F ") == {"backgroundColor": "#fb4c2f"}
+    assert build_label_color(" #FB4C2F ", "#FFFFFF") == {
+        "backgroundColor": "#fb4c2f",
+        "textColor": "#ffffff",
+    }
 
 
 def test_build_label_color_returns_none_when_no_color_is_given():
     assert build_label_color(None, None) is None
-    assert build_label_color(None, None, {"backgroundColor": "#fb4c2f"}) is None
 
 
-def test_palette_matches_the_documented_size():
-    # 102 colors, per the Label reference:
-    # https://developers.google.com/gmail/api/reference/rest/v1/users.labels#Label
-    assert len(GMAIL_LABEL_COLORS) == 102
+def test_palette_matches_the_discovery_document():
+    # 113 colors, from the LabelColor schema in the Gmail v1 discovery document:
+    # https://gmail.googleapis.com/$discovery/rest?version=v1
+    assert len(GMAIL_LABEL_COLORS) == 113
     assert all(c.startswith("#") and len(c) == 7 for c in GMAIL_LABEL_COLORS)

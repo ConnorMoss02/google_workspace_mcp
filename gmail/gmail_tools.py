@@ -3591,8 +3591,8 @@ async def manage_gmail_label(
         label_id (Optional[str]): Label ID. Required for update and delete operations.
         label_list_visibility (Literal["labelShow", "labelHide"]): Whether the label is shown in the label list.
         message_list_visibility (Literal["show", "hide"]): Whether the label is shown in the message list.
-        background_color (Optional[str]): Label background color as a hex string, e.g. "#fb4c2f". Gmail accepts only its own palette; an unsupported value is rejected before the request. Colors apply to user labels, not system labels.
-        text_color (Optional[str]): Label text color as a hex string, e.g. "#ffffff". Same palette as background_color. On update, setting one color keeps the other.
+        background_color (Optional[str]): Label background color as a hex string, e.g. "#fb4c2f". Set together with text_color; Gmail requires both. Gmail accepts only its own palette, and an unsupported value is rejected before the request. Colors apply to user labels, not system labels.
+        text_color (Optional[str]): Label text color as a hex string, e.g. "#ffffff". Set together with background_color. Same palette. On update, omitting both keeps the label's current color.
 
     Returns:
         str: Confirmation message of the label operation.
@@ -3632,13 +3632,11 @@ async def manage_gmail_label(
             "labelListVisibility": label_list_visibility,
             "messageListVisibility": message_list_visibility,
         }
-        color = build_label_color(
-            background_color, text_color, current_label.get("color")
+        color = build_label_color(background_color, text_color) or current_label.get(
+            "color"
         )
         if color:
             label_object["color"] = color
-        elif current_label.get("color"):
-            label_object["color"] = current_label["color"]
 
         updated_label = await asyncio.to_thread(
             service.users()
