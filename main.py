@@ -347,6 +347,11 @@ def _client_secret_field() -> tuple[str, str, str]:
     name = "GOOGLE_OAUTH_CLIENT_SECRET"
     secret = os.getenv(name)
     if not secret:
+        # Report the resolved configuration rather than re-reading the file, so
+        # the banner cannot claim a secret the OAuth config declined to use.
+        config = get_oauth_config()
+        if config.client_secret and config.client_secrets_file:
+            return name, f"set · via {collapse_home(config.client_secrets_file)}", "on"
         return name, "not set", "off"
     if len(secret) <= 8:
         return name, "set · unexpectedly short", "warn"
