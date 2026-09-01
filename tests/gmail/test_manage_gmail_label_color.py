@@ -6,6 +6,7 @@ proving a call that omits them sends the exact body it sent before.
 
 from __future__ import annotations
 
+import hashlib
 from unittest.mock import MagicMock
 
 import pytest
@@ -61,6 +62,16 @@ async def _update(service: MagicMock, **kwargs) -> str:
         service=service,
         user_google_email="user@example.com",
         action="update",
+        label_id="Label_1",
+        **kwargs,
+    )
+
+
+async def _delete(service: MagicMock, **kwargs) -> str:
+    return await _unwrap(manage_gmail_label)(
+        service=service,
+        user_google_email="user@example.com",
+        action="delete",
         label_id="Label_1",
         **kwargs,
     )
@@ -122,6 +133,57 @@ async def test_update_omits_color_when_the_label_never_had_one():
 
 
 @pytest.mark.asyncio
+async def test_update_can_clear_an_existing_color():
+    service = _build_mock_service(
+        {
+            "id": "Label_1",
+            "name": "Urgent",
+            "color": {"backgroundColor": "#fb4c2f", "textColor": "#ffffff"},
+        }
+    )
+    await _update(service, clear_color=True)
+
+    assert "color" not in _sent_body(service, "update")
+
+
+@pytest.mark.asyncio
+async def test_clear_color_rejects_new_colors_before_fetching_the_label():
+    service = _build_mock_service()
+
+    with pytest.raises(ToolExecutionError, match="cannot be combined"):
+        await _update(
+            service,
+            clear_color=True,
+            background_color="#fb4c2f",
+            text_color="#ffffff",
+        )
+
+    labels = service.users.return_value.labels.return_value
+    labels.get.assert_not_called()
+    labels.update.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_clear_color_is_rejected_for_create_before_the_request():
+    service = _build_mock_service()
+
+    with pytest.raises(ToolExecutionError, match="only valid for update"):
+        await _create(service, clear_color=True)
+
+    service.users.return_value.labels.return_value.create.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_delete_ignores_irrelevant_color_arguments():
+    service = _build_mock_service()
+
+    await _delete(service, background_color="not-a-color", clear_color=True)
+
+    labels = service.users.return_value.labels.return_value
+    labels.delete.assert_called_once_with(userId="me", id="Label_1")
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "kwargs",
     [
@@ -178,8 +240,17 @@ def test_build_label_color_returns_none_when_no_color_is_given():
     assert build_label_color(None, None) is None
 
 
-def test_palette_matches_the_discovery_document():
-    # 113 colors, from the LabelColor schema in the Gmail v1 discovery document:
-    # https://gmail.googleapis.com/$discovery/rest?version=v1
+def test_palette_exactly_matches_the_discovery_document_snapshot():
+    # Exact snapshot of LabelColor from Gmail v1 discovery revision 20260824:
+    # https://gmail.googleapis.com/$discovery/rest?version=v1. Update the palette
+    # and fingerprint together when the discovery schema changes.
+    fingerprint = hashlib.sha256(
+        "\n".join(sorted(GMAIL_LABEL_COLORS)).encode()
+    ).hexdigest()
+
     assert len(GMAIL_LABEL_COLORS) == 113
     assert all(c.startswith("#") and len(c) == 7 for c in GMAIL_LABEL_COLORS)
+    assert (
+        fingerprint
+        == "3a734f759085172c6803b4aeef05b8dd92df341f56d66a5cf86b658f36c8a948"
+    )

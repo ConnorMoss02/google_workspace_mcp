@@ -47,6 +47,8 @@ GMAIL_METADATA_HEADERS = [
 # Gmail accepts label colors only from a fixed palette, and rejects anything else
 # with an opaque 400. Both backgroundColor and textColor draw from this same set.
 # https://developers.google.com/gmail/api/reference/rest/v1/users.labels#Label
+# Synchronized with Gmail v1 discovery revision 20260824. When Gmail changes the
+# LabelColor schema, update this set and its exact fingerprint test together.
 GMAIL_LABEL_COLORS = frozenset(
     {
         "#000000",
