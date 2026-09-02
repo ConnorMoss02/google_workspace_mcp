@@ -117,7 +117,9 @@ async def _download_file_bytes(
     to be parsed as text anyway; anything that ends up on disk should go through
     _download_file_to_temp instead.
     """
-    return await download_media_bytes(_media_request(service, file_id, export_mime_type))
+    return await download_media_bytes(
+        _media_request(service, file_id, export_mime_type)
+    )
 
 
 async def _download_file_to_temp(
