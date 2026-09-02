@@ -2377,15 +2377,18 @@ async def test_update_drive_file_replace_uses_content_lock(
         "file123",
         {"name": "note.md", "mimeType": "text/markdown"},
     )
+    events = []
     lock = Mock()
-    lock.acquire = AsyncMock()
+    lock.acquire = AsyncMock(side_effect=lambda: events.append("acquire"))
+    lock.release = Mock(side_effect=lambda: events.append("release"))
     mock_get_lock.return_value = lock
     mock_service = Mock()
-    mock_service.files().update().execute.return_value = {
-        "id": "file123",
-        "name": "note.md",
-        "mimeType": "text/markdown",
-    }
+
+    def _execute(**kwargs):
+        events.append("update")
+        return {"id": "file123", "name": "note.md", "mimeType": "text/markdown"}
+
+    mock_service.files().update().execute.side_effect = _execute
 
     await _unwrap(update_drive_file)(
         service=mock_service,
@@ -2398,6 +2401,7 @@ async def test_update_drive_file_replace_uses_content_lock(
     mock_get_lock.assert_called_once_with("file123")
     lock.acquire.assert_awaited_once_with()
     lock.release.assert_called_once_with()
+    assert events == ["acquire", "update", "release"]
 
 
 @pytest.mark.asyncio
