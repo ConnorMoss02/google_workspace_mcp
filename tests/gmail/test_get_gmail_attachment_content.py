@@ -135,6 +135,26 @@ async def test_default_call_omits_base64_content(isolated_attachment_env):
 
 
 @pytest.mark.asyncio
+async def test_uncapped_stateless_download_skips_metadata_preflight(monkeypatch):
+    """An unset cap preserves the historical one-request stateless path."""
+    monkeypatch.delenv("WORKSPACE_MCP_MAX_FILE_BYTES", raising=False)
+    monkeypatch.setattr("auth.oauth_config.is_stateless_mode", lambda: True)
+    mock_service = _build_mock_service(b"attachment")
+    metadata_execute = mock_service.users().messages().get().execute
+    metadata_execute.reset_mock()
+
+    result = await _unwrap(get_gmail_attachment_content)(
+        service=mock_service,
+        message_id="msg-1",
+        attachment_id="att-123",
+        user_google_email="user@example.com",
+    )
+
+    assert "Attachment downloaded successfully!" in result
+    metadata_execute.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_rejects_oversized_before_download(monkeypatch, isolated_attachment_env):
     """Declared attachment size should block attachments().get() entirely."""
     monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", "100")
@@ -166,6 +186,38 @@ async def test_rejects_oversized_before_download(monkeypatch, isolated_attachmen
     assert result.startswith("Error:")
     assert "huge.bin" in result
     assert "WORKSPACE_MCP_MAX_FILE_BYTES" in result
+    download_execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cap_fails_closed_when_deep_attachment_metadata_is_truncated(
+    monkeypatch, isolated_attachment_env
+):
+    """A part beyond the six-level fields mask must not bypass the preflight."""
+    monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", "100")
+    mock_service = _build_mock_service(b"x" * 500, filename="deep.bin")
+
+    # Model Gmail's response when the requested attachment lives below the
+    # finite partial-response projection: parent MIME nodes are present, but
+    # the deeper attachment body/size is not returned.
+    payload = {}
+    cursor = payload
+    for _ in range(7):
+        child = {"filename": "", "mimeType": "multipart/mixed", "body": {}}
+        cursor["parts"] = [child]
+        cursor = child
+    mock_service.users().messages().get().execute.return_value = {"payload": payload}
+    download_execute = mock_service.users().messages().attachments().get().execute
+    download_execute.reset_mock()
+
+    result = await _unwrap(get_gmail_attachment_content)(
+        service=mock_service,
+        message_id="msg-1",
+        attachment_id="deep-att",
+        user_google_email="user@example.com",
+    )
+
+    assert result.startswith("Error: Could not verify the attachment size")
     download_execute.assert_not_called()
 
 

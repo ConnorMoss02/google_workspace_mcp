@@ -35,7 +35,11 @@ from core.attachment_storage import (
     get_attachment_url,
     STORAGE_DIR,
 )
-from core.file_limits import FileTooLargeError, ensure_within_file_size_limit
+from core.file_limits import (
+    FileTooLargeError,
+    ensure_within_file_size_limit,
+    get_max_file_bytes,
+)
 from core.config import (
     get_transport_mode,
     WORKSPACE_EXTERNAL_URL,
@@ -474,14 +478,14 @@ async def _export_full_message(
         )
         return "\n".join(result_lines)
 
-    # Encode + write on a worker thread so a large export doesn't block the event loop.
+    # Write on a worker thread so a large export doesn't block the event loop.
     # Cap the sender-controlled subject so a pathologically long Subject can't overflow
     # the filesystem's filename limit, and surface a clean error if the write fails.
     storage = get_attachment_storage()
 
     def _save_export():
-        return storage.save_attachment(
-            base64_data=base64.urlsafe_b64encode(content_bytes).decode("ascii"),
+        return storage.save_attachment_bytes(
+            file_bytes=content_bytes,
             filename=f"{subject[:80]}{extension}",
             mime_type=mime_type,
         )
@@ -807,6 +811,22 @@ def _extract_attachments(payload: dict) -> List[Dict[str, Any]]:
     # Start searching from the root payload
     search_parts(payload)
     return attachments
+
+
+def _find_attachment_metadata(payload: dict, attachment_id: str) -> Optional[dict]:
+    """Find one attachment by ID without requiring it to have a filename."""
+    body = payload.get("body") or {}
+    if body.get("attachmentId") == attachment_id:
+        return {
+            "filename": payload.get("filename") or None,
+            "mimeType": payload.get("mimeType") or "application/octet-stream",
+            "size": body.get("size"),
+        }
+    for part in payload.get("parts") or []:
+        match = _find_attachment_metadata(part, attachment_id)
+        if match is not None:
+            return match
+    return None
 
 
 def _extract_headers(payload: dict, header_names: List[str]) -> Dict[str, str]:
@@ -2118,37 +2138,43 @@ async def get_gmail_attachment_content(
     filename = None
     mime_type = None
     declared_size = None
-    try:
-        message_full = await asyncio.to_thread(
-            service.users()
-            .messages()
-            .get(
-                userId="me",
-                id=message_id,
-                format="full",
-                fields=_ATTACHMENT_METADATA_FIELDS,
+    max_file_bytes = get_max_file_bytes()
+    if max_file_bytes is not None:
+        try:
+            message_full = await asyncio.to_thread(
+                service.users()
+                .messages()
+                .get(
+                    userId="me",
+                    id=message_id,
+                    format="full",
+                    fields=_ATTACHMENT_METADATA_FIELDS,
+                )
+                .execute
             )
-            .execute
-        )
-        payload = message_full.get("payload", {})
-        attachments = _extract_attachments(payload)
+            payload = message_full.get("payload", {})
+            matched = _find_attachment_metadata(payload, attachment_id)
 
-        matched = None
-        for att in attachments:
-            if att.get("attachmentId") == attachment_id:
-                matched = att
-                break
-        if matched is None and len(attachments) == 1:
-            matched = attachments[0]
+            if matched is not None:
+                filename = matched.get("filename")
+                mime_type = matched.get("mimeType")
+                declared_size = matched.get("size")
+        except Exception:
+            logger.debug(
+                f"Could not fetch attachment metadata for {attachment_id} before download"
+            )
 
-        if matched is not None:
-            filename = matched.get("filename")
-            mime_type = matched.get("mimeType")
-            declared_size = matched.get("size")
-    except Exception:
-        logger.debug(
-            f"Could not fetch attachment metadata for {attachment_id} before download"
-        )
+        # attachments().get() returns the complete base64 payload in one API
+        # response, so there is no opportunity to stop mid-body. If the bounded
+        # metadata projection could not resolve this attachment (for example,
+        # because it is nested deeper than the fields mask), fail closed before
+        # requesting data that may exceed the configured cap.
+        if declared_size is None:
+            return (
+                "Error: Could not verify the attachment size before download while "
+                "WORKSPACE_MCP_MAX_FILE_BYTES is configured. Fetch the message again "
+                "for a current attachment ID or disable the cap for this trusted file."
+            )
 
     try:
         ensure_within_file_size_limit(
@@ -2156,6 +2182,7 @@ async def get_gmail_attachment_content(
             file_name=filename,
             file_id=attachment_id,
             kind="attachment",
+            max_bytes=max_file_bytes,
         )
     except FileTooLargeError as e:
         return str(e)
@@ -2191,6 +2218,7 @@ async def get_gmail_attachment_content(
             file_name=filename,
             file_id=attachment_id,
             kind="attachment",
+            max_bytes=max_file_bytes,
         )
     except FileTooLargeError as e:
         if isinstance(attachment, dict):

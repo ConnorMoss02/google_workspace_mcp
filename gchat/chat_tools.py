@@ -706,7 +706,9 @@ async def download_chat_attachment(
     from auth.oauth_config import is_stateless_mode
 
     if is_stateless_mode():
-        b64_preview = base64.urlsafe_b64encode(file_bytes).decode("utf-8")[:100]
+        # 75 input bytes encode to at most 100 base64 characters; do not encode
+        # the entire attachment merely to return a short preview.
+        b64_preview = base64.urlsafe_b64encode(file_bytes[:75]).decode("utf-8")[:100]
         return "\n".join(
             [
                 f"Attachment downloaded: {filename} ({content_type})",
@@ -722,9 +724,8 @@ async def download_chat_attachment(
     from core.config import get_transport_mode
 
     storage = get_attachment_storage()
-    b64_data = base64.urlsafe_b64encode(file_bytes).decode("utf-8")
-    result = storage.save_attachment(
-        base64_data=b64_data, filename=filename, mime_type=content_type
+    result = storage.save_attachment_bytes(
+        file_bytes=file_bytes, filename=filename, mime_type=content_type
     )
 
     result_lines = [

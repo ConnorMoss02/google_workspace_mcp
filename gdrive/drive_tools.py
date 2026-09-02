@@ -503,12 +503,11 @@ async def get_drive_file_download_url(
     resolved_file_id, file_metadata = await resolve_drive_item(
         service,
         file_id,
-        extra_fields="name, webViewLink, mimeType, size",
+        extra_fields="name, webViewLink, mimeType",
     )
     file_id = resolved_file_id
     mime_type = file_metadata.get("mimeType", "")
     file_name = file_metadata.get("name", "Unknown File")
-    web_view_link = file_metadata.get("webViewLink", "#")
 
     # Determine export format for Google native files
     export_mime_type = None
@@ -563,18 +562,6 @@ async def get_drive_file_download_url(
             output_mime_type = export_mime_type
             if not output_filename.endswith(".pdf"):
                 output_filename = f"{Path(output_filename).stem}.pdf"
-
-    # Declared Drive size only applies to original-file downloads (not GSuite exports).
-    if not export_mime_type:
-        try:
-            ensure_within_file_size_limit(
-                file_metadata.get("size"),
-                file_name=file_name,
-                file_id=file_id,
-                web_view_link=web_view_link,
-            )
-        except FileTooLargeError as e:
-            return str(e)
 
     # Stream the download straight to disk. The payload is never held in memory
     # as a whole, so file size no longer bounds how much RAM this tool needs.
@@ -2167,9 +2154,7 @@ async def update_drive_file(
     remote_file_data = None
     format_map = None
     content_update_lock = (
-        _get_content_update_lock(file_id)
-        if replacing_content and mode != "replace"
-        else None
+        _get_content_update_lock(file_id) if replacing_content else None
     )
     if content_update_lock is not None:
         await content_update_lock.acquire()

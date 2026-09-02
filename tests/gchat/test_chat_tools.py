@@ -3,7 +3,6 @@ Unit tests for Google Chat MCP tools — attachment support
 """
 
 import asyncio
-import base64
 import inspect
 import ssl
 from urllib.parse import urlparse
@@ -547,7 +546,7 @@ async def test_download_uses_api_media_endpoint():
         patch("core.config.get_transport_mode", return_value="stdio"),
         patch("core.attachment_storage.get_attachment_storage") as mock_get_storage,
     ):
-        mock_get_storage.return_value.save_attachment.return_value = saved
+        mock_get_storage.return_value.save_attachment_bytes.return_value = saved
 
         result = await _unwrap(download_chat_attachment)(
             service=service,
@@ -574,12 +573,11 @@ async def test_download_uses_api_media_endpoint():
     # Verify Bearer token
     assert call_args.kwargs["headers"]["Authorization"] == "Bearer fake-access-token"
 
-    # Verify save_attachment was called with correct base64 data
-    save_args = mock_get_storage.return_value.save_attachment.call_args
+    # Verify decoded bytes are written directly without a base64 round trip.
+    save_args = mock_get_storage.return_value.save_attachment_bytes.call_args
     assert save_args.kwargs["filename"] == "image.png"
     assert save_args.kwargs["mime_type"] == "image/png"
-    decoded = base64.urlsafe_b64decode(save_args.kwargs["base64_data"])
-    assert decoded == fake_bytes
+    assert save_args.kwargs["file_bytes"] == fake_bytes
 
 
 @pytest.mark.asyncio
@@ -614,7 +612,7 @@ async def test_download_falls_back_to_att_name():
         patch("core.config.get_transport_mode", return_value="stdio"),
         patch("core.attachment_storage.get_attachment_storage") as mock_get_storage,
     ):
-        mock_get_storage.return_value.save_attachment.return_value = saved
+        mock_get_storage.return_value.save_attachment_bytes.return_value = saved
 
         result = await _unwrap(download_chat_attachment)(
             service=service,
@@ -667,7 +665,7 @@ async def test_download_http_mode_returns_url():
             return_value="http://localhost:8005/attachments/alt1",
         ),
     ):
-        mock_get_storage.return_value.save_attachment.return_value = saved
+        mock_get_storage.return_value.save_attachment_bytes.return_value = saved
 
         result = await _unwrap(download_chat_attachment)(
             service=service,

@@ -43,9 +43,16 @@ def test_get_max_file_bytes_positive(monkeypatch):
     assert get_max_file_bytes() == 5242880
 
 
-def test_get_max_file_bytes_invalid_uncapped(monkeypatch):
+def test_get_max_file_bytes_invalid_fails_closed(monkeypatch):
     monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", "nope")
-    assert get_max_file_bytes() is None
+    with pytest.raises(ValueError, match="WORKSPACE_MCP_MAX_FILE_BYTES"):
+        get_max_file_bytes()
+
+
+def test_get_max_file_bytes_negative_fails_closed(monkeypatch):
+    monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", "-1")
+    with pytest.raises(ValueError, match="WORKSPACE_MCP_MAX_FILE_BYTES"):
+        get_max_file_bytes()
 
 
 def test_ensure_within_file_size_limit_noop_when_uncapped(monkeypatch):
@@ -74,15 +81,19 @@ def test_ensure_within_file_size_limit_raises(monkeypatch):
 async def test_download_media_bytes_uncapped(monkeypatch):
     monkeypatch.delenv("WORKSPACE_MCP_MAX_FILE_BYTES", raising=False)
     data = b"hello-world"
+    observed_chunksizes = []
+
+    def make_downloader(fh, req, chunksize=None):
+        observed_chunksizes.append(chunksize)
+        return _FakeDownloader(fh, req, data, chunksize=chunksize)
 
     with patch(
         "core.file_limits.MediaIoBaseDownload",
-        side_effect=lambda fh, req, chunksize=None: _FakeDownloader(
-            fh, req, data, chunksize=chunksize
-        ),
+        side_effect=make_downloader,
     ):
         result = await download_media_bytes(Mock())
     assert result == data
+    assert observed_chunksizes == [None]
 
 
 def _mock_stream_response(
@@ -183,3 +194,25 @@ async def test_download_media_bytes_capped_success(monkeypatch):
         result = await download_media_bytes(request)
 
     assert result == data
+    sent_headers = client_cm.__aenter__.return_value.stream.call_args.kwargs["headers"]
+    assert sent_headers["Accept-Encoding"] == "identity"
+    assert sum(key.lower() == "accept-encoding" for key in sent_headers) == 1
+
+
+@pytest.mark.asyncio
+async def test_encoded_content_length_is_not_compared_to_decoded_limit(monkeypatch):
+    monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", "10")
+    request = Mock(uri="https://example/media", method="GET")
+    request.headers = {"accept-encoding": "gzip, deflate"}
+    request.http = Mock(credentials=None)
+
+    # A gzip wire representation can be larger than a small decoded file.
+    client_cm, _resp = _mock_stream_response(
+        body=b"ok",
+        headers={"content-length": "22", "content-encoding": "gzip"},
+    )
+
+    with patch("core.file_limits.httpx.AsyncClient", return_value=client_cm):
+        result = await download_media_bytes(request)
+
+    assert result == b"ok"
