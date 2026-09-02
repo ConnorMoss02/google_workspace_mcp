@@ -195,6 +195,8 @@ uvx workspace-mcp --tools gmail drive calendar
 export MCP_ENABLE_OAUTH21=true
 export GOOGLE_OAUTH_CLIENT_ID="..."
 export GOOGLE_OAUTH_CLIENT_SECRET="..."
+#    Alternatively, point GOOGLE_CLIENT_SECRET_PATH at a client_secret.json
+#    that contains the client id and secret (env vars take precedence).
 export WORKSPACE_MCP_PORT=8000
 export GOOGLE_OAUTH_REDIRECT_URI="http://localhost:${WORKSPACE_MCP_PORT}/oauth2callback"
 export OAUTHLIB_INSECURE_TRANSPORT=1

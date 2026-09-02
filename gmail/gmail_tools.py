@@ -22,6 +22,7 @@ from email.policy import SMTP
 from email.utils import formataddr
 
 import httpx
+from fastmcp.exceptions import ToolError as ToolExecutionError
 from mcp.types import ToolAnnotations
 
 from pydantic import Field
@@ -71,6 +72,7 @@ from gmail.gmail_helpers import (
     _http_error_status,
     _retryable_result_ids,
     _signature_html_to_text,
+    build_label_color,
     html_to_text_preserving_breaks,
 )
 
@@ -3636,6 +3638,9 @@ async def manage_gmail_label(
     label_id: Optional[str] = None,
     label_list_visibility: Literal["labelShow", "labelHide"] = "labelShow",
     message_list_visibility: Literal["show", "hide"] = "show",
+    background_color: Optional[str] = None,
+    text_color: Optional[str] = None,
+    clear_color: bool = False,
 ) -> str:
     """
     Manages Gmail labels: create, update, or delete labels.
@@ -3647,6 +3652,9 @@ async def manage_gmail_label(
         label_id (Optional[str]): Label ID. Required for update and delete operations.
         label_list_visibility (Literal["labelShow", "labelHide"]): Whether the label is shown in the label list.
         message_list_visibility (Literal["show", "hide"]): Whether the label is shown in the message list.
+        background_color (Optional[str]): Label background color as a hex string, e.g. "#fb4c2f". Set together with text_color; Gmail requires both. Gmail accepts only its own palette, and an unsupported value is rejected before the request. Colors apply to user labels, not system labels.
+        text_color (Optional[str]): Label text color as a hex string, e.g. "#ffffff". Set together with background_color. Same palette. On update, omitting both keeps the label's current color.
+        clear_color (bool): On update, remove the label's current color. Cannot be combined with background_color or text_color.
 
     Returns:
         str: Confirmation message of the label operation.
@@ -3661,12 +3669,29 @@ async def manage_gmail_label(
     if action in ["update", "delete"] and not label_id:
         raise Exception("Label ID is required for update and delete actions.")
 
+    color = None
+    if action in ["create", "update"]:
+        if clear_color:
+            if action == "create":
+                raise ToolExecutionError(
+                    "clear_color is only valid for update actions."
+                )
+            if background_color is not None or text_color is not None:
+                raise ToolExecutionError(
+                    "clear_color cannot be combined with background_color or text_color."
+                )
+        else:
+            # Validated before any request so a bad color costs no API call.
+            color = build_label_color(background_color, text_color)
+
     if action == "create":
         label_object = {
             "name": name,
             "labelListVisibility": label_list_visibility,
             "messageListVisibility": message_list_visibility,
         }
+        if color:
+            label_object["color"] = color
         created_label = await asyncio.to_thread(
             service.users().labels().create(userId="me", body=label_object).execute
         )
@@ -3683,6 +3708,9 @@ async def manage_gmail_label(
             "labelListVisibility": label_list_visibility,
             "messageListVisibility": message_list_visibility,
         }
+        label_color = None if clear_color else color or current_label.get("color")
+        if label_color:
+            label_object["color"] = label_color
 
         updated_label = await asyncio.to_thread(
             service.users()
