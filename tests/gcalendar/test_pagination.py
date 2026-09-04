@@ -114,6 +114,50 @@ class TestGetEventsPagination:
         assert "Next page token: token-next" in result
 
     @pytest.mark.asyncio
+    async def test_a_continuation_without_time_min_is_rejected(self):
+        """With time_min omitted the range starts at "now", which moves between
+        calls, so the continuation would page a different query than the token
+        came from."""
+        service = _events_service([_event()])
+        # The helper primes the mock by calling list() once; ignore that setup call.
+        service.events().list.reset_mock()
+
+        with pytest.raises(ValueError, match="page_token requires time_min"):
+            await _unwrap(get_events)(
+                service=service,
+                user_google_email=EMAIL,
+                page_token="token-abc",
+            )
+
+        service.events().list.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_a_continuation_with_time_min_is_allowed(self):
+        service = _events_service([_event()])
+
+        await _get_events(service, page_token="token-abc")
+
+        params = service.events().list.call_args.kwargs
+        assert params["pageToken"] == "token-abc"
+        assert params["timeMin"] == "2026-04-06T00:00:00Z"
+
+    @pytest.mark.asyncio
+    async def test_a_continuation_without_time_min_is_allowed_when_not_expanding(self):
+        """Unexpanded queries omit timeMin entirely, so nothing drifts."""
+        service = _events_service([_event()])
+
+        await _unwrap(get_events)(
+            service=service,
+            user_google_email=EMAIL,
+            page_token="token-abc",
+            single_events=False,
+        )
+
+        params = service.events().list.call_args.kwargs
+        assert params["pageToken"] == "token-abc"
+        assert "timeMin" not in params
+
+    @pytest.mark.asyncio
     async def test_a_genuinely_empty_range_still_reports_no_events(self):
         service = _events_service([])
 

@@ -475,6 +475,17 @@ async def get_events(
         items = [event]
     else:
         # Handle multiple events retrieval with time filtering
+        # A page token is only valid for the query that produced it. With
+        # time_min omitted and single_events on, the effective start is "now",
+        # which moves between calls, so a continuation would silently page a
+        # different query than the one the token came from.
+        if page_token and time_min is None and single_events:
+            raise ValueError(
+                "[get_events] page_token requires time_min. Pass the same time_min "
+                "used for the first page; without it the range starts at the current "
+                "time, which changes between calls and does not match the token."
+            )
+
         # Ensure time_min and time_max are correctly formatted for the API
         formatted_time_min = _correct_time_format_for_api(time_min, "time_min", None)
         if formatted_time_min:
