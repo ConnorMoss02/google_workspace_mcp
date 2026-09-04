@@ -49,7 +49,7 @@ Sends a message to a Google Chat space. Can reply to existing threads, or edit a
 | message_text | string | yes | | |
 | thread_key | any | no | | App-defined key; creates thread if not found |
 | thread_name | any | no | | Resource name, e.g. `spaces/X/threads/Y` |
-| message_name | any | no | | Edit this message in place, e.g. `spaces/X/messages/Y`; own messages only, cannot be combined with a thread parameter |
+| message_name | any | no | | Edit this message in place, e.g. `spaces/X/messages/Y`; must sit in `space_id`, own messages only, cannot be combined with a thread parameter |
 
 ---
 

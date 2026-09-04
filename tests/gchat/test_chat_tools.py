@@ -805,3 +805,65 @@ async def test_send_message_rejects_message_name_with_thread_reply():
 
     assert messages.patch.call_count == 0
     assert messages.create.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_send_message_rejects_message_name_outside_the_space():
+    """A message_name from another space would silently report the wrong space."""
+    service, messages = _mock_chat_service()
+
+    from gchat.chat_tools import send_message
+    from core.utils import UserInputError
+
+    with pytest.raises(UserInputError):
+        await _unwrap(send_message)(
+            service=service,
+            user_google_email="test@example.com",
+            space_id="spaces/S",
+            message_text="corrected text",
+            message_name="spaces/OTHER/messages/M",
+        )
+
+    assert messages.patch.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_send_message_rejects_malformed_message_name():
+    """A bare message id cannot be patched — fail before the API does."""
+    service, messages = _mock_chat_service()
+
+    from gchat.chat_tools import send_message
+    from core.utils import UserInputError
+
+    with pytest.raises(UserInputError):
+        await _unwrap(send_message)(
+            service=service,
+            user_google_email="test@example.com",
+            space_id="spaces/S",
+            message_text="corrected text",
+            message_name="M",
+        )
+
+    assert messages.patch.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_send_message_edit_falls_back_to_create_time():
+    """Older API responses omit lastUpdateTime; the confirmation must stay readable."""
+    service, messages = _mock_chat_service()
+    messages.patch.return_value.execute.return_value = {
+        "name": "spaces/S/messages/M",
+        "createTime": "2025-01-01T00:00:00Z",
+    }
+
+    from gchat.chat_tools import send_message
+
+    result = await _unwrap(send_message)(
+        service=service,
+        user_google_email="test@example.com",
+        space_id="spaces/S",
+        message_text="corrected text",
+        message_name="spaces/S/messages/M",
+    )
+
+    assert "2025-01-01T00:00:00Z" in result
