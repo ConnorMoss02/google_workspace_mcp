@@ -707,3 +707,101 @@ async def test_download_returns_error_on_failure():
 
     assert "Failed to download" in result
     assert "connection refused" in result
+
+
+# ---------------------------------------------------------------------------
+# send_message: editing an existing message in place
+# ---------------------------------------------------------------------------
+
+
+def _mock_chat_service():
+    """Chat service mock exposing a stable spaces().messages() resource."""
+    service = Mock()
+    messages = Mock()
+    service.spaces.return_value.messages.return_value = messages
+    return service, messages
+
+
+@pytest.mark.asyncio
+async def test_send_message_exposes_message_name_param():
+    """send_message should expose message_name for in-place edits."""
+    from gchat.chat_tools import send_message
+
+    public_fn = getattr(send_message, "fn", send_message)
+    params = inspect.signature(public_fn).parameters
+
+    assert "message_name" in params
+    assert params["message_name"].default is None
+
+
+@pytest.mark.asyncio
+async def test_send_message_edits_existing_message_instead_of_creating():
+    """With message_name set, send_message should patch the message, not create one."""
+    service, messages = _mock_chat_service()
+    messages.patch.return_value.execute.return_value = {
+        "name": "spaces/S/messages/M",
+        "lastUpdateTime": "2025-01-01T00:00:00Z",
+    }
+
+    from gchat.chat_tools import send_message
+
+    result = await _unwrap(send_message)(
+        service=service,
+        user_google_email="test@example.com",
+        space_id="spaces/S",
+        message_text="corrected text",
+        message_name="spaces/S/messages/M",
+    )
+
+    assert messages.create.call_count == 0
+    patch_kwargs = messages.patch.call_args.kwargs
+    assert patch_kwargs["name"] == "spaces/S/messages/M"
+    assert patch_kwargs["updateMask"] == "text"
+    assert patch_kwargs["body"] == {"text": "corrected text"}
+    assert "updated" in result.lower()
+    assert "spaces/S/messages/M" in result
+
+
+@pytest.mark.asyncio
+async def test_send_message_without_message_name_still_creates():
+    """The default path must stay a create, untouched by the edit support."""
+    service, messages = _mock_chat_service()
+    messages.create.return_value.execute.return_value = {
+        "name": "spaces/S/messages/NEW",
+        "createTime": "2025-01-01T00:00:00Z",
+    }
+
+    from gchat.chat_tools import send_message
+
+    result = await _unwrap(send_message)(
+        service=service,
+        user_google_email="test@example.com",
+        space_id="spaces/S",
+        message_text="hello",
+    )
+
+    assert messages.patch.call_count == 0
+    assert messages.create.call_args.kwargs["parent"] == "spaces/S"
+    assert "sent" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_send_message_rejects_message_name_with_thread_reply():
+    """An edit cannot also be a thread reply — the thread of a message is fixed."""
+    service, messages = _mock_chat_service()
+
+    from gchat.chat_tools import send_message
+    from core.utils import UserInputError
+
+    with pytest.raises(UserInputError):
+        await _unwrap(send_message)(
+            service=service,
+            user_google_email="test@example.com",
+            space_id="spaces/S",
+            message_text="corrected text",
+            message_name="spaces/S/messages/M",
+            thread_name="spaces/S/threads/T",
+        )
+
+    assert messages.patch.call_count == 0
+    assert messages.create.call_count == 0

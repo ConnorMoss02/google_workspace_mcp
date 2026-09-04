@@ -18,7 +18,7 @@ from mcp.types import ToolAnnotations
 # Auth & server utilities
 from auth.service_decorator import require_google_service, require_multiple_services
 from core.server import server
-from core.utils import TransientNetworkError, handle_http_errors
+from core.utils import TransientNetworkError, UserInputError, handle_http_errors
 
 logger = logging.getLogger(__name__)
 
@@ -329,18 +329,50 @@ async def send_message(
     message_text: str,
     thread_key: Optional[str] = None,
     thread_name: Optional[str] = None,
+    message_name: Optional[str] = None,
 ) -> str:
     """
-    Sends a message to a Google Chat space.
+    Sends a message to a Google Chat space, or edits a message already sent there.
 
     Args:
         thread_name: Reply in an existing thread by its resource name (e.g. spaces/X/threads/Y).
         thread_key: Reply in a thread by app-defined key (creates thread if not found).
+        message_name: Edit this message in place instead of sending a new one
+            (e.g. spaces/X/messages/Y, as returned by send_message or get_messages).
+            Only the text is replaced, and only the author can edit their own message.
 
     Returns:
-        str: Confirmation message with sent message details.
+        str: Confirmation message with the sent or updated message details.
     """
     logger.info(f"[send_message] Email: '{user_google_email}', Space: '{space_id}'")
+
+    if message_name:
+        if thread_name or thread_key:
+            raise UserInputError(
+                "message_name cannot be combined with thread_name or thread_key: "
+                "editing a message cannot move it to another thread."
+            )
+
+        message = await asyncio.to_thread(
+            service.spaces()
+            .messages()
+            .patch(
+                name=message_name,
+                updateMask="text",
+                body={"text": message_text},
+            )
+            .execute
+        )
+
+        update_time = message.get("lastUpdateTime", "")
+        msg = (
+            f"Message updated in space '{space_id}' by {user_google_email}. "
+            f"Message ID: {message.get('name', message_name)}, Time: {update_time}"
+        )
+        logger.info(
+            f"Successfully updated message '{message_name}' by {user_google_email}"
+        )
+        return msg
 
     message_body = {"text": message_text}
 
