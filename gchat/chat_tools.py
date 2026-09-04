@@ -347,7 +347,7 @@ async def send_message(
     """
     logger.info(f"[send_message] Email: '{user_google_email}', Space: '{space_id}'")
 
-    if message_name:
+    if message_name is not None:
         if thread_name or thread_key:
             raise UserInputError(
                 "message_name cannot be combined with thread_name or thread_key: "

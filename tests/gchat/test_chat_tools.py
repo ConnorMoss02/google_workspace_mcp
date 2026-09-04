@@ -867,3 +867,24 @@ async def test_send_message_edit_falls_back_to_create_time():
     )
 
     assert "2025-01-01T00:00:00Z" in result
+
+
+@pytest.mark.asyncio
+async def test_send_message_rejects_empty_message_name():
+    """An empty message_name is a failed edit, not a request to post a new message."""
+    service, messages = _mock_chat_service()
+
+    from gchat.chat_tools import send_message
+    from core.utils import UserInputError
+
+    with pytest.raises(UserInputError):
+        await _unwrap(send_message)(
+            service=service,
+            user_google_email="test@example.com",
+            space_id="spaces/S",
+            message_text="corrected text",
+            message_name="",
+        )
+
+    assert messages.create.call_count == 0
+    assert messages.patch.call_count == 0
