@@ -1,0 +1,181 @@
+"""
+Unit tests for pagination in get_events and list_calendars.
+
+gcalendar was the only package in the repo with no pagination: the request was
+built without pageToken and nextPageToken was dropped from the response. A
+caller received one page and no signal that more existed, and an empty page
+carrying a nextPageToken produced "No events found", which the Calendar API can
+make untrue.
+
+These tests assert both directions: the token is forwarded on the request, and
+it is surfaced on the response.
+"""
+
+import os
+import sys
+from unittest.mock import Mock
+
+import pytest
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+
+from gcalendar.calendar_tools import get_events, list_calendars
+
+EMAIL = "user@example.com"
+
+
+def _unwrap(tool):
+    """Unwrap FunctionTool + decorators to the original async function."""
+    fn = tool.fn if hasattr(tool, "fn") else tool
+    while hasattr(fn, "__wrapped__"):
+        fn = fn.__wrapped__
+    return fn
+
+
+def _event(event_id="evt-1", summary="Standup"):
+    return {
+        "id": event_id,
+        "summary": summary,
+        "start": {"dateTime": "2026-04-06T09:00:00Z"},
+        "end": {"dateTime": "2026-04-06T09:15:00Z"},
+    }
+
+
+def _events_service(items, next_page_token=None):
+    response = {"items": items}
+    if next_page_token is not None:
+        response["nextPageToken"] = next_page_token
+    service = Mock()
+    service.events().list().execute = Mock(return_value=response)
+    return service
+
+
+def _calendars_service(items, next_page_token=None):
+    response = {"items": items}
+    if next_page_token is not None:
+        response["nextPageToken"] = next_page_token
+    service = Mock()
+    service.calendarList().list().execute = Mock(return_value=response)
+    return service
+
+
+async def _get_events(service, **kwargs):
+    return await _unwrap(get_events)(
+        service=service,
+        user_google_email=EMAIL,
+        time_min="2026-04-06T00:00:00Z",
+        time_max="2026-04-07T00:00:00Z",
+        **kwargs,
+    )
+
+
+class TestGetEventsPagination:
+    @pytest.mark.asyncio
+    async def test_forwards_the_page_token(self):
+        service = _events_service([_event()])
+
+        await _get_events(service, page_token="token-abc")
+
+        assert service.events().list.call_args.kwargs["pageToken"] == "token-abc"
+
+    @pytest.mark.asyncio
+    async def test_omits_page_token_when_not_given(self):
+        service = _events_service([_event()])
+
+        await _get_events(service)
+
+        assert "pageToken" not in service.events().list.call_args.kwargs
+
+    @pytest.mark.asyncio
+    async def test_surfaces_the_next_page_token(self):
+        service = _events_service([_event()], next_page_token="token-next")
+
+        result = await _get_events(service)
+
+        assert "Next page token: token-next" in result
+
+    @pytest.mark.asyncio
+    async def test_says_nothing_about_pages_when_the_last_one_is_reached(self):
+        service = _events_service([_event()])
+
+        result = await _get_events(service)
+
+        assert "Next page token" not in result
+
+    @pytest.mark.asyncio
+    async def test_an_empty_page_with_more_behind_it_is_not_reported_as_no_events(self):
+        """The API can return an empty page alongside a nextPageToken."""
+        service = _events_service([], next_page_token="token-next")
+
+        result = await _get_events(service)
+
+        assert "No events found" not in result
+        assert "more pages remain" in result
+        assert "Next page token: token-next" in result
+
+    @pytest.mark.asyncio
+    async def test_a_genuinely_empty_range_still_reports_no_events(self):
+        service = _events_service([])
+
+        result = await _get_events(service)
+
+        assert "No events found" in result
+        assert "Next page token" not in result
+
+
+class TestListCalendarsPagination:
+    @pytest.mark.asyncio
+    async def test_forwards_page_token_and_max_results(self):
+        service = _calendars_service([{"id": "primary", "summary": "Work"}])
+
+        await _unwrap(list_calendars)(
+            service=service,
+            user_google_email=EMAIL,
+            max_results=10,
+            page_token="token-abc",
+        )
+
+        params = service.calendarList().list.call_args.kwargs
+        assert params["pageToken"] == "token-abc"
+        assert params["maxResults"] == 10
+
+    @pytest.mark.asyncio
+    async def test_sends_no_paging_arguments_by_default(self):
+        """Omitting both keeps the API's own defaults, as before this change."""
+        service = _calendars_service([{"id": "primary", "summary": "Work"}])
+
+        await _unwrap(list_calendars)(service=service, user_google_email=EMAIL)
+
+        params = service.calendarList().list.call_args.kwargs
+        assert "pageToken" not in params
+        assert "maxResults" not in params
+
+    @pytest.mark.asyncio
+    async def test_surfaces_the_next_page_token(self):
+        service = _calendars_service(
+            [{"id": "primary", "summary": "Work"}], next_page_token="token-next"
+        )
+
+        result = await _unwrap(list_calendars)(service=service, user_google_email=EMAIL)
+
+        assert "Successfully listed 1 calendars" in result
+        assert "Next page token: token-next" in result
+
+    @pytest.mark.asyncio
+    async def test_an_empty_page_with_more_behind_it_is_not_reported_as_no_calendars(
+        self,
+    ):
+        service = _calendars_service([], next_page_token="token-next")
+
+        result = await _unwrap(list_calendars)(service=service, user_google_email=EMAIL)
+
+        assert "No calendars found" not in result
+        assert "Next page token: token-next" in result
+
+    @pytest.mark.asyncio
+    async def test_a_genuinely_empty_account_still_reports_no_calendars(self):
+        service = _calendars_service([])
+
+        result = await _unwrap(list_calendars)(service=service, user_google_email=EMAIL)
+
+        assert "No calendars found" in result

@@ -12,6 +12,8 @@ List all calendars accessible to the authenticated user. Returns summary, ID, an
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
 | user_google_email | string | yes | | |
+| max_results | integer | no | | Max calendars per page. Omit for the API default |
+| page_token | string | no | | Token from a previous response's `Next page token` |
 
 ### get_events
 Retrieve events from a calendar. Fetch a single event by ID, list events in a time range, or search by keyword.
@@ -23,10 +25,15 @@ Retrieve events from a calendar. Fetch a single event by ID, list events in a ti
 | event_id | string | no | | Retrieve a single event; ignores time filters when set |
 | time_min | string | no | now | Start of range, RFC 3339 (e.g. `2026-03-19T09:00:00Z` or `2026-03-19`) |
 | time_max | string | no | | End of range, RFC 3339 (exclusive) |
-| max_results | integer | no | 25 | Max events to return |
+| max_results | integer | no | 25 | Max events per page |
 | query | string | no | | Keyword search across summary, description, location |
 | detailed | boolean | no | false | Include description, location, attendees with response status |
 | include_attachments | boolean | no | false | Show attachment details (fileId, fileUrl, mimeType, title). Only applies when `detailed=true` |
+| page_token | string | no | | Token from a previous response's `Next page token`. Ignored when `event_id` is set |
+
+Both tools append `Next page token: <token>` to the response when more pages remain. Pass it
+back as `page_token` to continue. Without it a caller sees one page and no indication that
+further results exist.
 
 ### manage_event
 Create, update, or delete a calendar event.
