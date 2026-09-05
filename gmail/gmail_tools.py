@@ -35,6 +35,11 @@ from core.attachment_storage import (
     get_attachment_url,
     STORAGE_DIR,
 )
+from core.file_limits import (
+    FileTooLargeError,
+    ensure_within_file_size_limit,
+    get_max_file_bytes,
+)
 from core.config import (
     get_transport_mode,
     WORKSPACE_EXTERNAL_URL,
@@ -357,6 +362,7 @@ async def _export_full_message(
     message_id: str,
     headers: Dict[str, str],
     body_format: Literal["text", "html", "raw"],
+    declared_size: Optional[int] = None,
 ) -> str:
     """
     Return a message's complete, untruncated content: saved to local storage and
@@ -380,6 +386,19 @@ async def _export_full_message(
     """
     subject = headers.get("Subject", "message") or "message"
     notes: List[str] = []
+
+    # Gmail's full/raw endpoints return their payload as one JSON response, so
+    # use the metadata response's sizeEstimate to fail closed before asking the
+    # client library to buffer and decode an oversized message.
+    try:
+        ensure_within_file_size_limit(
+            declared_size,
+            file_name=subject,
+            file_id=message_id,
+            kind="message export",
+        )
+    except FileTooLargeError as exc:
+        return str(exc)
 
     if body_format == "raw":
         message_raw = await asyncio.to_thread(
@@ -442,6 +461,18 @@ async def _export_full_message(
             return "Error: message has no readable body content to export."
         content_bytes = content_str.encode("utf-8")
 
+    # sizeEstimate is intentionally approximate. Enforce the exact decoded
+    # size too before producing another representation or saving the export.
+    try:
+        ensure_within_file_size_limit(
+            len(content_bytes),
+            file_name=subject,
+            file_id=message_id,
+            kind="message export",
+        )
+    except FileTooLargeError as exc:
+        return str(exc)
+
     # Stateless deployments have no persistent storage to hand a file reference off
     # from, but the guarantee callers actually want is "complete and untruncated".
     # Inline delivery satisfies that; it only costs model context.
@@ -473,14 +504,14 @@ async def _export_full_message(
         )
         return "\n".join(result_lines)
 
-    # Encode + write on a worker thread so a large export doesn't block the event loop.
+    # Write on a worker thread so a large export doesn't block the event loop.
     # Cap the sender-controlled subject so a pathologically long Subject can't overflow
     # the filesystem's filename limit, and surface a clean error if the write fails.
     storage = get_attachment_storage()
 
     def _save_export():
-        return storage.save_attachment(
-            base64_data=base64.urlsafe_b64encode(content_bytes).decode("ascii"),
+        return storage.save_attachment_bytes(
+            file_bytes=content_bytes,
             filename=f"{subject[:80]}{extension}",
             mime_type=mime_type,
         )
@@ -806,6 +837,22 @@ def _extract_attachments(payload: dict) -> List[Dict[str, Any]]:
     # Start searching from the root payload
     search_parts(payload)
     return attachments
+
+
+def _find_attachment_metadata(payload: dict, attachment_id: str) -> Optional[dict]:
+    """Find one attachment by ID without requiring it to have a filename."""
+    body = payload.get("body") or {}
+    if body.get("attachmentId") == attachment_id:
+        return {
+            "filename": payload.get("filename") or None,
+            "mimeType": payload.get("mimeType") or "application/octet-stream",
+            "size": body.get("size"),
+        }
+    for part in payload.get("parts") or []:
+        match = _find_attachment_metadata(part, attachment_id)
+        if match is not None:
+            return match
+    return None
 
 
 def _extract_headers(payload: dict, header_names: List[str]) -> Dict[str, str]:
@@ -1786,7 +1833,13 @@ async def get_gmail_message_content(
 
     # Full export: hand back a file reference instead of the (truncated) body.
     if full:
-        return await _export_full_message(service, message_id, headers, body_format)
+        return await _export_full_message(
+            service,
+            message_id,
+            headers,
+            body_format,
+            declared_size=message_metadata.get("sizeEstimate"),
+        )
 
     # Handle raw format separately - fetch with format="raw" and return decoded MIME
     if body_format == "raw":
@@ -1832,12 +1885,13 @@ async def get_gmail_message_content(
     # Add attachment information if present
     if attachments:
         content_lines.append("\n--- ATTACHMENTS ---")
-        for i, att in enumerate(attachments, 1):
+        for attachment_index, att in enumerate(attachments):
             size_kb = att["size"] / 1024
             content_lines.append(
-                f"{i}. {att['filename']} ({att['mimeType']}, {size_kb:.1f} KB)\n"
+                f"{attachment_index + 1}. {att['filename']} ({att['mimeType']}, {size_kb:.1f} KB)\n"
                 f"   Attachment ID: {att['attachmentId']}\n"
-                f"   Use get_gmail_attachment_content(message_id='{message_id}', attachment_id='{att['attachmentId']}') to download"
+                f"   Use get_gmail_attachment_content(message_id='{message_id}', "
+                f"attachment_id='{att['attachmentId']}', attachment_index={attachment_index}) to download"
             )
 
     return "\n".join(content_lines)
@@ -2033,12 +2087,13 @@ async def get_gmail_messages_content_batch(
 
                     if attachments:
                         msg_output += "\n--- ATTACHMENTS ---\n"
-                        for i, att in enumerate(attachments, 1):
+                        for attachment_index, att in enumerate(attachments):
                             size_kb = att["size"] / 1024
                             msg_output += (
-                                f"{i}. {att['filename']} ({att['mimeType']}, {size_kb:.1f} KB)\n"
+                                f"{attachment_index + 1}. {att['filename']} ({att['mimeType']}, {size_kb:.1f} KB)\n"
                                 f"   Attachment ID: {att['attachmentId']}\n"
-                                f"   Use get_gmail_attachment_content(message_id='{mid}', attachment_id='{att['attachmentId']}') to download\n"
+                                f"   Use get_gmail_attachment_content(message_id='{mid}', "
+                                f"attachment_id='{att['attachmentId']}', attachment_index={attachment_index}) to download\n"
                             )
 
                     output_messages.append(msg_output)
@@ -2080,6 +2135,7 @@ async def get_gmail_attachment_content(
     attachment_id: str,
     user_google_email: str,
     return_base64: bool = False,
+    attachment_index: Optional[int] = None,
 ) -> str:
     """
     Downloads an email attachment and saves it to local disk.
@@ -2101,6 +2157,10 @@ async def get_gmail_attachment_content(
             directly to tools like ``draft_gmail_message`` that expect
             standard (not URL-safe) base64. Default False preserves the
             existing behavior and response size.
+        attachment_index (Optional[int]): Zero-based attachment position from
+            the message-content response. When the cap is enabled, this lets
+            the server safely resolve Gmail's refreshed attachment IDs against
+            current metadata before downloading.
 
     Returns:
         str: Attachment metadata with either a local file path or download URL,
@@ -2111,14 +2171,85 @@ async def get_gmail_attachment_content(
         f"[get_gmail_attachment_content] Invoked. Message ID: '{message_id}', Email: '{user_google_email}'"
     )
 
-    # Download attachment content first, then optionally re-fetch message metadata
-    # to resolve filename and MIME type for the saved file.
+    # Resolve attachment size/filename from message metadata before downloading
+    # the binary payload so we can reject oversized attachments before the API
+    # returns the full base64 body in one shot.
+    filename = None
+    mime_type = None
+    declared_size = None
+    download_attachment_id = attachment_id
+    max_file_bytes = get_max_file_bytes()
+    if max_file_bytes is not None:
+        try:
+            message_full = await asyncio.to_thread(
+                service.users()
+                .messages()
+                .get(
+                    userId="me",
+                    id=message_id,
+                    format="full",
+                    fields=_ATTACHMENT_METADATA_FIELDS,
+                )
+                .execute
+            )
+            payload = message_full.get("payload", {})
+            attachments = _extract_attachments(payload)
+            matched = _find_attachment_metadata(payload, attachment_id)
+
+            if matched is None and attachment_index is not None:
+                if attachment_index < 0 or attachment_index >= len(attachments):
+                    return (
+                        f"Error: Invalid attachment_index {attachment_index}. Message "
+                        f"has {len(attachments)} downloadable attachment(s)."
+                    )
+                # Gmail can refresh attachment IDs between messages.get calls.
+                # The stable ordinal emitted with the original ID selects the
+                # corresponding current attachment safely.
+                matched = attachments[attachment_index]
+            elif matched is None and len(attachments) == 1:
+                # A single attachment is unambiguous even if Gmail refreshed
+                # its ID since the caller fetched the message.
+                matched = attachments[0]
+
+            if matched is not None:
+                filename = matched.get("filename")
+                mime_type = matched.get("mimeType")
+                declared_size = matched.get("size")
+                download_attachment_id = matched.get("attachmentId", attachment_id)
+        except Exception:
+            logger.debug(
+                f"Could not fetch attachment metadata for {attachment_id} before download"
+            )
+
+        # attachments().get() returns the complete base64 payload in one API
+        # response, so there is no opportunity to stop mid-body. If the bounded
+        # metadata projection could not resolve this attachment (for example,
+        # because it is nested deeper than the fields mask), fail closed before
+        # requesting data that may exceed the configured cap.
+        if declared_size is None:
+            return (
+                "Error: Could not verify the attachment size before download while "
+                "WORKSPACE_MCP_MAX_FILE_BYTES is configured. Fetch the message again "
+                "and pass both its current attachment ID and attachment_index."
+            )
+
+    try:
+        ensure_within_file_size_limit(
+            declared_size,
+            file_name=filename,
+            file_id=attachment_id,
+            kind="attachment",
+            max_bytes=max_file_bytes,
+        )
+    except FileTooLargeError as e:
+        return str(e)
+
     try:
         attachment = await asyncio.to_thread(
             service.users()
             .messages()
             .attachments()
-            .get(userId="me", messageId=message_id, id=attachment_id)
+            .get(userId="me", messageId=message_id, id=download_attachment_id)
             .execute
         )
     except Exception as e:
@@ -2132,9 +2263,25 @@ async def get_gmail_attachment_content(
         )
 
     # Format response with attachment data
-    size_bytes = attachment.get("size", 0)
+    size_bytes = attachment.get("size", 0) or declared_size or 0
     size_kb = size_bytes / 1024 if size_bytes else 0
     base64_data = attachment.get("data", "")
+
+    # The Gmail API already buffered the full body above; this only prevents
+    # returning oversized data when the pre-download declared_size was absent.
+    try:
+        ensure_within_file_size_limit(
+            size_bytes,
+            file_name=filename,
+            file_id=attachment_id,
+            kind="attachment",
+            max_bytes=max_file_bytes,
+        )
+    except FileTooLargeError as e:
+        if isinstance(attachment, dict):
+            attachment.pop("data", None)
+        base64_data = ""
+        return str(e)
 
     # Check if we're in stateless mode (can't save files)
     from auth.oauth_config import is_stateless_mode
@@ -2163,53 +2310,50 @@ async def get_gmail_attachment_content(
 
         storage = get_attachment_storage()
 
-        # Try to get filename and mime type from message
-        filename = None
-        mime_type = None
-        try:
-            message_full = await asyncio.to_thread(
-                service.users()
-                .messages()
-                .get(
-                    userId="me",
-                    id=message_id,
-                    format="full",
-                    fields=_ATTACHMENT_METADATA_FIELDS,
-                )
-                .execute
-            )
-            payload = message_full.get("payload", {})
-            attachments = _extract_attachments(payload)
-
-            # First try exact attachmentId match
-            for att in attachments:
-                if att.get("attachmentId") == attachment_id:
-                    filename = att.get("filename")
-                    mime_type = att.get("mimeType")
-                    break
-
-            # Fallback: match by size if exactly one attachment matches (IDs are ephemeral)
-            if not filename and attachments:
-                size_matches = [
-                    att
-                    for att in attachments
-                    if att.get("size") and abs(att["size"] - size_bytes) < 100
-                ]
-                if len(size_matches) == 1:
-                    filename = size_matches[0].get("filename")
-                    mime_type = size_matches[0].get("mimeType")
-                    logger.warning(
-                        f"Attachment {attachment_id} matched by size fallback as '{filename}'"
+        # If the pre-download metadata fetch missed the filename, try again
+        # with the full nested MIME tree and size-based fallback heuristics.
+        if not filename:
+            try:
+                message_full = await asyncio.to_thread(
+                    service.users()
+                    .messages()
+                    .get(
+                        userId="me",
+                        id=message_id,
+                        format="full",
+                        fields=_ATTACHMENT_METADATA_FIELDS,
                     )
+                    .execute
+                )
+                payload = message_full.get("payload", {})
+                attachments = _extract_attachments(payload)
 
-            # Last resort: if only one attachment, use its name
-            if not filename and len(attachments) == 1:
-                filename = attachments[0].get("filename")
-                mime_type = attachments[0].get("mimeType")
-        except Exception:
-            logger.debug(
-                f"Could not fetch attachment metadata for {attachment_id}, using defaults"
-            )
+                for att in attachments:
+                    if att.get("attachmentId") == attachment_id:
+                        filename = att.get("filename")
+                        mime_type = att.get("mimeType")
+                        break
+
+                if not filename and attachments:
+                    size_matches = [
+                        att
+                        for att in attachments
+                        if att.get("size") and abs(att["size"] - size_bytes) < 100
+                    ]
+                    if len(size_matches) == 1:
+                        filename = size_matches[0].get("filename")
+                        mime_type = size_matches[0].get("mimeType")
+                        logger.warning(
+                            f"Attachment {attachment_id} matched by size fallback as '{filename}'"
+                        )
+
+                if not filename and len(attachments) == 1:
+                    filename = attachments[0].get("filename")
+                    mime_type = attachments[0].get("mimeType")
+            except Exception:
+                logger.debug(
+                    f"Could not fetch attachment metadata for {attachment_id}, using defaults"
+                )
 
         # Save attachment to local disk
         result = storage.save_attachment(
@@ -2722,6 +2866,18 @@ async def _forward_gmail_message_impl(
         failed_attachments = []
         for att in attachment_metadata:
             try:
+                ensure_within_file_size_limit(
+                    att.get("size"),
+                    file_name=att.get("filename"),
+                    file_id=att.get("attachmentId"),
+                    kind="attachment",
+                )
+            except FileTooLargeError as exc:
+                # Do not let the broad per-attachment download handler turn a
+                # configured safety rejection into a generic partial-forward
+                # failure, and never send the message without requested files.
+                raise UserInputError(str(exc)) from exc
+            try:
                 # Download attachment content
                 attachment_data = await asyncio.to_thread(
                     service.users()
@@ -2729,6 +2885,15 @@ async def _forward_gmail_message_impl(
                     .attachments()
                     .get(userId="me", messageId=message_id, id=att["attachmentId"])
                     .execute
+                )
+                # Gmail normally repeats the decoded byte size in this
+                # response. Re-check it before making padded/decoded/re-encoded
+                # copies in case it differs from the message metadata.
+                ensure_within_file_size_limit(
+                    attachment_data.get("size"),
+                    file_name=att.get("filename"),
+                    file_id=att.get("attachmentId"),
+                    kind="attachment",
                 )
                 # Gmail returns URL-safe base64 (often unpadded). Decode it
                 # tolerantly and re-encode as standard, padded base64 so the
@@ -2748,6 +2913,8 @@ async def _forward_gmail_message_impl(
                 logger.info(
                     f"[forward_gmail_message] Downloaded attachment: {att['filename']}"
                 )
+            except FileTooLargeError as exc:
+                raise UserInputError(str(exc)) from exc
             except Exception as e:
                 logger.warning(
                     f"[forward_gmail_message] Failed to download attachment {att['filename']}: {e}"
@@ -3200,12 +3367,13 @@ def _format_thread_content(
 
         if attachments:
             content_lines.append("--- ATTACHMENTS ---")
-            for j, att in enumerate(attachments, 1):
+            for attachment_index, att in enumerate(attachments):
                 size_kb = att["size"] / 1024
                 content_lines.append(
-                    f"{j}. {att['filename']} ({att['mimeType']}, {size_kb:.1f} KB)\n"
+                    f"{attachment_index + 1}. {att['filename']} ({att['mimeType']}, {size_kb:.1f} KB)\n"
                     f"   Attachment ID: {att['attachmentId']}\n"
-                    f"   Use get_gmail_attachment_content(message_id='{message_id}', attachment_id='{att['attachmentId']}') to download"
+                    f"   Use get_gmail_attachment_content(message_id='{message_id}', "
+                    f"attachment_id='{att['attachmentId']}', attachment_index={attachment_index}) to download"
                 )
             content_lines.append("")
 

@@ -14,6 +14,19 @@ os.environ["WORKSPACE_MCP_STATELESS_MODE"] = "false"
 import main
 
 
+def test_main_rejects_invalid_max_file_bytes_at_startup(monkeypatch, capsys):
+    monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", "5MB")
+    monkeypatch.setattr(sys, "argv", ["main.py"])
+    monkeypatch.setattr(main, "configure_safe_logging", lambda: None)
+    monkeypatch.setattr("core.telemetry.configure_telemetry", lambda: None)
+
+    with pytest.raises(SystemExit) as exc:
+        main.main()
+
+    assert exc.value.code == 2
+    assert "WORKSPACE_MCP_MAX_FILE_BYTES" in capsys.readouterr().err
+
+
 def test_resolve_permissions_mode_selection_without_tier():
     services = ["gmail", "drive"]
     resolved_services, tier_tool_filter = main.resolve_permissions_mode_selection(
