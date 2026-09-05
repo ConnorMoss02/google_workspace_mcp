@@ -449,7 +449,7 @@ async def get_events(
         time_min (Optional[str]): The start of the time range (inclusive) in RFC3339 format (e.g., '2024-05-12T10:00:00Z' or '2024-05-12'). If omitted, defaults to the current time when single_events=True. It is omitted from unexpanded queries so recurring masters that began in the past but still have future occurrences remain discoverable. Ignored if event_id is provided.
         time_max (Optional[str]): The end of the time range (exclusive) in RFC3339 format. If omitted, events starting from `time_min` onwards are considered (up to `max_results`). Ignored if event_id is provided.
         max_results (int): The maximum number of events to return in one page. Defaults to 25. Ignored if event_id is provided.
-        page_token (Optional[str]): Token for the next page, taken from a previous response. Ignored if event_id is provided.
+        page_token (Optional[str]): Token for the next page, taken from a previous response. When single_events=True, also pass the response's Pagination time_min as time_min, even if omitted on the first call. Keep all other query parameters unchanged. Ignored if event_id is provided.
         query (Optional[str]): A keyword to search for within event fields (summary, description, location). Ignored if event_id is provided.
         detailed (bool): Whether to return detailed event information including description, location, colour (colorId), attendees, and attendee details (response status, organizer, optional flags). Recurring instances also report the parent series ID needed to edit the whole series; recurring masters report their raw RFC5545 recurrence rules; and events that are not ordinary confirmed meetings report their event type (outOfOffice, workingLocation, focusTime) and status. Defaults to False.
         include_attachments (bool): Whether to include attachment information in detailed event output. When True, shows attachment details (fileId, fileUrl, mimeType, title) for events that have attachments. Only applies when detailed=True. Set this to True when you need to view or access files that have been attached to calendar events, such as meeting documents, presentations, or other shared files. Defaults to False.
@@ -463,6 +463,7 @@ async def get_events(
     )
 
     next_page_token: Optional[str] = None
+    pagination_info = ""
 
     # Handle single event retrieval
     if event_id:
@@ -475,19 +476,15 @@ async def get_events(
         items = [event]
     else:
         # Handle multiple events retrieval with time filtering
-        # A page token is only valid for the query that produced it. With
-        # time_min omitted and single_events on, the effective start is "now",
-        # which moves between calls, so a continuation would silently page a
-        # different query than the one the token came from.
-        if page_token and time_min is None and single_events:
+        # Normalize before validating: blank and null-like strings also default
+        # to "now", which would change the query between pages.
+        formatted_time_min = _correct_time_format_for_api(time_min, "time_min", None)
+        if page_token and formatted_time_min is None and single_events:
             raise ValueError(
-                "[get_events] page_token requires time_min. Pass the same time_min "
-                "used for the first page; without it the range starts at the current "
-                "time, which changes between calls and does not match the token."
+                "[get_events] page_token requires time_min. Pass the Pagination "
+                "time_min from the previous response to preserve the original range."
             )
 
-        # Ensure time_min and time_max are correctly formatted for the API
-        formatted_time_min = _correct_time_format_for_api(time_min, "time_min", None)
         if formatted_time_min:
             effective_time_min = formatted_time_min
         elif single_events:
@@ -547,6 +544,10 @@ async def get_events(
         )
         items = events_result.get("items", [])
         next_page_token = events_result.get("nextPageToken")
+        if next_page_token:
+            pagination_info = f"Next page token: {next_page_token}"
+            if effective_time_min:
+                pagination_info += f"\nPagination time_min: {effective_time_min}"
     if not items:
         if event_id:
             return f"Event with ID '{event_id}' not found in calendar '{calendar_id}' for {user_google_email}."
@@ -556,7 +557,7 @@ async def get_events(
             return (
                 f"No events on this page in calendar '{calendar_id}' for {user_google_email}"
                 f" for the specified time range, and more pages remain."
-                f"\nNext page token: {next_page_token}"
+                f"\n{pagination_info}"
             )
         else:
             return f"No events found in calendar '{calendar_id}' for {user_google_email} for the specified time range."
@@ -628,7 +629,7 @@ async def get_events(
             + "\n".join(event_details_list)
         )
         if next_page_token:
-            text_output += f"\n\nNext page token: {next_page_token}"
+            text_output += f"\n\n{pagination_info}"
 
     logger.info(f"Successfully retrieved {len(items)} events for {user_google_email}.")
     return text_output

@@ -29,15 +29,17 @@ Retrieve events from a calendar. Fetch a single event by ID, list events in a ti
 | query | string | no | | Keyword search across summary, description, location |
 | detailed | boolean | no | false | Include description, location, attendees with response status |
 | include_attachments | boolean | no | false | Show attachment details (fileId, fileUrl, mimeType, title). Only applies when `detailed=true` |
-| page_token | string | no | | Token from a previous response's `Next page token`. Requires `time_min`. Ignored when `event_id` is set |
+| single_events | boolean | no | true | Expand recurring events into instances. When false, an omitted `time_min` leaves the lower bound unset |
+| page_token | string | no | | Token from a previous response's `Next page token`. Requires `time_min` when `single_events=true`. Ignored when `event_id` is set |
 
 Both tools append `Next page token: <token>` to the response when more pages remain. Pass it
-back as `page_token` to continue. Without it a caller sees one page and no indication that
-further results exist.
+back as `page_token` to continue, keeping all other query parameters unchanged.
 
-`get_events` requires `time_min` alongside `page_token`. With `time_min` omitted the range
-starts at the current time, which moves between calls, so a continuation would page a
-different query than the one the token came from.
+`get_events` also returns `Pagination time_min: <timestamp>` when a lower bound is used
+and more pages remain, including on empty pages. Pass that timestamp as `time_min` on
+the next call, even if you omitted it on the first call. This preserves the original
+range instead of letting the default current time move between pages. With
+`single_events=false` and no initial `time_min`, continue leaving `time_min` unset.
 
 ### manage_event
 Create, update, or delete a calendar event.

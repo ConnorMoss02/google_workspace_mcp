@@ -11,9 +11,10 @@ These tests assert both directions: the token is forwarded on the request, and
 it is surfaced on the response.
 """
 
+import datetime
 import os
 import sys
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -71,6 +72,55 @@ async def _get_events(service, **kwargs):
 
 class TestGetEventsPagination:
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("empty_first_page", [False, True])
+    @pytest.mark.parametrize("detailed", [False, True])
+    async def test_default_query_can_continue_using_response_parameters(
+        self, empty_first_page, detailed
+    ):
+        service = _events_service([])
+        service.events().list().execute.side_effect = [
+            {
+                "items": [] if empty_first_page else [_event()],
+                "nextPageToken": "token-next",
+            },
+            {"items": [_event("evt-2", "Next event")]},
+        ]
+        fn = _unwrap(get_events)
+        with patch(
+            "gcalendar.calendar_tools.datetime.datetime", wraps=datetime.datetime
+        ) as clock:
+            clock.now.side_effect = [
+                datetime.datetime(2026, 4, 6, tzinfo=datetime.timezone.utc),
+                datetime.datetime(2026, 4, 7, tzinfo=datetime.timezone.utc),
+            ]
+            first_page = await fn(
+                service=service, user_google_email=EMAIL, detailed=detailed
+            )
+            first_params = service.events().list.call_args.kwargs.copy()
+            continuation = dict(
+                line.split(": ", 1)
+                for line in first_page.splitlines()
+                if line.startswith(("Next page token: ", "Pagination time_min: "))
+            )
+
+            last_page = await fn(
+                service=service,
+                user_google_email=EMAIL,
+                detailed=detailed,
+                page_token=continuation["Next page token"],
+                time_min=continuation["Pagination time_min"],
+            )
+
+        assert service.events().list.call_args.kwargs == {
+            **first_params,
+            "pageToken": "token-next",
+        }
+        assert clock.now.call_count == 1
+        assert "evt-2" in last_page
+        assert "Next page token" not in last_page
+        assert "Pagination time_min" not in last_page
+
+    @pytest.mark.asyncio
     async def test_forwards_the_page_token(self):
         service = _events_service([_event()])
 
@@ -114,7 +164,8 @@ class TestGetEventsPagination:
         assert "Next page token: token-next" in result
 
     @pytest.mark.asyncio
-    async def test_a_continuation_without_time_min_is_rejected(self):
+    @pytest.mark.parametrize("time_min", [None, "", "   ", "null", '"null"', "None"])
+    async def test_a_continuation_without_time_min_is_rejected(self, time_min):
         """With time_min omitted the range starts at "now", which moves between
         calls, so the continuation would page a different query than the token
         came from."""
@@ -127,6 +178,7 @@ class TestGetEventsPagination:
                 service=service,
                 user_google_email=EMAIL,
                 page_token="token-abc",
+                time_min=time_min,
             )
 
         service.events().list.assert_not_called()
