@@ -7,7 +7,7 @@ MCP tools for Google Calendar event management and availability queries. All too
 ## Calendars & Events
 
 ### list_calendars
-List all calendars accessible to the authenticated user. Returns summary, ID, and primary status.
+List a single page of calendars accessible to the authenticated user. Returns summary, ID, and primary status; use the `Next page token` from the response as `page_token` to retrieve additional pages.
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
