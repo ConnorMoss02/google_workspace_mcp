@@ -9,6 +9,7 @@ import pytest
 
 from core.file_limits import (
     FileTooLargeError,
+    download_http_url_bytes,
     download_media_bytes,
     ensure_within_file_size_limit,
     get_max_file_bytes,
@@ -93,7 +94,7 @@ async def test_download_media_bytes_uncapped(monkeypatch):
     ):
         result = await download_media_bytes(Mock())
     assert result == data
-    assert observed_chunksizes == [None]
+    assert observed_chunksizes == [256 * 1024]
 
 
 def _mock_stream_response(
@@ -197,6 +198,54 @@ async def test_download_media_bytes_capped_success(monkeypatch):
     sent_headers = client_cm.__aenter__.return_value.stream.call_args.kwargs["headers"]
     assert sent_headers["Accept-Encoding"] == "identity"
     assert sum(key.lower() == "accept-encoding" for key in sent_headers) == 1
+
+
+@pytest.mark.asyncio
+async def test_capped_http_error_body_is_bounded(monkeypatch):
+    monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", "32")
+    client_cm, resp = _mock_stream_response(body=b"x" * 1000, status_code=500)
+    resp.request = httpx.Request("GET", "https://example.test/media")
+    resp.extensions = {}
+    resp.aread = AsyncMock(side_effect=resp.aread)
+
+    with patch("core.file_limits.httpx.AsyncClient", return_value=client_cm):
+        with pytest.raises(httpx.HTTPStatusError) as exc:
+            await download_http_url_bytes("https://example.test/media")
+
+    assert exc.value.response.content == b"x" * 32
+    resp.aread.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_capped_media_refreshes_and_retries_once_on_401(monkeypatch):
+    monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", "100")
+    credentials = Mock()
+
+    def authorize(_request, _method, _uri, headers):
+        headers["Authorization"] = "Bearer refreshed"
+
+    credentials.before_request.side_effect = authorize
+    request = Mock(uri="https://example.test/media", method="GET", headers={})
+    request.http = Mock(credentials=credentials)
+
+    first_client, first_resp = _mock_stream_response(
+        body=b"unauthorized", status_code=401
+    )
+    first_resp.request = httpx.Request("GET", request.uri)
+    first_resp.extensions = {}
+    second_client, _second_resp = _mock_stream_response(
+        body=b"ok", headers={"content-length": "2"}
+    )
+
+    with patch(
+        "core.file_limits.httpx.AsyncClient",
+        side_effect=[first_client, second_client],
+    ):
+        result = await download_media_bytes(request)
+
+    assert result == b"ok"
+    credentials.refresh.assert_called_once()
+    assert credentials.before_request.call_count == 2
 
 
 @pytest.mark.asyncio

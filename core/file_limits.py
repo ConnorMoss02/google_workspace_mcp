@@ -21,9 +21,18 @@ from googleapiclient.http import MediaIoBaseDownload
 
 _ENV_NAME = "WORKSPACE_MCP_MAX_FILE_BYTES"
 
+# Keep the uncapped path from asking httplib2 to materialize its 100 MiB
+# default response chunk. This does not impose a total-size limit; it only
+# bounds the transient allocation made by each MediaIoBaseDownload request.
+_MEDIA_DOWNLOAD_CHUNK_SIZE_BYTES = 256 * 1024  # 256 KiB
+
 # Stream read size when a byte cap is active. Keep small so we can abort
 # near the ceiling even when Content-Length is absent.
 _STREAM_READ_SIZE_BYTES = 64 * 1024  # 64 KiB
+
+# Error bodies are diagnostic data, not file payloads. They must still be
+# bounded or an upstream/proxy error can bypass the configured memory guard.
+_MAX_ERROR_BODY_BYTES = 64 * 1024  # 64 KiB
 
 
 class FileTooLargeError(ValueError):
@@ -136,26 +145,40 @@ def _raise_too_large(
     )
 
 
-def _authorize_headers(request_obj: Any) -> dict[str, str]:
-    """Copy request headers and apply OAuth credentials from the API client."""
+def _authorize_headers(
+    request_obj: Any, *, force_refresh: bool = False
+) -> dict[str, str]:
+    """Copy request headers and authorize them like ``AuthorizedHttp`` does."""
     headers = dict(getattr(request_obj, "headers", None) or {})
     http = getattr(request_obj, "http", None)
     credentials = getattr(http, "credentials", None) if http is not None else None
     if credentials is None:
         return headers
-    if not credentials.valid:
-        credentials.refresh(GoogleAuthRequest())
-    credentials.apply(headers)
+
+    # Reuse AuthorizedHttp's refresh transport when available. A fallback
+    # google-auth Request owns a requests.Session, so close it deterministically.
+    auth_request = getattr(http, "_request", None)
+    owned_auth_request = auth_request is None
+    if owned_auth_request:
+        auth_request = GoogleAuthRequest()
+    try:
+        if force_refresh:
+            credentials.refresh(auth_request)
+        method = (getattr(request_obj, "method", None) or "GET").upper()
+        uri = getattr(request_obj, "uri", None) or ""
+        credentials.before_request(auth_request, method, uri, headers)
+    finally:
+        if owned_auth_request:
+            auth_request.session.close()
     return headers
 
 
 async def _download_media_bytes_uncapped(request_obj: Any) -> bytes:
     """Download via MediaIoBaseDownload (full response may be buffered per chunk)."""
     fh = io.BytesIO()
-    # Preserve googleapiclient's historical/default chunking when the optional
-    # cap is disabled. Shrinking this to 256 KiB turns a 1 GiB file into 4,096
-    # range requests and is not behaviorally neutral for latency or quota use.
-    downloader = MediaIoBaseDownload(fh, request_obj)
+    downloader = MediaIoBaseDownload(
+        fh, request_obj, chunksize=_MEDIA_DOWNLOAD_CHUNK_SIZE_BYTES
+    )
     done = False
     while not done:
         _status, done = await asyncio.to_thread(downloader.next_chunk)
@@ -218,13 +241,41 @@ async def _accumulate_capped_stream(
     return buf.getvalue()
 
 
-def _http_status_error(resp: httpx.Response) -> httpx.HTTPStatusError:
+def _http_status_error(
+    resp: httpx.Response, *, content: Optional[bytes] = None
+) -> httpx.HTTPStatusError:
     """Build an HTTPStatusError for a completed (possibly streamed) response."""
+    if content is not None:
+        # A streaming response does not expose .content until it has been read
+        # completely. Build a small completed response containing only the
+        # bounded diagnostic prefix so downstream error conversion stays safe.
+        resp = httpx.Response(
+            status_code=resp.status_code,
+            headers=resp.headers,
+            content=content,
+            request=resp.request,
+            extensions=resp.extensions,
+        )
     return httpx.HTTPStatusError(
         f"Client error '{resp.status_code} {resp.reason_phrase}' for url '{resp.request.url}'",
         request=resp.request,
         response=resp,
     )
+
+
+async def _read_bounded_error_body(resp: httpx.Response, *, limit: int) -> bytes:
+    """Read at most ``limit`` decoded bytes from an HTTP error response."""
+    body = bytearray()
+    async for chunk in resp.aiter_bytes(
+        chunk_size=max(1, min(_STREAM_READ_SIZE_BYTES, limit))
+    ):
+        remaining = limit - len(body)
+        if remaining <= 0:
+            break
+        body.extend(chunk[:remaining])
+        if len(body) >= limit:
+            break
+    return bytes(body)
 
 
 async def download_http_url_bytes(
@@ -270,8 +321,9 @@ async def download_http_url_bytes(
 
         async with client.stream(method, url, headers=req_headers) as resp:
             if resp.status_code >= 400:
-                await resp.aread()
-                raise _http_status_error(resp)
+                error_limit = max(1, min(_MAX_ERROR_BODY_BYTES, limit))
+                error_body = await _read_bounded_error_body(resp, limit=error_limit)
+                raise _http_status_error(resp, content=error_body)
             return await _accumulate_capped_stream(
                 resp,
                 limit=limit,
@@ -304,16 +356,40 @@ async def _download_media_bytes_capped(
     method = (getattr(request_obj, "method", None) or "GET").upper()
     headers = await asyncio.to_thread(_authorize_headers, request_obj)
     try:
-        return await download_http_url_bytes(
-            uri,
-            headers=headers,
-            method=method,
-            file_name=file_name,
-            file_id=file_id,
-            web_view_link=web_view_link,
-            kind=kind,
-            max_bytes=limit,
-        )
+        try:
+            return await download_http_url_bytes(
+                uri,
+                headers=headers,
+                method=method,
+                file_name=file_name,
+                file_id=file_id,
+                web_view_link=web_view_link,
+                kind=kind,
+                max_bytes=limit,
+            )
+        except httpx.HTTPStatusError as exc:
+            # Match google-auth's AuthorizedHttp behavior: a token can be
+            # rejected after it passed the local expiry check, so refresh and
+            # retry exactly once on 401 before surfacing an auth failure.
+            http = getattr(request_obj, "http", None)
+            credentials = (
+                getattr(http, "credentials", None) if http is not None else None
+            )
+            if exc.response.status_code != 401 or credentials is None:
+                raise
+            headers = await asyncio.to_thread(
+                _authorize_headers, request_obj, force_refresh=True
+            )
+            return await download_http_url_bytes(
+                uri,
+                headers=headers,
+                method=method,
+                file_name=file_name,
+                file_id=file_id,
+                web_view_link=web_view_link,
+                kind=kind,
+                max_bytes=limit,
+            )
     except httpx.HTTPStatusError as exc:
         body = exc.response.content or b""
         httplib2_resp = type(

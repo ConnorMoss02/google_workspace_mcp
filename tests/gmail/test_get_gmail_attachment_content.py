@@ -78,14 +78,16 @@ def isolated_attachment_env(tmp_path, monkeypatch):
     return tmp_path
 
 
-def test_get_gmail_attachment_content_schema_includes_return_base64():
-    """Published MCP schema should expose the public return_base64 parameter."""
+def test_get_gmail_attachment_content_schema_includes_optional_controls():
+    """Published schema should expose base64 and stable attachment selection."""
     components = get_tool_components(server)
     schema = components[get_gmail_attachment_content.__name__].parameters["properties"]
 
     assert "return_base64" in schema
     assert schema["return_base64"]["type"] == "boolean"
     assert schema["return_base64"]["default"] is False
+    assert "attachment_index" in schema
+    assert schema["attachment_index"]["default"] is None
 
 
 def test_format_base64_content_block_converts_urlsafe_to_standard():
@@ -187,6 +189,43 @@ async def test_rejects_oversized_before_download(monkeypatch, isolated_attachmen
     assert "huge.bin" in result
     assert "WORKSPACE_MCP_MAX_FILE_BYTES" in result
     download_execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cap_uses_index_to_survive_refreshed_attachment_id(
+    monkeypatch, isolated_attachment_env
+):
+    """A metadata refresh may rotate IDs; the emitted ordinal remains usable."""
+    monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", "100")
+    mock_service = _build_mock_service(b"small payload", filename="report.pdf")
+    mock_service.users().messages().get().execute.return_value = {
+        "payload": {
+            "parts": [
+                {
+                    "filename": "other.txt",
+                    "mimeType": "text/plain",
+                    "body": {"attachmentId": "refreshed-other", "size": 4},
+                },
+                {
+                    "filename": "report.pdf",
+                    "mimeType": "application/pdf",
+                    "body": {"attachmentId": "refreshed-target", "size": 13},
+                },
+            ]
+        }
+    }
+
+    result = await _unwrap(get_gmail_attachment_content)(
+        service=mock_service,
+        message_id="msg-1",
+        attachment_id="stale-id",
+        attachment_index=1,
+        user_google_email="user@example.com",
+    )
+
+    assert "Attachment downloaded successfully!" in result
+    download_get = mock_service.users().messages().attachments().get
+    assert download_get.call_args.kwargs["id"] == "refreshed-target"
 
 
 @pytest.mark.asyncio
