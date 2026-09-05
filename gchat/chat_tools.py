@@ -17,6 +17,7 @@ from mcp.types import ToolAnnotations
 
 # Auth & server utilities
 from auth.service_decorator import require_google_service, require_multiple_services
+from core.file_limits import FileTooLargeError, download_http_url_bytes
 from core.server import server
 from core.utils import TransientNetworkError, UserInputError, handle_http_errors
 
@@ -707,9 +708,9 @@ async def download_chat_attachment(
     )
 
     # Download the attachment binary data via the Chat API media endpoint.
-    # We use httpx with the Bearer token directly because MediaIoBaseDownload
-    # and AuthorizedHttp fail in OAuth 2.1 (no refresh_token). The attachment's
-    # downloadUri points to chat.google.com which requires browser cookies.
+    # Prefer httpx + Bearer token: MediaIoBaseDownload / AuthorizedHttp fail in
+    # OAuth 2.1 (no refresh_token). The attachment's downloadUri points to
+    # chat.google.com which requires browser cookies.
     if not media_resource and not att_name:
         return f"No resource name available for attachment '{filename}'."
 
@@ -719,18 +720,20 @@ async def download_chat_attachment(
 
     try:
         access_token = service._http.credentials.token
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            resp = await client.get(
-                download_url,
-                headers={"Authorization": f"Bearer {access_token}"},
-            )
-            if resp.status_code != 200:
-                body = resp.text[:500]
-                return (
-                    f"Failed to download attachment '{filename}': "
-                    f"HTTP {resp.status_code} from {download_url}\n{body}"
-                )
-            file_bytes = resp.content
+        file_bytes = await download_http_url_bytes(
+            download_url,
+            headers={"Authorization": f"Bearer {access_token}"},
+            file_name=filename,
+            kind="attachment",
+        )
+    except FileTooLargeError as e:
+        return str(e)
+    except httpx.HTTPStatusError as e:
+        body = (e.response.text or "")[:500]
+        return (
+            f"Failed to download attachment '{filename}': "
+            f"HTTP {e.response.status_code} from {download_url}\n{body}"
+        )
     except Exception as e:
         return f"Failed to download attachment '{filename}': {e}"
 
@@ -741,7 +744,9 @@ async def download_chat_attachment(
     from auth.oauth_config import is_stateless_mode
 
     if is_stateless_mode():
-        b64_preview = base64.urlsafe_b64encode(file_bytes).decode("utf-8")[:100]
+        # 75 input bytes encode to at most 100 base64 characters; do not encode
+        # the entire attachment merely to return a short preview.
+        b64_preview = base64.urlsafe_b64encode(file_bytes[:75]).decode("utf-8")[:100]
         return "\n".join(
             [
                 f"Attachment downloaded: {filename} ({content_type})",
@@ -757,9 +762,8 @@ async def download_chat_attachment(
     from core.config import get_transport_mode
 
     storage = get_attachment_storage()
-    b64_data = base64.urlsafe_b64encode(file_bytes).decode("utf-8")
-    result = storage.save_attachment(
-        base64_data=b64_data, filename=filename, mime_type=content_type
+    result = storage.save_attachment_bytes(
+        file_bytes=file_bytes, filename=filename, mime_type=content_type
     )
 
     result_lines = [

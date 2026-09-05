@@ -486,6 +486,16 @@ def main():
     )
     args = parser.parse_args()
 
+    # Validate the memory-safety setting once at startup. Tool helpers parse it
+    # defensively as well, but a deployment typo must not silently disable the
+    # configured limit.
+    from core.file_limits import get_max_file_bytes
+
+    try:
+        get_max_file_bytes()
+    except ValueError as exc:
+        parser.error(str(exc))
+
     # Env var fallbacks for plugin users who configure via userConfig.
     # Non-empty but invalid values fail closed to prevent silent access widening.
     # Skip env fallbacks for mutually exclusive flags that were set on the CLI
