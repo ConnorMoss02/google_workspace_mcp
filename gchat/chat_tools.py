@@ -7,6 +7,7 @@ This module provides MCP tools for interacting with Google Chat API.
 import base64
 import logging
 import asyncio
+import re
 import ssl
 from typing import Dict, List, Optional
 
@@ -316,7 +317,7 @@ async def get_messages(
     title="Send Message",
     annotations=ToolAnnotations(
         readOnlyHint=False,
-        destructiveHint=False,
+        destructiveHint=True,
         idempotentHint=False,
         openWorldHint=True,
     ),
@@ -354,7 +355,13 @@ async def send_message(
                 "message_name cannot be combined with thread_name or thread_key: "
                 "editing a message cannot move it to another thread."
             )
-        if not message_name.startswith(f"{space_id}/messages/"):
+        message_match = re.fullmatch(r"spaces/([^/]+)/messages/[^/]+", message_name)
+        if message_match is None:
+            raise UserInputError(
+                f"Invalid message_name '{message_name}'. "
+                "Expected the full resource name, e.g. spaces/X/messages/Y."
+            )
+        if f"spaces/{message_match.group(1)}" != space_id:
             raise UserInputError(
                 f"message_name '{message_name}' does not belong to space '{space_id}'. "
                 "Expected the full resource name, e.g. spaces/X/messages/Y."
