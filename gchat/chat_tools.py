@@ -7,6 +7,7 @@ This module provides MCP tools for interacting with Google Chat API.
 import base64
 import logging
 import asyncio
+import re
 import ssl
 from typing import Dict, List, Optional
 
@@ -19,7 +20,7 @@ from mcp.types import ToolAnnotations
 from auth.service_decorator import require_google_service, require_multiple_services
 from core.file_limits import FileTooLargeError, download_http_url_bytes
 from core.server import server
-from core.utils import TransientNetworkError, handle_http_errors
+from core.utils import TransientNetworkError, UserInputError, handle_http_errors
 
 logger = logging.getLogger(__name__)
 
@@ -316,7 +317,7 @@ async def get_messages(
     title="Send Message",
     annotations=ToolAnnotations(
         readOnlyHint=False,
-        destructiveHint=False,
+        destructiveHint=True,
         idempotentHint=False,
         openWorldHint=True,
     ),
@@ -330,18 +331,62 @@ async def send_message(
     message_text: str,
     thread_key: Optional[str] = None,
     thread_name: Optional[str] = None,
+    message_name: Optional[str] = None,
 ) -> str:
     """
-    Sends a message to a Google Chat space.
+    Sends a message to a Google Chat space, or edits a message already sent there.
 
     Args:
         thread_name: Reply in an existing thread by its resource name (e.g. spaces/X/threads/Y).
         thread_key: Reply in a thread by app-defined key (creates thread if not found).
+        message_name: Edit this message in place instead of sending a new one
+            (e.g. spaces/X/messages/Y, as returned by send_message or get_messages).
+            Must be a message of space_id. Only the text is replaced, and only the
+            author can edit their own message.
 
     Returns:
-        str: Confirmation message with sent message details.
+        str: Confirmation message with the sent or updated message details.
     """
     logger.info(f"[send_message] Email: '{user_google_email}', Space: '{space_id}'")
+
+    if message_name is not None:
+        if thread_name or thread_key:
+            raise UserInputError(
+                "message_name cannot be combined with thread_name or thread_key: "
+                "editing a message cannot move it to another thread."
+            )
+        message_match = re.fullmatch(r"spaces/([^/]+)/messages/[^/]+", message_name)
+        if message_match is None:
+            raise UserInputError(
+                f"Invalid message_name '{message_name}'. "
+                "Expected the full resource name, e.g. spaces/X/messages/Y."
+            )
+        if f"spaces/{message_match.group(1)}" != space_id:
+            raise UserInputError(
+                f"message_name '{message_name}' does not belong to space '{space_id}'. "
+                "Expected the full resource name, e.g. spaces/X/messages/Y."
+            )
+
+        message = await asyncio.to_thread(
+            service.spaces()
+            .messages()
+            .patch(
+                name=message_name,
+                updateMask="text",
+                body={"text": message_text},
+            )
+            .execute
+        )
+
+        update_time = message.get("lastUpdateTime") or message.get("createTime", "")
+        msg = (
+            f"Message updated in space '{space_id}' by {user_google_email}. "
+            f"Message ID: {message.get('name', message_name)}, Time: {update_time}"
+        )
+        logger.info(
+            f"Successfully updated message '{message_name}' by {user_google_email}"
+        )
+        return msg
 
     message_body = {"text": message_text}
 
@@ -359,10 +404,10 @@ async def send_message(
         service.spaces().messages().create(**request_params).execute
     )
 
-    message_name = message.get("name", "")
+    sent_message_name = message.get("name", "")
     create_time = message.get("createTime", "")
 
-    msg = f"Message sent to space '{space_id}' by {user_google_email}. Message ID: {message_name}, Time: {create_time}"
+    msg = f"Message sent to space '{space_id}' by {user_google_email}. Message ID: {sent_message_name}, Time: {create_time}"
     logger.info(
         f"Successfully sent message to space '{space_id}' by {user_google_email}"
     )
