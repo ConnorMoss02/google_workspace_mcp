@@ -34,6 +34,10 @@ from gsheets.sheets_helpers import (
     _parse_condition_values,
     _parse_gradient_points,
     _parse_hex_color,
+    _split_sheet_and_range,
+    _parse_a1_part,
+    _normalize_chips_input,
+    _format_sheet_smart_chips_section,
     _select_sheet,
     _values_contain_sheets_errors,
 )
@@ -208,6 +212,7 @@ async def read_sheet_values(
     include_hyperlinks: bool = False,
     include_notes: bool = False,
     include_formulas: bool = False,
+    include_smart_chips: bool = False,
 ) -> str:
     """
     Reads values from a specific range in a Google Sheet.
@@ -225,6 +230,8 @@ async def read_sheet_values(
         include_formulas (bool): If True, also fetch raw formula strings for cells that
             contain formulas. Useful for identifying cross-sheet references before writing
             back to a range. Defaults to False to avoid an extra API request.
+        include_smart_chips (bool): If True, also fetch smart chips metadata (Drive files/folders
+            and People chips) for the range. Defaults to False to avoid expensive includeGridData requests.
 
     Returns:
         str: The formatted values from the specified range.
@@ -252,13 +259,14 @@ async def read_sheet_values(
     values = result.get("values", [])
     resolved_range = result.get("range", range_name)
 
-    hyperlink_section, notes_section = await _fetch_grid_metadata(
+    hyperlink_section, notes_section, smart_chips_section = await _fetch_grid_metadata(
         service,
         spreadsheet_id,
         resolved_range,
         values,
         include_hyperlinks=include_hyperlinks,
         include_notes=include_notes,
+        include_smart_chips=include_smart_chips,
     )
 
     formula_section = ""
@@ -324,6 +332,7 @@ async def read_sheet_values(
         + notes_section
         + formula_section
         + detailed_errors_section
+        + smart_chips_section
     )
 
 
@@ -462,6 +471,173 @@ async def modify_sheet_values(
         )
 
     return text_output
+
+
+MAX_DRIVE_CHIPS_PER_BATCH = 8  # Sheets API enforces max 10 Drive chips per batchUpdate
+
+
+async def _insert_smart_chips_impl(
+    service,
+    user_google_email: str,
+    spreadsheet_id: str,
+    range_name: str,
+    chips: Union[str, List[Union[str, dict]], List[List[Union[str, dict]]]],
+    chip_type: Optional[str] = None,
+) -> str:
+    """Internal implementation for insert_smart_chips.
+
+    Args:
+        service: Google Sheets API service client.
+        user_google_email: The user's Google email address.
+        spreadsheet_id: The ID of the spreadsheet.
+        range_name: Target range or cell (e.g., "Sheet1!F3", "F3:F23").
+        chips: Smart chip(s) specification (string, list, 2D list, dict).
+        chip_type: Optional explicit chip type ("drive" or "person").
+
+    Returns:
+        Confirmation message of the operation.
+    """
+    logger.info(
+        f"[insert_smart_chips] Invoked. Email: '{user_google_email}', Spreadsheet: {spreadsheet_id}, Range: {range_name}"
+    )
+
+    metadata = await asyncio.to_thread(
+        service.spreadsheets()
+        .get(
+            spreadsheetId=spreadsheet_id,
+            fields="sheets(properties(sheetId,title))",
+        )
+        .execute
+    )
+    sheets = metadata.get("sheets", [])
+    sheet_name, a1_part = _split_sheet_and_range(range_name)
+
+    target_sheet = None
+    if sheet_name:
+        for sheet in sheets:
+            if sheet.get("properties", {}).get("title") == sheet_name:
+                target_sheet = sheet
+                break
+        if target_sheet is None:
+            available_titles = [
+                s.get("properties", {}).get("title", "Untitled") for s in sheets
+            ]
+            raise UserInputError(
+                f"Sheet '{sheet_name}' not found in spreadsheet. Available sheets: {', '.join(available_titles)}."
+            )
+    else:
+        if not sheets:
+            raise UserInputError("Spreadsheet has no sheets.")
+        target_sheet = sheets[0]
+
+    sheet_id = target_sheet.get("properties", {}).get("sheetId")
+
+    if not a1_part:
+        raise UserInputError(
+            "A1-style range must not be empty (e.g., 'F3', 'Sheet1!F3:F23')."
+        )
+
+    if ":" in a1_part:
+        start, end = a1_part.split(":", 1)
+    else:
+        start = end = a1_part
+
+    start_col, start_row = _parse_a1_part(start)
+    end_col, end_row = _parse_a1_part(end)
+
+    cell_updates = _normalize_chips_input(
+        chips=chips,
+        start_row=start_row,
+        end_row=end_row,
+        start_col=start_col,
+        end_col=end_col,
+        default_chip_type=chip_type,
+    )
+
+    if not cell_updates:
+        return f"No smart chips to insert for range '{range_name}' in spreadsheet {spreadsheet_id}."
+
+    total_inserted = 0
+    for i in range(0, len(cell_updates), MAX_DRIVE_CHIPS_PER_BATCH):
+        batch = cell_updates[i : i + MAX_DRIVE_CHIPS_PER_BATCH]
+        requests = []
+        for r_idx, c_idx, cell_data in batch:
+            requests.append(
+                {
+                    "updateCells": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "startRowIndex": r_idx,
+                            "endRowIndex": r_idx + 1,
+                            "startColumnIndex": c_idx,
+                            "endColumnIndex": c_idx + 1,
+                        },
+                        "rows": [{"values": [cell_data]}],
+                        "fields": "userEnteredValue,chipRuns",
+                    }
+                }
+            )
+        await asyncio.to_thread(
+            service.spreadsheets()
+            .batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests})
+            .execute
+        )
+        total_inserted += len(batch)
+
+    logger.info(
+        f"[insert_smart_chips] Successfully inserted {total_inserted} smart chips for {user_google_email}."
+    )
+    return (
+        f"Successfully inserted {total_inserted} smart chip(s) into range '{range_name}' "
+        f"in spreadsheet {spreadsheet_id} for {user_google_email}."
+    )
+
+
+@server.tool(
+    title="Insert Smart Chips",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("insert_smart_chips", service_type="sheets")
+@require_google_service("sheets", "sheets_write")
+async def insert_smart_chips(
+    service,
+    user_google_email: str,
+    spreadsheet_id: str,
+    range_name: str,
+    chips: Union[str, List[Union[str, dict]], List[List[Union[str, dict]]]],
+    chip_type: Optional[str] = None,
+) -> str:
+    """
+    Inserts Google Workspace Smart Chips (Drive files/folders or People) into a Google Sheet cell or range.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        spreadsheet_id (str): The ID of the spreadsheet. Required.
+        range_name (str): Target cell or range (e.g., "Sheet1!F3", "Sheet1!F3:F23", "F3"). Required.
+        chips (Union[str, List[Union[str, dict]], List[List[Union[str, dict]]]]): Smart chip(s) to insert:
+            - A single URL or email string for a single cell (e.g., "https://drive.google.com/drive/folders/123", "user@example.com").
+            - A list of URLs or emails for a column/row (e.g., ["https://...", "https://..."]).
+            - A 2D list of URLs/emails matching a grid range.
+            - A dict or list of dicts with explicit properties (e.g., {"type": "drive", "uri": "..."}, {"type": "person", "email": "..."}).
+            - A JSON-encoded string representing any of the above formats.
+        chip_type (Optional[str]): Explicit chip type if passing raw strings: "drive" (default for URLs/IDs) or "person" (default for emails).
+
+    Returns:
+        str: Confirmation message of the successful insertion.
+    """
+    return await _insert_smart_chips_impl(
+        service=service,
+        user_google_email=user_google_email,
+        spreadsheet_id=spreadsheet_id,
+        range_name=range_name,
+        chips=chips,
+        chip_type=chip_type,
+    )
 
 
 # Internal implementation function for testing
