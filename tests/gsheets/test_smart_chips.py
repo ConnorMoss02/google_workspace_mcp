@@ -185,6 +185,57 @@ def test_normalize_chips_input_json_string():
     assert len(updates) == 2
 
 
+def test_normalize_chips_single_cell_multiple_chips_raises_error():
+    """Providing multiple chips to a single-cell target raises UserInputError."""
+    with pytest.raises(
+        UserInputError,
+        match="Target range addresses a single cell but multiple chips were provided",
+    ):
+        _normalize_chips_input(
+            chips=["https://drive.google.com/1", "https://drive.google.com/2"],
+            start_row=2,
+            end_row=2,
+            start_col=5,
+            end_col=5,
+        )
+
+
+def test_normalize_chips_vertical_overflow_raises_error():
+    """Providing more chips than vertical capacity raises UserInputError."""
+    with pytest.raises(UserInputError, match="exceeds vertical range capacity"):
+        _normalize_chips_input(
+            chips=["https://1", "https://2", "https://3", "https://4"],
+            start_row=2,
+            end_row=4,  # capacity 3
+            start_col=5,
+            end_col=5,
+        )
+
+
+def test_normalize_chips_horizontal_overflow_raises_error():
+    """Providing more chips than horizontal capacity raises UserInputError."""
+    with pytest.raises(UserInputError, match="exceeds horizontal range capacity"):
+        _normalize_chips_input(
+            chips=["https://1", "https://2", "https://3", "https://4"],
+            start_row=0,
+            end_row=0,
+            start_col=0,
+            end_col=2,  # capacity 3
+        )
+
+
+def test_normalize_chips_2d_overflow_raises_error():
+    """Providing 2D chips exceeding row or col bounds raises UserInputError."""
+    with pytest.raises(UserInputError, match="2D chips row count"):
+        _normalize_chips_input(
+            chips=[["https://1"], ["https://2"], ["https://3"]],
+            start_row=0,
+            end_row=1,  # 2 rows max
+            start_col=0,
+            end_col=1,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Tests for _insert_smart_chips_impl (Batching & Execution)
 # ---------------------------------------------------------------------------
@@ -216,6 +267,24 @@ async def test_insert_smart_chips_single():
     assert requests[0]["updateCells"]["range"]["sheetId"] == 12345
     assert requests[0]["updateCells"]["range"]["startRowIndex"] == 2
     assert requests[0]["updateCells"]["range"]["startColumnIndex"] == 5
+
+
+@pytest.mark.asyncio
+async def test_insert_smart_chips_single_dict():
+    """Test inserting a single dict chip."""
+    service = create_mock_sheets_service()
+    chip_dict = {"type": "drive", "uri": "https://drive.google.com/folders/0Bz_I3qW"}
+
+    result = await _insert_smart_chips_impl(
+        service=service,
+        user_google_email="user@example.com",
+        spreadsheet_id="test_sheet_id",
+        range_name="Elections!F3",
+        chips=chip_dict,
+    )
+
+    assert "Successfully inserted 1 smart chip(s)" in result
+    assert "Elections!F3" in result
 
 
 @pytest.mark.asyncio

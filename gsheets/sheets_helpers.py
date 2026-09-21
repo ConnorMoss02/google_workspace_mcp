@@ -1480,8 +1480,16 @@ def _normalize_chips_input(
 
     # Case 1: 2D list of chips
     if isinstance(chips, list) and len(chips) > 0 and isinstance(chips[0], list):
+        if end_row is not None and (start_r + len(chips) - 1) > end_row:
+            raise UserInputError(
+                f"2D chips row count ({len(chips)}) exceeds target range row bound ({end_row - start_r + 1} rows)."
+            )
         for r_offset, row in enumerate(chips):
             r_idx = start_r + r_offset
+            if end_col is not None and (start_c + len(row) - 1) > end_col:
+                raise UserInputError(
+                    f"2D chips column count ({len(row)}) exceeds target range column bound ({end_col - start_c + 1} cols)."
+                )
             for c_offset, item in enumerate(row):
                 c_idx = start_c + c_offset
                 cell_data = _create_chip_cell_data(item, default_chip_type)
@@ -1498,8 +1506,17 @@ def _normalize_chips_input(
             start_col is not None and end_col is not None and start_col == end_col
         )
 
+        if is_single_row and is_single_col and len(chips) > 1:
+            raise UserInputError(
+                "Target range addresses a single cell but multiple chips were provided."
+            )
+
         if is_single_row and not is_single_col:
             # Horizontal fill
+            if end_col is not None and (start_c + len(chips) - 1) > end_col:
+                raise UserInputError(
+                    f"Number of chips ({len(chips)}) exceeds horizontal range capacity ({end_col - start_c + 1} cells)."
+                )
             for c_offset, item in enumerate(chips):
                 c_idx = start_c + c_offset
                 cell_data = _create_chip_cell_data(item, default_chip_type)
@@ -1507,6 +1524,10 @@ def _normalize_chips_input(
                     updates.append((start_r, c_idx, cell_data))
         elif is_single_col or (end_row is None and end_col is None):
             # Vertical fill (e.g. F3:F23 or F3:F)
+            if end_row is not None and (start_r + len(chips) - 1) > end_row:
+                raise UserInputError(
+                    f"Number of chips ({len(chips)}) exceeds vertical range capacity ({end_row - start_r + 1} cells)."
+                )
             for r_offset, item in enumerate(chips):
                 r_idx = start_r + r_offset
                 cell_data = _create_chip_cell_data(item, default_chip_type)
@@ -1515,6 +1536,16 @@ def _normalize_chips_input(
         else:
             # 2D range: row-major order
             num_cols = (end_col - start_c + 1) if end_col is not None else 1
+            num_rows = (end_row - start_r + 1) if end_row is not None else 1
+            max_capacity = num_cols * num_rows
+            if (
+                end_row is not None
+                and end_col is not None
+                and len(chips) > max_capacity
+            ):
+                raise UserInputError(
+                    f"Number of chips ({len(chips)}) exceeds 2D range capacity ({max_capacity} cells)."
+                )
             for i, item in enumerate(chips):
                 r_idx = start_r + (i // num_cols)
                 c_idx = start_c + (i % num_cols)
