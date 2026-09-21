@@ -21,6 +21,7 @@ from gsheets.sheets_helpers import (
     _normalize_chips_input,
 )
 from gsheets.sheets_tools import (
+    MAX_DRIVE_CHIPS_PER_BATCH,
     _insert_smart_chips_impl,
     read_sheet_values,
 )
@@ -344,6 +345,70 @@ def test_normalize_chips_2d_flat_overflow_raises_error():
 # ---------------------------------------------------------------------------
 # Tests for _insert_smart_chips_impl (Batching & Execution)
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("chip_count", [3, 4])
+async def test_insert_smart_chips_row_only_range_capacity(chip_count):
+    service = create_mock_sheets_service()
+    kwargs = dict(
+        service=service,
+        user_google_email="user@example.com",
+        spreadsheet_id="test_sheet_id",
+        range_name="Sheet1!3:5",
+        chips=[f"https://drive.google.com/file_{i}" for i in range(chip_count)],
+    )
+
+    if chip_count > 3:
+        with pytest.raises(UserInputError, match="exceeds 2D range capacity"):
+            await _insert_smart_chips_impl(**kwargs)
+        service.spreadsheets().batchUpdate.assert_not_called()
+    else:
+        await _insert_smart_chips_impl(**kwargs)
+        requests = service.spreadsheets().batchUpdate.call_args.kwargs["body"][
+            "requests"
+        ]
+        assert [r["updateCells"]["range"]["startRowIndex"] for r in requests] == [
+            2,
+            3,
+            4,
+        ]
+        assert all(r["updateCells"]["range"]["startColumnIndex"] == 0 for r in requests)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("preceding_cells", [0, 9])
+@pytest.mark.parametrize("extra_chips", [0, 1])
+async def test_insert_smart_chips_per_cell_limit(preceding_cells, extra_chips):
+    service = create_mock_sheets_service()
+    cell_chips = [
+        f"https://drive.google.com/file_{i}"
+        for i in range(MAX_DRIVE_CHIPS_PER_BATCH + extra_chips)
+    ]
+    kwargs = dict(
+        service=service,
+        user_google_email="user@example.com",
+        spreadsheet_id="test_sheet_id",
+        range_name=f"Sheet1!A1:A{preceding_cells + 1}",
+        chips=[["https://drive.google.com/first"]] * preceding_cells + [cell_chips],
+    )
+
+    if extra_chips:
+        with pytest.raises(UserInputError, match="exceeds.*per-batch limit"):
+            await _insert_smart_chips_impl(**kwargs)
+        service.spreadsheets().batchUpdate.assert_not_called()
+    else:
+        result = await _insert_smart_chips_impl(**kwargs)
+        assert (
+            f"Successfully inserted {preceding_cells + len(cell_chips)} smart chip(s)"
+            in result
+        )
+        for call in service.spreadsheets().batchUpdate.call_args_list:
+            chip_count = sum(
+                len(request["updateCells"]["rows"][0]["values"][0]["chipRuns"])
+                for request in call.kwargs["body"]["requests"]
+            )
+            assert chip_count <= MAX_DRIVE_CHIPS_PER_BATCH
 
 
 @pytest.mark.asyncio

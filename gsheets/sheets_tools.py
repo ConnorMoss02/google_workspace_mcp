@@ -535,6 +535,11 @@ async def _insert_smart_chips_impl(
     current_chip_count = 0
     for update in cell_updates:
         cell_chips = len(update[2].get("chipRuns", []))
+        if cell_chips > MAX_DRIVE_CHIPS_PER_BATCH:
+            raise UserInputError(
+                f"Number of chips in a single cell ({cell_chips}) exceeds the "
+                f"per-batch limit ({MAX_DRIVE_CHIPS_PER_BATCH})."
+            )
         if current_batch and (
             current_chip_count + cell_chips > MAX_DRIVE_CHIPS_PER_BATCH
         ):
@@ -595,7 +600,7 @@ async def _insert_smart_chips_impl(
     title="Insert Smart Chips",
     annotations=ToolAnnotations(
         readOnlyHint=False,
-        destructiveHint=False,
+        destructiveHint=True,
         idempotentHint=True,
         openWorldHint=True,
     ),

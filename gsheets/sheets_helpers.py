@@ -1543,11 +1543,7 @@ def _normalize_chips_input(
             ncols = num_cols if num_cols is not None else 1
             nrows = num_rows if num_rows is not None else 1
             max_capacity = ncols * nrows
-            if (
-                end_row is not None
-                and end_col is not None
-                and len(chips) > max_capacity
-            ):
+            if end_row is not None and len(chips) > max_capacity:
                 raise UserInputError(
                     f"Number of chips ({len(chips)}) exceeds 2D range capacity ({max_capacity} cells)."
                 )
