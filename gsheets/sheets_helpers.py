@@ -9,7 +9,7 @@ import asyncio
 import json
 import logging
 import re
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, List, Optional, Union
 
 from core.utils import UserInputError
 
@@ -1324,9 +1324,7 @@ def _format_sheet_smart_chips_section(
             title = item.get("title") or ""
             uri = item.get("uri") or ""
             desc = (
-                f'"{title}" ({uri})'
-                if title and uri
-                else (uri or title or "(no uri)")
+                f'"{title}" ({uri})' if title and uri else (uri or title or "(no uri)")
             )
             lines.append(f"- {cell}: [Drive Chip] {desc}")
         elif chip_type == "person":
@@ -1422,29 +1420,19 @@ def _create_chip_cell_data(
             "chipRuns": [
                 {
                     "startIndex": 0,
-                    "chip": {
-                        "richLinkProperties": {
-                            "uri": uri
-                        }
-                    },
+                    "chip": {"richLinkProperties": {"uri": uri}},
                 }
             ],
         }
     elif chip_type == "person":
         if not email:
-            raise UserInputError(
-                f"Person chip requires an email address, got: {item}"
-            )
+            raise UserInputError(f"Person chip requires an email address, got: {item}")
         return {
             "userEnteredValue": {"stringValue": "@"},
             "chipRuns": [
                 {
                     "startIndex": 0,
-                    "chip": {
-                        "personProperties": {
-                            "email": email
-                        }
-                    },
+                    "chip": {"personProperties": {"email": email}},
                 }
             ],
         }

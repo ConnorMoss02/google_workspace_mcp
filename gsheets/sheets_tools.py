@@ -37,7 +37,6 @@ from gsheets.sheets_helpers import (
     _split_sheet_and_range,
     _parse_a1_part,
     _normalize_chips_input,
-    _format_sheet_smart_chips_section,
     _select_sheet,
     _values_contain_sheets_errors,
 )

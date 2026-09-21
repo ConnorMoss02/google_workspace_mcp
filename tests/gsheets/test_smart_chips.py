@@ -15,8 +15,6 @@ from core.utils import UserInputError
 from gsheets.sheets_helpers import (
     _create_chip_cell_data,
     _normalize_chips_input,
-    _extract_cell_smart_chips_from_grid,
-    _format_sheet_smart_chips_section,
 )
 from gsheets.sheets_tools import (
     _insert_smart_chips_impl,
