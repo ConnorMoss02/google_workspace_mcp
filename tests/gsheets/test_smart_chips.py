@@ -138,6 +138,18 @@ def test_create_chip_cell_data_invalid_type():
         _create_chip_cell_data("something", default_type="calendar")
 
 
+def test_create_chip_cell_data_missing_uri():
+    """Drive chip dict without uri or id raises UserInputError."""
+    with pytest.raises(UserInputError, match="Drive chip requires a URI"):
+        _create_chip_cell_data({"type": "drive"})
+
+
+def test_create_chip_cell_data_missing_email():
+    """Person chip dict without email raises UserInputError."""
+    with pytest.raises(UserInputError, match="Person chip requires an email"):
+        _create_chip_cell_data({"type": "person"})
+
+
 # ---------------------------------------------------------------------------
 # Tests for _normalize_chips_input
 # ---------------------------------------------------------------------------
@@ -292,6 +304,18 @@ def test_normalize_chips_2d_overflow_raises_error():
         )
 
 
+def test_normalize_chips_2d_flat_overflow_raises_error():
+    """Providing more chips than 2D grid capacity raises UserInputError."""
+    with pytest.raises(UserInputError, match="exceeds 2D range capacity"):
+        _normalize_chips_input(
+            chips=["https://1", "https://2", "https://3", "https://4", "https://5"],
+            start_row=0,
+            end_row=1,
+            start_col=0,
+            end_col=1,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Tests for _insert_smart_chips_impl (Batching & Execution)
 # ---------------------------------------------------------------------------
@@ -378,6 +402,20 @@ async def test_insert_smart_chips_unknown_sheet():
             spreadsheet_id="test_sheet_id",
             range_name="NonExistent!A1",
             chips="https://drive.google.com/1",
+        )
+
+
+@pytest.mark.asyncio
+async def test_insert_smart_chips_overflow_raises_error():
+    """Test that inserting more chips than range capacity raises UserInputError."""
+    service = create_mock_sheets_service()
+    with pytest.raises(UserInputError, match="exceeds vertical range capacity"):
+        await _insert_smart_chips_impl(
+            service=service,
+            user_google_email="user@example.com",
+            spreadsheet_id="test_sheet_id",
+            range_name="Sheet1!F3:F4",
+            chips=["https://1", "https://2", "https://3"],
         )
 
 
