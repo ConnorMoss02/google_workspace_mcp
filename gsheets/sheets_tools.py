@@ -8,7 +8,7 @@ import logging
 import asyncio
 import json
 import copy
-from typing import List, Optional, Union
+from typing import Any, List, Optional, Union
 
 from mcp.types import ToolAnnotations
 
@@ -480,7 +480,7 @@ async def _insert_smart_chips_impl(
     user_google_email: str,
     spreadsheet_id: str,
     range_name: str,
-    chips: Union[str, dict, List[Union[str, dict]], List[List[Union[str, dict]]]],
+    chips: Union[str, dict, List[Any]],
     chip_type: Optional[str] = None,
 ) -> str:
     """Internal implementation for insert_smart_chips.
@@ -556,9 +556,27 @@ async def _insert_smart_chips_impl(
     if not cell_updates:
         return f"No smart chips to insert for range '{range_name}' in spreadsheet {spreadsheet_id}."
 
-    total_inserted = 0
-    for i in range(0, len(cell_updates), MAX_DRIVE_CHIPS_PER_BATCH):
-        batch = cell_updates[i : i + MAX_DRIVE_CHIPS_PER_BATCH]
+    total_inserted = sum(len(c[2].get("chipRuns", [])) for c in cell_updates)
+
+    # Batch updates while respecting Google Sheets API limit of max 10 Drive chips per batchUpdate
+    batches = []
+    current_batch = []
+    current_chip_count = 0
+    for update in cell_updates:
+        cell_chips = len(update[2].get("chipRuns", []))
+        if current_batch and (
+            current_chip_count + cell_chips > MAX_DRIVE_CHIPS_PER_BATCH
+        ):
+            batches.append(current_batch)
+            current_batch = [update]
+            current_chip_count = cell_chips
+        else:
+            current_batch.append(update)
+            current_chip_count += cell_chips
+    if current_batch:
+        batches.append(current_batch)
+
+    for batch in batches:
         requests = []
         for r_idx, c_idx, cell_data in batch:
             requests.append(
@@ -581,7 +599,6 @@ async def _insert_smart_chips_impl(
             .batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests})
             .execute
         )
-        total_inserted += len(batch)
 
     logger.info(
         f"[insert_smart_chips] Successfully inserted {total_inserted} smart chips for {user_google_email}."
@@ -608,7 +625,7 @@ async def insert_smart_chips(
     user_google_email: str,
     spreadsheet_id: str,
     range_name: str,
-    chips: Union[str, dict, List[Union[str, dict]], List[List[Union[str, dict]]]],
+    chips: Union[str, dict, List[Any]],
     chip_type: Optional[str] = None,
 ) -> str:
     """
@@ -618,9 +635,9 @@ async def insert_smart_chips(
         user_google_email (str): The user's Google email address. Required.
         spreadsheet_id (str): The ID of the spreadsheet. Required.
         range_name (str): Target cell or range (e.g., "Sheet1!F3", "Sheet1!F3:F23", "F3"). Required.
-        chips (Union[str, List[Union[str, dict]], List[List[Union[str, dict]]]]): Smart chip(s) to insert:
+        chips (Union[str, dict, List[Any]]): Smart chip(s) to insert:
             - A single URL or email string for a single cell (e.g., "https://drive.google.com/drive/folders/123", "user@example.com").
-            - A list of URLs or emails for a column/row (e.g., ["https://...", "https://..."]).
+            - A list of URLs or emails for a single cell (multiple chips) or across cells (e.g., ["https://...", "https://..."]).
             - A 2D list of URLs/emails matching a grid range.
             - A dict or list of dicts with explicit properties (e.g., {"type": "drive", "uri": "..."}, {"type": "person", "email": "..."}).
             - A JSON-encoded string representing any of the above formats.

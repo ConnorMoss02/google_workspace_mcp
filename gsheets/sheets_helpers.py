@@ -648,6 +648,8 @@ def _grid_range_to_a1(grid_range: dict, sheet_titles: dict[int, str]) -> str:
     Falls back to the sheet ID if the title is unknown.
     """
     sheet_id = grid_range.get("sheetId")
+    if sheet_id is None and 0 in sheet_titles:
+        sheet_id = 0
     sheet_title = sheet_titles.get(sheet_id, f"Sheet {sheet_id}")
 
     start_row = grid_range.get("startRowIndex")
@@ -1347,21 +1349,12 @@ def _format_sheet_smart_chips_section(
     return f"\n\nSmart Chips in range '{range_label}':\n" + "\n".join(lines) + suffix
 
 
-def _create_chip_cell_data(
+def _parse_single_chip_properties(
     item: Any, default_type: Optional[str] = None
-) -> Optional[dict]:
-    """
-    Construct a CellData dictionary containing a smart chip (Drive or Person) for Sheets API.
-
-    Args:
-        item: A string (URL, email, Drive ID) or dictionary describing the chip.
-        default_type: Optional default chip type ("drive" or "person").
-
-    Returns:
-        A CellData dictionary with userEnteredValue and chipRuns, or None if item is empty.
-    """
+) -> tuple[str, dict]:
+    """Parse a single chip item (str or dict) into (chip_type, chip_properties)."""
     if item is None or item == "":
-        return None
+        raise UserInputError("Empty chip item cannot be parsed.")
 
     chip_type = default_type.lower() if default_type else None
     uri = None
@@ -1415,31 +1408,61 @@ def _create_chip_cell_data(
             raise UserInputError(
                 f"Drive chip requires a URI or file/folder ID, got: {item}"
             )
-        return {
-            "userEnteredValue": {"stringValue": "@"},
-            "chipRuns": [
-                {
-                    "startIndex": 0,
-                    "chip": {"richLinkProperties": {"uri": uri}},
-                }
-            ],
-        }
+        return "drive", {"richLinkProperties": {"uri": uri}}
     elif chip_type == "person":
         if not email:
             raise UserInputError(f"Person chip requires an email address, got: {item}")
-        return {
-            "userEnteredValue": {"stringValue": "@"},
-            "chipRuns": [
-                {
-                    "startIndex": 0,
-                    "chip": {"personProperties": {"email": email}},
-                }
-            ],
-        }
+        return "person", {"personProperties": {"email": email}}
     else:
         raise UserInputError(
             f"Unknown chip_type '{chip_type}'. Supported types: 'drive', 'person'."
         )
+
+
+def _create_chip_cell_data(
+    item: Any, default_type: Optional[str] = None
+) -> Optional[dict]:
+    """Construct a CellData dictionary containing smart chip(s) for Sheets API.
+
+    Args:
+        item: A single chip (str or dict), or a list of chips for a single cell.
+        default_type: Optional default chip type ("drive" or "person").
+
+    Returns:
+        A CellData dictionary with userEnteredValue and chipRuns, or None if item is empty.
+    """
+    if item is None or item == "" or item == []:
+        return None
+
+    # Multi-chips in a single cell: list or tuple of chip items
+    if isinstance(item, (list, tuple)):
+        active_items = [x for x in item if x is not None and x != ""]
+        if not active_items:
+            return None
+        chip_runs = []
+        for idx, sub_item in enumerate(active_items):
+            _, chip_props = _parse_single_chip_properties(sub_item, default_type)
+            chip_runs.append(
+                {
+                    "startIndex": idx * 2,
+                    "chip": chip_props,
+                }
+            )
+        return {
+            "userEnteredValue": {"stringValue": " ".join(["@"] * len(active_items))},
+            "chipRuns": chip_runs,
+        }
+
+    _, chip_props = _parse_single_chip_properties(item, default_type)
+    return {
+        "userEnteredValue": {"stringValue": "@"},
+        "chipRuns": [
+            {
+                "startIndex": 0,
+                "chip": chip_props,
+            }
+        ],
+    }
 
 
 def _normalize_chips_input(
@@ -1450,8 +1473,7 @@ def _normalize_chips_input(
     end_col: Optional[int],
     default_chip_type: Optional[str] = None,
 ) -> list[tuple[int, int, dict]]:
-    """
-    Parse input chips and map each chip to its (row_idx, col_idx, cell_data).
+    """Parse input chips and map each chip to its (row_idx, col_idx, cell_data).
 
     Args:
         chips: Raw chips parameter (string, list, list of lists, dict).
@@ -1478,17 +1500,46 @@ def _normalize_chips_input(
 
     updates: list[tuple[int, int, dict]] = []
 
-    # Case 1: 2D list of chips
-    if isinstance(chips, list) and len(chips) > 0 and isinstance(chips[0], list):
+    is_single_row = (
+        start_row is not None and end_row is not None and start_row == end_row
+    )
+    is_single_col = (
+        start_col is not None and end_col is not None and start_col == end_col
+    )
+    is_single_cell = is_single_row and is_single_col
+
+    # Case 1: Single cell target (e.g. F3 or F3:F3)
+    # Any chips provided (single item, list of chips, or nested list [[c1, c2]]) go into this single cell
+    if is_single_cell:
+        if isinstance(chips, list) and len(chips) == 1 and isinstance(chips[0], list):
+            chips = chips[0]
+        cell_data = _create_chip_cell_data(chips, default_chip_type)
+        if cell_data is not None:
+            updates.append((start_r, start_c, cell_data))
+        return updates
+
+    num_cols = (end_col - start_c + 1) if end_col is not None else None
+    num_rows = (end_row - start_r + 1) if end_row is not None else None
+    is_2d_grid = (num_cols is None or num_cols > 1) and (
+        num_rows is None or num_rows > 1
+    )
+
+    # Case 2: 2D table grid (where chips is a list of rows)
+    if (
+        is_2d_grid
+        and isinstance(chips, list)
+        and len(chips) > 0
+        and isinstance(chips[0], list)
+    ):
         if end_row is not None and (start_r + len(chips) - 1) > end_row:
             raise UserInputError(
-                f"2D chips row count ({len(chips)}) exceeds target range row bound ({end_row - start_r + 1} rows)."
+                f"2D chips row count ({len(chips)}) exceeds target range row bound ({num_rows} rows)."
             )
         for r_offset, row in enumerate(chips):
             r_idx = start_r + r_offset
             if end_col is not None and (start_c + len(row) - 1) > end_col:
                 raise UserInputError(
-                    f"2D chips column count ({len(row)}) exceeds target range column bound ({end_col - start_c + 1} cols)."
+                    f"2D chips column count ({len(row)}) exceeds target range column bound ({num_cols} cols)."
                 )
             for c_offset, item in enumerate(row):
                 c_idx = start_c + c_offset
@@ -1497,22 +1548,10 @@ def _normalize_chips_input(
                     updates.append((r_idx, c_idx, cell_data))
         return updates
 
-    # Case 2: 1D list of chips
+    # Case 3: 1D list of items (each item can be a single chip or a list of chips for that cell)
     if isinstance(chips, list):
-        is_single_row = (
-            start_row is not None and end_row is not None and start_row == end_row
-        )
-        is_single_col = (
-            start_col is not None and end_col is not None and start_col == end_col
-        )
-
-        if is_single_row and is_single_col and len(chips) > 1:
-            raise UserInputError(
-                "Target range addresses a single cell but multiple chips were provided."
-            )
-
         if is_single_row and not is_single_col:
-            # Horizontal fill
+            # Horizontal fill (e.g. A1:C1)
             if end_col is not None and (start_c + len(chips) - 1) > end_col:
                 raise UserInputError(
                     f"Number of chips ({len(chips)}) exceeds horizontal range capacity ({end_col - start_c + 1} cells)."
@@ -1534,10 +1573,10 @@ def _normalize_chips_input(
                 if cell_data is not None:
                     updates.append((r_idx, start_c, cell_data))
         else:
-            # 2D range: row-major order
-            num_cols = (end_col - start_c + 1) if end_col is not None else 1
-            num_rows = (end_row - start_r + 1) if end_row is not None else 1
-            max_capacity = num_cols * num_rows
+            # 2D range in row-major order
+            ncols = num_cols if num_cols is not None else 1
+            nrows = num_rows if num_rows is not None else 1
+            max_capacity = ncols * nrows
             if (
                 end_row is not None
                 and end_col is not None
@@ -1547,19 +1586,18 @@ def _normalize_chips_input(
                     f"Number of chips ({len(chips)}) exceeds 2D range capacity ({max_capacity} cells)."
                 )
             for i, item in enumerate(chips):
-                r_idx = start_r + (i // num_cols)
-                c_idx = start_c + (i % num_cols)
+                r_idx = start_r + (i // ncols)
+                c_idx = start_c + (i % ncols)
                 cell_data = _create_chip_cell_data(item, default_chip_type)
                 if cell_data is not None:
                     updates.append((r_idx, c_idx, cell_data))
         return updates
 
-    # Case 3: Single item (string or dict)
+    # Case 4: Single item (string or dict) for a multi-cell range -> fill all cells in range
     single_cell_data = _create_chip_cell_data(chips, default_chip_type)
     if single_cell_data is None:
         return []
 
-    # If range specifies a finite block, fill all cells in range, or just the single cell
     if end_row is not None and end_col is not None:
         for r_idx in range(start_r, end_row + 1):
             for c_idx in range(start_c, end_col + 1):

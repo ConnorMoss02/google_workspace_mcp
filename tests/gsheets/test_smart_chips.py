@@ -104,6 +104,28 @@ def test_create_chip_cell_data_dict_person():
     )
 
 
+def test_create_chip_cell_data_multi_chips():
+    """List of chips in a single cell creates multiple chipRuns with '@ @' stringValue."""
+    chips = [
+        "https://drive.google.com/folder1",
+        "antoine@example.com",
+    ]
+    cell = _create_chip_cell_data(chips)
+    assert cell is not None
+    assert cell["userEnteredValue"] == {"stringValue": "@ @"}
+    assert len(cell["chipRuns"]) == 2
+    assert cell["chipRuns"][0]["startIndex"] == 0
+    assert (
+        cell["chipRuns"][0]["chip"]["richLinkProperties"]["uri"]
+        == "https://drive.google.com/folder1"
+    )
+    assert cell["chipRuns"][1]["startIndex"] == 2
+    assert (
+        cell["chipRuns"][1]["chip"]["personProperties"]["email"]
+        == "antoine@example.com"
+    )
+
+
 def test_create_chip_cell_data_empty():
     """Empty or None items return None (skipped)."""
     assert _create_chip_cell_data(None) is None
@@ -185,19 +207,53 @@ def test_normalize_chips_input_json_string():
     assert len(updates) == 2
 
 
-def test_normalize_chips_single_cell_multiple_chips_raises_error():
-    """Providing multiple chips to a single-cell target raises UserInputError."""
-    with pytest.raises(
-        UserInputError,
-        match="Target range addresses a single cell but multiple chips were provided",
-    ):
-        _normalize_chips_input(
-            chips=["https://drive.google.com/1", "https://drive.google.com/2"],
-            start_row=2,
-            end_row=2,
-            start_col=5,
-            end_col=5,
-        )
+def test_normalize_chips_single_cell_multiple_chips():
+    """Providing multiple chips to a single-cell target combines them into one cell."""
+    updates = _normalize_chips_input(
+        chips=["https://drive.google.com/1", "https://drive.google.com/2"],
+        start_row=2,
+        end_row=2,
+        start_col=5,
+        end_col=5,
+    )
+    assert len(updates) == 1
+    r, c, cell_data = updates[0]
+    assert r == 2
+    assert c == 5
+    assert cell_data["userEnteredValue"]["stringValue"] == "@ @"
+    assert len(cell_data["chipRuns"]) == 2
+    assert cell_data["chipRuns"][0]["startIndex"] == 0
+    assert (
+        cell_data["chipRuns"][0]["chip"]["richLinkProperties"]["uri"]
+        == "https://drive.google.com/1"
+    )
+    assert cell_data["chipRuns"][1]["startIndex"] == 2
+    assert (
+        cell_data["chipRuns"][1]["chip"]["richLinkProperties"]["uri"]
+        == "https://drive.google.com/2"
+    )
+
+
+def test_normalize_chips_range_with_multi_chips_per_cell():
+    """Providing a list of chip lists to a column range creates multi-chip cells."""
+    chips = [
+        ["https://drive.google.com/1", "https://drive.google.com/2"],
+        ["https://drive.google.com/3"],
+    ]
+    updates = _normalize_chips_input(
+        chips=chips,
+        start_row=2,
+        end_row=3,
+        start_col=5,
+        end_col=5,
+    )
+    assert len(updates) == 2
+    assert updates[0][0] == 2 and updates[0][1] == 5
+    assert updates[0][2]["userEnteredValue"]["stringValue"] == "@ @"
+    assert len(updates[0][2]["chipRuns"]) == 2
+    assert updates[1][0] == 3 and updates[1][1] == 5
+    assert updates[1][2]["userEnteredValue"]["stringValue"] == "@"
+    assert len(updates[1][2]["chipRuns"]) == 1
 
 
 def test_normalize_chips_vertical_overflow_raises_error():
@@ -409,3 +465,34 @@ async def test_read_sheet_values_with_smart_chips():
         in result
     )
     assert "- Sheet1!F4: [Person Chip] Antoine Beaubien <antoine@example.com>" in result
+
+
+@pytest.mark.asyncio
+async def test_insert_smart_chips_multi_chips_single_cell():
+    """Test inserting multiple smart chips into a single cell."""
+    service = create_mock_sheets_service()
+    chips = [
+        "https://drive.google.com/folder1",
+        "antoine@example.com",
+    ]
+
+    result = await _insert_smart_chips_impl(
+        service=service,
+        user_google_email="user@example.com",
+        spreadsheet_id="test_sheet_id",
+        range_name="Elections!F3",
+        chips=chips,
+    )
+
+    assert "Successfully inserted 2 smart chip(s)" in result
+    assert "Elections!F3" in result
+
+    service.spreadsheets().batchUpdate.assert_called_once()
+    call_args = service.spreadsheets().batchUpdate.call_args
+    requests = call_args[1]["body"]["requests"]
+    assert len(requests) == 1
+    cell_data = requests[0]["updateCells"]["rows"][0]["values"][0]
+    assert cell_data["userEnteredValue"] == {"stringValue": "@ @"}
+    assert len(cell_data["chipRuns"]) == 2
+    assert cell_data["chipRuns"][0]["startIndex"] == 0
+    assert cell_data["chipRuns"][1]["startIndex"] == 2
