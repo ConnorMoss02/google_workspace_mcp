@@ -1197,7 +1197,7 @@ async def _fetch_grid_metadata(
     if include_notes:
         value_fields.append("note")
     if include_smart_chips:
-        value_fields.extend(["chipRuns", "formattedValue"])
+        value_fields.append("chipRuns")
 
     fields = (
         "sheets(properties(title),data(startRow,startColumn,"
@@ -1247,20 +1247,16 @@ async def _fetch_grid_metadata(
     return hyperlink_section, notes_section, smart_chips_section
 
 
-def _extract_cell_smart_chips_from_grid(spreadsheet: dict) -> list[dict[str, Any]]:
+def _extract_cell_smart_chips_from_grid(spreadsheet: dict) -> list[dict[str, str]]:
     """
-    Extract smart chips (Drive files/folders and People chips) from spreadsheet grid data.
+    Extract Drive and People smart chips from spreadsheet grid data.
 
     Returns a list of dictionaries with:
         - "cell": cell A1 reference
-        - "type": "drive" | "person" | "unknown"
-        - "uri": Drive link URI (for drive chips)
-        - "title": Drive item title (for drive chips)
-        - "mime_type": MIME type (for drive chips)
-        - "email": email address (for person chips)
-        - "name": display name (for person chips)
+        - "type": "drive" | "person"
+        - "value": Drive link URI or person email
     """
-    smart_chips: list[dict[str, Any]] = []
+    smart_chips: list[dict[str, str]] = []
     for sheet in spreadsheet.get("sheets", []) or []:
         sheet_title = sheet.get("properties", {}).get("title") or "Unknown"
         for grid in sheet.get("data", []) or []:
@@ -1274,79 +1270,43 @@ def _extract_cell_smart_chips_from_grid(spreadsheet: dict) -> list[dict[str, Any
                 ):
                     if not cell_data:
                         continue
-                    chip_runs = cell_data.get("chipRuns") or []
-                    if not chip_runs:
-                        continue
-                    cell_ref = _format_a1_cell(
-                        sheet_title,
-                        start_row + row_offset,
-                        start_col + col_offset,
-                    )
-                    formatted_val = cell_data.get("formattedValue")
-                    for chip_run in chip_runs:
+                    for chip_run in cell_data.get("chipRuns") or []:
+                        # Reads also return plain-text runs, which carry an empty chip.
                         chip = chip_run.get("chip") or {}
-                        rich_link = chip.get("richLinkProperties") or {}
-                        person = chip.get("personProperties") or {}
-                        if rich_link:
-                            smart_chips.append(
-                                {
-                                    "cell": cell_ref,
-                                    "type": "drive",
-                                    "uri": rich_link.get("uri"),
-                                    "title": rich_link.get("title") or formatted_val,
-                                    "mime_type": rich_link.get("mimeType"),
-                                }
-                            )
-                        elif person:
-                            smart_chips.append(
-                                {
-                                    "cell": cell_ref,
-                                    "type": "person",
-                                    "email": person.get("email"),
-                                    "name": person.get("name") or formatted_val,
-                                }
-                            )
+                        if "richLinkProperties" in chip:
+                            chip_type = "drive"
+                            value = chip["richLinkProperties"].get("uri")
+                        elif "personProperties" in chip:
+                            chip_type = "person"
+                            value = chip["personProperties"].get("email")
                         else:
-                            smart_chips.append(
-                                {
-                                    "cell": cell_ref,
-                                    "type": "unknown",
-                                    "label": formatted_val,
-                                }
-                            )
+                            continue
+                        smart_chips.append(
+                            {
+                                "cell": _format_a1_cell(
+                                    sheet_title,
+                                    start_row + row_offset,
+                                    start_col + col_offset,
+                                ),
+                                "type": chip_type,
+                                "value": value or "",
+                            }
+                        )
     return smart_chips
 
 
 def _format_sheet_smart_chips_section(
-    *, smart_chips: list[dict[str, Any]], range_label: str, max_details: int = 25
+    *, smart_chips: list[dict[str, str]], range_label: str, max_details: int = 25
 ) -> str:
     """Format a list of smart chips into a human-readable section."""
     if not smart_chips:
         return ""
 
-    lines = []
-    for item in smart_chips[:max_details]:
-        cell = item.get("cell") or "(unknown cell)"
-        chip_type = item.get("type", "chip")
-        if chip_type == "drive":
-            title = item.get("title") or ""
-            uri = item.get("uri") or ""
-            desc = (
-                f'"{title}" ({uri})' if title and uri else (uri or title or "(no uri)")
-            )
-            lines.append(f"- {cell}: [Drive Chip] {desc}")
-        elif chip_type == "person":
-            name = item.get("name") or ""
-            email = item.get("email") or ""
-            desc = (
-                f"{name} <{email}>"
-                if name and email
-                else (email or name or "(no email)")
-            )
-            lines.append(f"- {cell}: [Person Chip] {desc}")
-        else:
-            lines.append(f"- {cell}: [{chip_type}] {item.get('label', '')}")
-
+    labels = {"drive": "Drive Chip", "person": "Person Chip"}
+    lines = [
+        f"- {item['cell']}: [{labels[item['type']]}] {item['value']}"
+        for item in smart_chips[:max_details]
+    ]
     suffix = (
         f"\n... and {len(smart_chips) - max_details} more smart chips"
         if len(smart_chips) > max_details
@@ -1394,9 +1354,10 @@ def _parse_single_chip_properties(
                 chip_type = "drive"
                 uri = f"https://drive.google.com/open?id={val}"
             else:
-                # Default to drive
-                chip_type = "drive"
-                uri = val
+                raise UserInputError(
+                    f"Cannot infer chip type from '{val}'. Pass a Drive URL or ID, "
+                    "an email address, or set chip_type explicitly."
+                )
         elif chip_type == "drive":
             if val.startswith(("http://", "https://")):
                 uri = val
@@ -1492,11 +1453,10 @@ def _normalize_chips_input(
     Returns:
         List of (row_idx, col_idx, cell_data) tuples.
     """
-    # Parse JSON if passed as string
     if isinstance(chips, str):
         try:
             parsed = json.loads(chips)
-            if isinstance(parsed, (list, dict)):
+            if isinstance(parsed, (list, dict, str)):
                 chips = parsed
         except (json.JSONDecodeError, ValueError):
             pass

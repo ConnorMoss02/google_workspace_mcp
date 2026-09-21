@@ -10,6 +10,8 @@ import json
 import copy
 from typing import Any, List, Optional, Union
 
+from fastmcp.exceptions import ToolError
+from googleapiclient.errors import HttpError
 from mcp.types import ToolAnnotations
 
 from auth.service_decorator import require_google_service
@@ -32,13 +34,11 @@ from gsheets.sheets_helpers import (
     _format_conditional_rules_section,
     _format_named_ranges_list,
     _format_sheet_error_section,
+    _normalize_chips_input,
     _parse_a1_range,
     _parse_condition_values,
     _parse_gradient_points,
     _parse_hex_color,
-    _split_sheet_and_range,
-    _parse_a1_part,
-    _normalize_chips_input,
     _select_sheet,
     _values_contain_sheets_errors,
 )
@@ -474,7 +474,8 @@ async def modify_sheet_values(
     return text_output
 
 
-MAX_DRIVE_CHIPS_PER_BATCH = 8  # Sheets API enforces max 10 Drive chips per batchUpdate
+# Not in the API docs: the PR author's manual testing hit a 10-chip cap per batchUpdate.
+MAX_DRIVE_CHIPS_PER_BATCH = 8
 
 
 async def _insert_smart_chips_impl(
@@ -510,48 +511,17 @@ async def _insert_smart_chips_impl(
         )
         .execute
     )
-    sheets = metadata.get("sheets", [])
-    sheet_name, a1_part = _split_sheet_and_range(range_name)
-
-    target_sheet = None
-    if sheet_name:
-        for sheet in sheets:
-            if sheet.get("properties", {}).get("title") == sheet_name:
-                target_sheet = sheet
-                break
-        if target_sheet is None:
-            available_titles = [
-                s.get("properties", {}).get("title", "Untitled") for s in sheets
-            ]
-            raise UserInputError(
-                f"Sheet '{sheet_name}' not found in spreadsheet. Available sheets: {', '.join(available_titles)}."
-            )
-    else:
-        if not sheets:
-            raise UserInputError("Spreadsheet has no sheets.")
-        target_sheet = sheets[0]
-
-    sheet_id = target_sheet.get("properties", {}).get("sheetId")
-
-    if not a1_part:
-        raise UserInputError(
-            "A1-style range must not be empty (e.g., 'F3', 'Sheet1!F3:F23')."
-        )
-
-    if ":" in a1_part:
-        start, end = a1_part.split(":", 1)
-    else:
-        start = end = a1_part
-
-    start_col, start_row = _parse_a1_part(start)
-    end_col, end_row = _parse_a1_part(end)
+    grid_range = _parse_a1_range(range_name, metadata.get("sheets", []))
+    sheet_id = grid_range["sheetId"]
+    end_row = grid_range.get("endRowIndex")
+    end_col = grid_range.get("endColumnIndex")
 
     cell_updates = _normalize_chips_input(
         chips=chips,
-        start_row=start_row,
-        end_row=end_row,
-        start_col=start_col,
-        end_col=end_col,
+        start_row=grid_range.get("startRowIndex"),
+        end_row=end_row - 1 if end_row is not None else None,
+        start_col=grid_range.get("startColumnIndex"),
+        end_col=end_col - 1 if end_col is not None else None,
         default_chip_type=chip_type,
     )
 
@@ -560,7 +530,6 @@ async def _insert_smart_chips_impl(
 
     total_inserted = sum(len(c[2].get("chipRuns", [])) for c in cell_updates)
 
-    # Batch updates while respecting Google Sheets API limit of max 10 Drive chips per batchUpdate
     batches = []
     current_batch = []
     current_chip_count = 0
@@ -578,6 +547,7 @@ async def _insert_smart_chips_impl(
     if current_batch:
         batches.append(current_batch)
 
+    written_cells = 0
     for batch in batches:
         requests = []
         for r_idx, c_idx, cell_data in batch:
@@ -596,11 +566,21 @@ async def _insert_smart_chips_impl(
                     }
                 }
             )
-        await asyncio.to_thread(
-            service.spreadsheets()
-            .batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests})
-            .execute
-        )
+        try:
+            await asyncio.to_thread(
+                service.spreadsheets()
+                .batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests})
+                .execute
+            )
+        except HttpError as error:
+            if not written_cells:
+                raise
+            # Earlier batches are already committed, so say which cells changed.
+            raise ToolError(
+                f"Wrote smart chips to {written_cells} of {len(cell_updates)} cells in "
+                f"range '{range_name}' before the Sheets API rejected a batch: {error}"
+            ) from error
+        written_cells += len(batch)
 
     logger.info(
         f"[insert_smart_chips] Successfully inserted {total_inserted} smart chips for {user_google_email}."
@@ -640,7 +620,9 @@ async def insert_smart_chips(
         chips (Union[str, dict, List[Any]]): Smart chip(s) to insert:
             - A single URL or email string for a single cell (e.g., "https://drive.google.com/drive/folders/123", "user@example.com").
             - A list of URLs or emails for a single cell (multiple chips) or across cells (e.g., ["https://...", "https://..."]).
-            - A 2D list of URLs/emails matching a grid range.
+            - A 2D list of URLs/emails matching a grid range. For a single-row or single-column
+              range, each inner list is instead the chips for one cell (e.g., [["a@x.com", "b@x.com"]]
+              puts both chips in the first cell of "A1:C1").
             - A dict or list of dicts with explicit properties (e.g., {"type": "drive", "uri": "..."}, {"type": "person", "email": "..."}).
             - A JSON-encoded string representing any of the above formats.
         chip_type (Optional[str]): Explicit chip type if passing raw strings: "drive" (default for URLs/IDs) or "person" (default for emails).

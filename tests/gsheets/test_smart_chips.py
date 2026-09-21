@@ -4,16 +4,20 @@ Unit tests for Google Sheets Smart Chips (Jetons intelligents) support.
 Tests insertion and extraction of Google Drive and People smart chips.
 """
 
-from unittest.mock import Mock
-import pytest
-import sys
 import os
+import sys
+from unittest.mock import Mock
+
+import pytest
+from fastmcp.exceptions import ToolError
+from googleapiclient.errors import HttpError
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from core.utils import UserInputError
 from gsheets.sheets_helpers import (
     _create_chip_cell_data,
+    _extract_cell_smart_chips_from_grid,
     _normalize_chips_input,
 )
 from gsheets.sheets_tools import (
@@ -138,6 +142,12 @@ def test_create_chip_cell_data_invalid_type():
         _create_chip_cell_data("something", default_type="calendar")
 
 
+def test_create_chip_cell_data_uninferrable_string_raises():
+    """A string that is not a URL, email, or Drive ID is rejected, not sent as a URI."""
+    with pytest.raises(UserInputError, match="Cannot infer chip type"):
+        _create_chip_cell_data("hello")
+
+
 def test_create_chip_cell_data_missing_uri():
     """Drive chip dict without uri or id raises UserInputError."""
     with pytest.raises(UserInputError, match="Drive chip requires a URI"):
@@ -217,6 +227,21 @@ def test_normalize_chips_input_json_string():
         end_col=0,
     )
     assert len(updates) == 2
+
+
+def test_normalize_chips_input_json_scalar_string():
+    """A JSON-encoded single string is decoded rather than used verbatim."""
+    updates = _normalize_chips_input(
+        chips='"a@example.com"',
+        start_row=0,
+        end_row=0,
+        start_col=0,
+        end_col=0,
+    )
+    assert (
+        updates[0][2]["chipRuns"][0]["chip"]["personProperties"]["email"]
+        == "a@example.com"
+    )
 
 
 def test_normalize_chips_single_cell_multiple_chips():
@@ -392,6 +417,44 @@ async def test_insert_smart_chips_batches_over_limit():
 
 
 @pytest.mark.asyncio
+async def test_insert_smart_chips_reports_partial_write_on_later_batch_failure():
+    """A failure after a committed batch reports how many cells were already written."""
+    service = create_mock_sheets_service()
+    service.spreadsheets().batchUpdate.return_value.execute.side_effect = [
+        {},
+        HttpError(Mock(status=400), b"bad chip"),
+    ]
+    urls = [f"https://drive.google.com/folder_{i}" for i in range(19)]
+
+    with pytest.raises(ToolError, match="Wrote smart chips to 8 of 19 cells"):
+        await _insert_smart_chips_impl(
+            service=service,
+            user_google_email="user@example.com",
+            spreadsheet_id="test_sheet_id",
+            range_name="Sheet1!F3:F21",
+            chips=urls,
+        )
+
+
+@pytest.mark.asyncio
+async def test_insert_smart_chips_first_batch_failure_propagates_http_error():
+    """With nothing written yet, the HttpError reaches handle_http_errors unchanged."""
+    service = create_mock_sheets_service()
+    service.spreadsheets().batchUpdate.return_value.execute.side_effect = HttpError(
+        Mock(status=403), b"forbidden"
+    )
+
+    with pytest.raises(HttpError):
+        await _insert_smart_chips_impl(
+            service=service,
+            user_google_email="user@example.com",
+            spreadsheet_id="test_sheet_id",
+            range_name="Sheet1!F3",
+            chips="https://drive.google.com/1",
+        )
+
+
+@pytest.mark.asyncio
 async def test_insert_smart_chips_unknown_sheet():
     """Test error when sheet name is not found."""
     service = create_mock_sheets_service()
@@ -448,14 +511,12 @@ async def test_read_sheet_values_with_smart_chips():
                             {
                                 "values": [
                                     {
-                                        "formattedValue": "Folder Chicoutimi",
                                         "chipRuns": [
                                             {
                                                 "startIndex": 0,
                                                 "chip": {
                                                     "richLinkProperties": {
                                                         "uri": "https://drive.google.com/folders/111",
-                                                        "title": "Folder Chicoutimi",
                                                     }
                                                 },
                                             }
@@ -466,14 +527,12 @@ async def test_read_sheet_values_with_smart_chips():
                             {
                                 "values": [
                                     {
-                                        "formattedValue": "Antoine Beaubien",
                                         "chipRuns": [
                                             {
                                                 "startIndex": 0,
                                                 "chip": {
                                                     "personProperties": {
                                                         "email": "antoine@example.com",
-                                                        "name": "Antoine Beaubien",
                                                     }
                                                 },
                                             }
@@ -498,11 +557,46 @@ async def test_read_sheet_values_with_smart_chips():
     )
 
     assert "Smart Chips in range 'Sheet1!F3:F4':" in result
-    assert (
-        '- Sheet1!F3: [Drive Chip] "Folder Chicoutimi" (https://drive.google.com/folders/111)'
-        in result
-    )
-    assert "- Sheet1!F4: [Person Chip] Antoine Beaubien <antoine@example.com>" in result
+    assert "- Sheet1!F3: [Drive Chip] https://drive.google.com/folders/111" in result
+    assert "- Sheet1!F4: [Person Chip] antoine@example.com" in result
+
+
+def test_extract_smart_chips_skips_plain_text_runs():
+    """Plain-text runs come back with an empty chip and must not be reported."""
+    grid = {
+        "sheets": [
+            {
+                "properties": {"title": "Sheet1"},
+                "data": [
+                    {
+                        "rowData": [
+                            {
+                                "values": [
+                                    {
+                                        "chipRuns": [
+                                            {"startIndex": 0},
+                                            {
+                                                "startIndex": 7,
+                                                "chip": {
+                                                    "personProperties": {
+                                                        "email": "a@example.com"
+                                                    }
+                                                },
+                                            },
+                                            {"startIndex": 8, "chip": {}},
+                                        ]
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ],
+            }
+        ]
+    }
+    assert _extract_cell_smart_chips_from_grid(grid) == [
+        {"cell": "Sheet1!A1", "type": "person", "value": "a@example.com"}
+    ]
 
 
 @pytest.mark.asyncio
