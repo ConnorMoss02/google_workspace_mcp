@@ -15,6 +15,7 @@ from .sheets_tools import (
     list_sheet_tables,
     append_table_rows,
     move_sheet_rows,
+    manage_named_range,
 )
 
 __all__ = [
@@ -28,4 +29,5 @@ __all__ = [
     "list_sheet_tables",
     "append_table_rows",
     "move_sheet_rows",
+    "manage_named_range",
 ]
