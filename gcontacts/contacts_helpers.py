@@ -12,6 +12,8 @@ import logging
 import re
 from typing import Any, Dict, List
 
+from core.utils import UserInputError
+
 logger = logging.getLogger(__name__)
 
 # Name fields the People API derives from the structured parts. Sending them
@@ -528,9 +530,32 @@ def _merge_names(
     new_names: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     """
-    Overlay the provided name parts onto the primary existing name, so changing
+    Overlay the provided name parts onto the contact's existing name, so changing
     one part (e.g. givenName) keeps the rest (familyName, middleName, suffix...).
     """
-    current = existing[0] if existing else {}
+    current = next(
+        (
+            name
+            for name in existing
+            if name.get("metadata", {}).get("source", {}).get("type") == "CONTACT"
+        ),
+        {},
+    )
+    unstructured = current.get("unstructuredName")
+    if unstructured and unstructured != " ".join(
+        current[part]
+        for part in (
+            "honorificPrefix",
+            "givenName",
+            "middleName",
+            "familyName",
+            "honorificSuffix",
+        )
+        if current.get(part)
+    ):
+        raise UserInputError(
+            "Cannot partially update a name with an unstructuredName that "
+            "cannot be represented by its structured parts."
+        )
     kept = {k: v for k, v in current.items() if k not in _DERIVED_NAME_FIELDS}
     return [{**kept, **new_names[0]}]

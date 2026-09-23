@@ -348,7 +348,7 @@ def _build_person_body(
     name = {
         key: value
         for key, value in (("givenName", given_name), ("familyName", family_name))
-        if value
+        if value is not None
     }
     if name:
         body["names"] = [name]
