@@ -15,6 +15,7 @@ from pydantic import TypeAdapter
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
+from core.utils import UserInputError, handle_http_errors
 from gcalendar.calendar_tools import (
     _build_addon_conference_data,
     _create_event_impl,
@@ -454,6 +455,51 @@ async def test_modify_event_rejects_attendee_without_email():
             event_id="evt123",
             attendees=["kept@example.com", {"displayName": "No Email"}],
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["create", "update"])
+@pytest.mark.parametrize("invalid_attendee", [{"displayName": "No Email"}, 123, None])
+async def test_manage_event_attendee_errors_are_user_input(action, invalid_attendee):
+    mock_service = _create_mock_service()
+    mock_service.reset_mock()
+    # Exercise the tool's error handler while bypassing authentication.
+    fn = handle_http_errors("manage_event", service_type="calendar")(
+        _unwrap(manage_event)
+    )
+
+    with pytest.raises(UserInputError, match="'email' key") as exc_info:
+        await fn(
+            service=mock_service,
+            user_google_email="user@example.com",
+            action=action,
+            event_id="evt123",
+            summary="Meeting",
+            start_time="2026-04-06T09:00:00Z",
+            end_time="2026-04-06T09:30:00Z",
+            attendees=["kept@example.com", invalid_attendee],
+        )
+
+    assert isinstance(exc_info.value, ValueError)
+    assert mock_service.mock_calls == []
+
+
+@pytest.mark.asyncio
+async def test_manage_event_unrelated_value_error_keeps_existing_handling():
+    fn = handle_http_errors("manage_event", service_type="calendar")(
+        _unwrap(manage_event)
+    )
+
+    with pytest.raises(Exception, match="An unexpected error occurred") as exc_info:
+        await fn(
+            service=Mock(),
+            user_google_email="user@example.com",
+            action="create",
+            send_updates="invalid",
+        )
+
+    assert isinstance(exc_info.value.__cause__, ValueError)
+    assert not isinstance(exc_info.value.__cause__, UserInputError)
 
 
 @pytest.mark.parametrize(

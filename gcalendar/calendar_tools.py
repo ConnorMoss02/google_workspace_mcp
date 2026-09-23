@@ -18,7 +18,7 @@ from googleapiclient.errors import HttpError
 from googleapiclient.discovery import build
 
 from auth.service_decorator import require_google_service
-from core.utils import handle_http_errors, StringList, StringOrDictList
+from core.utils import handle_http_errors, StringList, StringOrDictList, UserInputError
 from gcalendar.calendar_helpers import (
     _format_event_detail_lines,
     _format_event_time,
@@ -987,6 +987,10 @@ async def _create_event_impl(
     return confirmation_message
 
 
+class AttendeeValidationError(ValueError, UserInputError):
+    """Invalid attendee input, preserving ValueError compatibility for callers."""
+
+
 def _normalize_attendees(
     attendees: Optional[List[Union[str, Dict[str, Any]]]],
 ) -> Optional[List[Dict[str, Any]]]:
@@ -1001,8 +1005,8 @@ def _normalize_attendees(
     Returns list of attendee dicts with at minimum 'email' key.
 
     Raises:
-        ValueError: If an attendee is neither an email string nor a dict with an
-            'email' key, so it is never silently left off the event.
+        AttendeeValidationError: If an attendee is neither an email string nor a
+            dict with an 'email' key, so it is never silently left off the event.
     """
     if attendees is None:
         return None
@@ -1014,7 +1018,7 @@ def _normalize_attendees(
         elif isinstance(att, dict) and "email" in att:
             normalized.append(att)
         else:
-            raise ValueError(
+            raise AttendeeValidationError(
                 "Each attendee must be an email string or an object with an "
                 f"'email' key; got {type(att).__name__}"
             )
