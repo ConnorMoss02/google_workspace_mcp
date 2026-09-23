@@ -1,6 +1,7 @@
 """Tests for Gmail body_format support across helper and public tool APIs."""
 
 import base64
+import inspect
 from email import message_from_bytes
 from email.policy import SMTP
 from pathlib import Path
@@ -29,6 +30,17 @@ def _unwrap(tool):
     while hasattr(fn, "__wrapped__"):
         fn = fn.__wrapped__
     return fn
+
+
+def test_get_gmail_message_content_preserves_existing_positional_arguments():
+    signature = inspect.signature(_unwrap(get_gmail_message_content))
+    bound = signature.bind(
+        Mock(), "msg-1", "user@example.com", "html", True, "metadata"
+    )
+
+    assert bound.arguments["body_format"] == "html"
+    assert bound.arguments["full"] is True
+    assert bound.arguments["format"] == "metadata"
 
 
 def _encode(text: str) -> str:

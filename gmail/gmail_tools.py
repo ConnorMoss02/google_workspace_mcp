@@ -1841,7 +1841,6 @@ async def get_gmail_message_content(
     service,
     message_id: str,
     user_google_email: str,
-    format: Literal["full", "metadata"] = "full",
     body_format: Annotated[
         Literal["text", "html", "raw"],
         Field(
@@ -1866,6 +1865,7 @@ async def get_gmail_message_content(
             ),
         ),
     ] = False,
+    format: Literal["full", "metadata"] = "full",
 ) -> str:
     """
     Retrieves the full content (subject, sender, recipients, body) of a specific Gmail message.
@@ -1880,8 +1880,6 @@ async def get_gmail_message_content(
     Args:
         message_id (str): The unique ID of the Gmail message to retrieve.
         user_google_email (str): The user's Google email address. Required.
-        format (Literal["full", "metadata"]): Message format. "full" (default) includes
-            the body and attachments, "metadata" only headers.
         body_format (Literal["text", "html", "raw"]): Body output format (only applies
             when format='full').
             "text" (default) returns plaintext (HTML converted to text as fallback).
@@ -1894,6 +1892,8 @@ async def get_gmail_message_content(
             exports decode as UTF-8 and drop undecodable bytes, so prefer "raw" when
             byte-exact fidelity matters. In stateless mode there is no storage to write
             to, so the untruncated content is returned inline instead.
+        format (Literal["full", "metadata"]): Message format. "full" (default) includes
+            the body and attachments, "metadata" only headers.
 
     Returns:
         str: The message details including subject, sender, date, Message-ID, recipients
