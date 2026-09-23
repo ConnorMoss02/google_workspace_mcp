@@ -560,11 +560,11 @@ def _build_message_get_request(
     return service.users().messages().get(**request_kwargs)
 
 
-def _validate_message_batch_options(
+def _validate_message_format_options(
     response_format: Literal["full", "metadata"],
     body_format: Literal["text", "html", "raw"],
 ) -> None:
-    """Reject incompatible output combinations for batch message reads."""
+    """Reject incompatible output combinations for message reads."""
     if response_format == "metadata" and body_format != "text":
         raise UserInputError(
             "body_format='html' and body_format='raw' require format='full'."
@@ -1841,11 +1841,12 @@ async def get_gmail_message_content(
     service,
     message_id: str,
     user_google_email: str,
+    format: Literal["full", "metadata"] = "full",
     body_format: Annotated[
         Literal["text", "html", "raw"],
         Field(
             description=(
-                "Body output format. "
+                "Body output format (only applies when format='full'). "
                 "'text' (default) returns plaintext (HTML converted to text as fallback). "
                 "'html' returns the raw HTML body as-is without conversion. "
                 "'raw' fetches the full raw MIME message and returns the base64url-decoded content."
@@ -1879,7 +1880,10 @@ async def get_gmail_message_content(
     Args:
         message_id (str): The unique ID of the Gmail message to retrieve.
         user_google_email (str): The user's Google email address. Required.
-        body_format (Literal["text", "html", "raw"]): Body output format.
+        format (Literal["full", "metadata"]): Message format. "full" (default) includes
+            the body and attachments, "metadata" only headers.
+        body_format (Literal["text", "html", "raw"]): Body output format (only applies
+            when format='full').
             "text" (default) returns plaintext (HTML converted to text as fallback).
             "html" returns the raw HTML body as-is without conversion.
             "raw" fetches the full raw MIME message and returns the base64url-decoded content.
@@ -1899,8 +1903,12 @@ async def get_gmail_message_content(
     """
     logger.info(
         f"[get_gmail_message_content] Invoked. Message ID: '{message_id}', "
-        f"Email: '{user_google_email}', body_format='{body_format}', full={full}"
+        f"Email: '{user_google_email}', format='{format}', "
+        f"body_format='{body_format}', full={full}"
     )
+    _validate_message_format_options(format, body_format)
+    if format == "metadata" and full:
+        raise UserInputError("full=True requires format='full'.")
 
     # Fetch message metadata first to get headers
     message_metadata = await asyncio.to_thread(
@@ -1918,6 +1926,9 @@ async def get_gmail_message_content(
     headers = _extract_headers(
         message_metadata.get("payload", {}), GMAIL_METADATA_HEADERS
     )
+
+    if format == "metadata":
+        return "\n".join(_format_message_header_lines(headers))
 
     # Full export: hand back a file reference instead of the (truncated) body.
     if full:
@@ -2040,7 +2051,7 @@ async def get_gmail_messages_content_batch(
 
     if not message_ids:
         raise Exception("No message IDs provided")
-    _validate_message_batch_options(format, body_format)
+    _validate_message_format_options(format, body_format)
 
     output_messages = []
     message_format: Literal["metadata", "full"] = (

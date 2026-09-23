@@ -498,6 +498,48 @@ async def test_get_gmail_messages_content_batch_rejects_metadata_with_body_forma
 
 
 @pytest.mark.asyncio
+async def test_get_gmail_message_content_metadata_format_returns_headers_only():
+    """The singular tool accepts the batch tool's format argument (#1152)."""
+    service = _build_service(
+        message_responses={
+            ("msg-1", "metadata"): _metadata_response("msg-1"),
+        }
+    )
+
+    result = await _unwrap(get_gmail_message_content)(
+        service=service,
+        message_id="msg-1",
+        user_google_email="user@example.com",
+        format="metadata",
+    )
+
+    assert "From: sender@example.com" in result
+    assert "--- BODY ---" not in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("options", "error"),
+    [
+        ({"body_format": "html"}, "require format='full'"),
+        ({"body_format": "raw"}, "require format='full'"),
+        ({"full": True}, "full=True requires format='full'"),
+    ],
+)
+async def test_get_gmail_message_content_rejects_metadata_with_body_options(
+    options, error
+):
+    with pytest.raises(UserInputError, match=error):
+        await _unwrap(get_gmail_message_content)(
+            service=_build_service(),
+            message_id="msg-1",
+            user_google_email="user@example.com",
+            format="metadata",
+            **options,
+        )
+
+
+@pytest.mark.asyncio
 async def test_get_gmail_thread_content_supports_raw_format():
     service = _build_service(
         message_responses={
