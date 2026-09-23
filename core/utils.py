@@ -14,7 +14,7 @@ import functools
 import inspect
 
 from pathlib import Path
-from typing import Annotated, Any, List, Optional
+from typing import Annotated, Any, List, Optional, Union
 
 from pydantic import BeforeValidator
 from defusedxml import DefusedXmlException, ElementTree as ET
@@ -134,6 +134,12 @@ that send ``'[{"key":"val"}]'`` instead of ``[{"key":"val"}]``.
 
 ObjectList = Annotated[List[object], BeforeValidator(_coerce_json_str_to_list)]
 """``List[object]`` that also accepts a JSON-encoded string of an array."""
+
+
+StringOrDictList = Annotated[
+    List[Union[str, dict[str, Any]]], BeforeValidator(_coerce_json_str_to_list)
+]
+"""List of strings and/or dicts that also accepts a JSON-encoded string of an array."""
 
 
 def _coerce_json_str_to_dict(v: Any) -> Any:

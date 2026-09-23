@@ -18,7 +18,7 @@ from googleapiclient.errors import HttpError
 from googleapiclient.discovery import build
 
 from auth.service_decorator import require_google_service
-from core.utils import handle_http_errors, StringList
+from core.utils import handle_http_errors, StringList, StringOrDictList
 from gcalendar.calendar_helpers import (
     _format_event_detail_lines,
     _format_event_time,
@@ -999,6 +999,10 @@ def _normalize_attendees(
     - Mixed list of both formats
 
     Returns list of attendee dicts with at minimum 'email' key.
+
+    Raises:
+        ValueError: If an attendee is neither an email string nor a dict with an
+            'email' key, so it is never silently left off the event.
     """
     if attendees is None:
         return None
@@ -1010,8 +1014,9 @@ def _normalize_attendees(
         elif isinstance(att, dict) and "email" in att:
             normalized.append(att)
         else:
-            logger.warning(
-                f"[_normalize_attendees] Invalid attendee format (type={type(att).__name__}), skipping"
+            raise ValueError(
+                "Each attendee must be an email string or an object with an "
+                f"'email' key; got {type(att).__name__}"
             )
     return normalized if normalized else None
 
@@ -1413,7 +1418,7 @@ async def manage_event(
     calendar_id: str = "primary",
     description: Optional[str] = None,
     location: Optional[str] = None,
-    attendees: Optional[Union[StringList, List[Dict[str, Any]]]] = None,
+    attendees: Optional[StringOrDictList] = None,
     timezone: Optional[str] = None,
     attachments: Optional[StringList] = None,
     add_google_meet: Optional[bool] = None,
@@ -1451,7 +1456,7 @@ async def manage_event(
         calendar_id (str): Calendar ID (default: 'primary').
         description (Optional[str]): Event description.
         location (Optional[str]): Event location.
-        attendees (Optional[Union[List[str], List[Dict[str, Any]]]]): Attendee email addresses or objects.
+        attendees (Optional[List[Union[str, Dict[str, Any]]]]): Attendee email addresses, attendee objects (e.g. {"email": ..., "responseStatus": "accepted"}), or a mix of both.
         timezone (Optional[str]): IANA timezone applied to both boundaries (e.g.,
             "America/New_York"). Converts offset-bearing timestamps without changing their
             instant; interprets offset-free timestamps as local times in this zone.
