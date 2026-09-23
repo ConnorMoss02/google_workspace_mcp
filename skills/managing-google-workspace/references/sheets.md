@@ -52,6 +52,8 @@ Google Sheets can resolve them as named ranges.
 | range_name | string | no | A1:Z1000 | A1 notation, e.g. `Sheet1!A1:D10`. Caps at 1000 rows |
 | include_hyperlinks | boolean | no | false | Fetch hyperlink metadata (slower) |
 | include_notes | boolean | no | false | Fetch cell notes (slower) |
+| include_formulas | boolean | no | false | Fetch raw formula strings |
+| include_smart_chips | boolean | no | false | Fetch smart chips metadata (Drive files/folders & People) |
 
 ### modify_sheet_values
 Write, update, or clear values in a range.
@@ -64,6 +66,17 @@ Write, update, or clear values in a range.
 | values | array or string | conditional | | 2D array of values. Required unless `clear_values=true`. Accepts a JSON string or a list |
 | value_input_option | string | no | USER_ENTERED | `RAW` or `USER_ENTERED` |
 | clear_values | boolean | no | false | Clear the range instead of writing |
+
+### insert_smart_chips
+Insert Google Workspace Smart Chips (Drive files/folders or People) into a cell or range. Automatically chunks into batches of <=8 chips to respect Google Sheets API limits.
+
+| Parameter | Type | Required | Default | Notes |
+|-----------|------|----------|---------|-------|
+| user_google_email | string | yes | | |
+| spreadsheet_id | string | yes | | |
+| range_name | string | yes | | Target cell or range (e.g., `Sheet1!F3`, `Sheet1!F3:F23`) |
+| chips | array or string | yes | | Single URL/email, 1D/2D array of URLs/emails, or dict(s) with `type`, `uri`/`email` |
+| chip_type | string | no | null | Optional override: `drive` or `person` (auto-detected if omitted) |
 
 ---
 
