@@ -177,25 +177,50 @@ def local_file_access_enabled() -> bool:
     return os.environ.get(_DISABLE_LOCAL_FILES_ENV, "").strip().lower() != "true"
 
 
+def _hide_parameters(func, names: tuple[str, ...], hide: bool):
+    """Drop ``names`` from ``func``'s signature when ``hide`` is set.
+
+    Rewrites ``__signature__``, as ``require_google_service`` does, so FastMCP
+    omits the parameters from the schema and rejects them if a client with a
+    cached schema sends them anyway. Names are checked either way, so a stale
+    one fails at import. Each call reads the signature the previous decorator
+    left, so the decorators below stack.
+    """
+    sig = inspect.signature(func)
+    missing = [name for name in names if name not in sig.parameters]
+    if missing:
+        raise ValueError(f"{func.__name__} has no parameter(s) {missing} to hide.")
+    if hide:
+        func.__signature__ = sig.replace(
+            parameters=[p for p in sig.parameters.values() if p.name not in names]
+        )
+    return func
+
+
 def hide_local_file_args(*names: str):
     """Tool decorator: drop server-side path parameters when local files are off.
 
-    Rewrites ``__signature__``, as ``require_google_service`` does, so apply it
-    directly under ``@server.tool``. FastMCP then omits the parameters from the
-    schema and rejects them if a client with a cached schema sends them anyway.
-    Names are checked either way, so a stale one fails at import.
+    Apply directly under ``@server.tool`` so the rewritten signature is what
+    FastMCP sees (see ``_hide_parameters``). No-op when local file access is
+    enabled.
     """
 
     def decorator(func):
-        sig = inspect.signature(func)
-        missing = [name for name in names if name not in sig.parameters]
-        if missing:
-            raise ValueError(f"{func.__name__} has no parameter(s) {missing} to hide.")
-        if not local_file_access_enabled():
-            func.__signature__ = sig.replace(
-                parameters=[p for p in sig.parameters.values() if p.name not in names]
-            )
-        return func
+        return _hide_parameters(func, names, hide=not local_file_access_enabled())
+
+    return decorator
+
+
+def hide_remote_only_args(*names: str):
+    """Tool decorator: drop remote-only parameters when local files are on.
+
+    The inverse of ``hide_local_file_args``, so a tool carrying both kinds of
+    parameter advertises exactly one under any setting. Apply directly under
+    ``@server.tool``, stacked with ``hide_local_file_args`` in either order.
+    """
+
+    def decorator(func):
+        return _hide_parameters(func, names, hide=local_file_access_enabled())
 
     return decorator
 

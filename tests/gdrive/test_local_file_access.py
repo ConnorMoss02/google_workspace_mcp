@@ -251,7 +251,7 @@ class TestGuidanceWhenDisabled:
 
     @pytest.mark.asyncio
     @DISABLED
-    @patch("gdrive.drive_tools.resolve_folder_id", new_callable=AsyncMock)
+    @patch("gdrive.drive_helpers.resolve_folder_id", new_callable=AsyncMock)
     async def test_inline_content_still_works(self, mock_folder, _enabled):
         mock_folder.return_value = "root"
         service = Mock()
@@ -277,7 +277,7 @@ class TestGuidanceWhenDisabled:
 class TestFilePathWorksByDefault:
     @pytest.mark.asyncio
     @patch("core.utils.get_transport_mode", return_value="streamable-http")
-    @patch("gdrive.drive_tools.resolve_folder_id", new_callable=AsyncMock)
+    @patch("gdrive.drive_helpers.resolve_folder_id", new_callable=AsyncMock)
     async def test_localhost_http_keeps_file_path(
         self, mock_folder, _mode, tmp_path, monkeypatch
     ):
@@ -444,14 +444,18 @@ asyncio.run(main())
         assert offenders == []
 
     def test_enabled_ships_the_same_text_plus_the_parameter(self):
-        """The wording is not switched per setting: hidden or shown, the
-        description and every other property read the same."""
+        """The wording is not switched per setting: each setting swaps file_path
+        for return_upload_url, and the description and every other property
+        read the same. The description names neither, since each is hidden
+        under one setting."""
+        swapped = {"file_path", "return_upload_url"}
         on = self._shipped({"WORKSPACE_MCP_DISABLE_LOCAL_FILES": "true"})
         off = self._shipped({})
         for name in TestSchemaThroughFastMCP.TOOLS:
             assert off[name]["description"] == on[name]["description"]
-            assert "file_path" in off[name]["properties"]
-            shown = {
-                k: v for k, v in off[name]["properties"].items() if k != "file_path"
-            }
-            assert shown == on[name]["properties"]
+            assert "return_upload_url" not in off[name]["description"]
+            assert swapped & set(off[name]["properties"]) == {"file_path"}
+            assert swapped & set(on[name]["properties"]) == {"return_upload_url"}
+            assert {
+                k: v for k, v in off[name]["properties"].items() if k not in swapped
+            } == {k: v for k, v in on[name]["properties"].items() if k not in swapped}
