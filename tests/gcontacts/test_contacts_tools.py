@@ -260,15 +260,13 @@ class TestBuildPersonBody:
         """Test building a person body with only given name."""
         body = _build_person_body(given_name="John")
 
-        assert body["names"][0]["givenName"] == "John"
-        assert body["names"][0]["familyName"] == ""
+        assert body["names"] == [{"givenName": "John"}]
 
     def test_build_body_family_name_only(self):
         """Test building a person body with only family name."""
         body = _build_person_body(family_name="Doe")
 
-        assert body["names"][0]["givenName"] == ""
-        assert body["names"][0]["familyName"] == "Doe"
+        assert body["names"] == [{"familyName": "Doe"}]
 
     def test_build_full_body(self):
         """Test building a person body with all fields."""

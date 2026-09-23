@@ -164,6 +164,88 @@ class TestManageContactUpdateMerge:
         assert update_kwargs["body"]["etag"] == "E1"
 
 
+class TestNameUpdateKeepsOtherParts:
+    """Changing one name part must not erase the rest (issue #1096)."""
+
+    STORED_NAME = {
+        "metadata": {"primary": True},
+        "displayName": "Bob Q Smith Jr.",
+        "unstructuredName": "Bob Q Smith Jr.",
+        "givenName": "Bob",
+        "familyName": "Smith",
+        "middleName": "Q",
+        "honorificSuffix": "Jr.",
+    }
+    EXPECTED_NAMES = [
+        {
+            "givenName": "Robert",
+            "familyName": "Smith",
+            "middleName": "Q",
+            "honorificSuffix": "Jr.",
+        }
+    ]
+
+    def test_manage_contact_update_merges_names(self):
+        svc = MagicMock()
+        svc.people.return_value.get.return_value.execute.return_value = {
+            "resourceName": "people/c1",
+            "etag": "E1",
+            "names": [self.STORED_NAME],
+        }
+        svc.people.return_value.updateContact.return_value.execute.return_value = {
+            "resourceName": "people/c1"
+        }
+
+        run(
+            manage_contact(
+                service=svc,
+                user_google_email="test@example.com",
+                action="update",
+                contact_id="c1",
+                given_name="Robert",
+            )
+        )
+
+        update_kwargs = svc.people.return_value.updateContact.call_args.kwargs
+        assert update_kwargs["updatePersonFields"] == "names"
+        assert update_kwargs["body"]["names"] == self.EXPECTED_NAMES
+
+    def test_batch_update_merges_names(self):
+        svc = MagicMock()
+        svc.people.return_value.getBatchGet.return_value.execute.return_value = {
+            "responses": [
+                {
+                    "person": {
+                        "resourceName": "people/c1",
+                        "etag": "E1",
+                        "names": [self.STORED_NAME],
+                    }
+                }
+            ]
+        }
+        svc.people.return_value.batchUpdateContacts.return_value.execute.return_value = {
+            "updateResult": {}
+        }
+
+        run(
+            manage_contacts_batch(
+                service=svc,
+                user_google_email="test@example.com",
+                action="update",
+                updates=[{"contact_id": "c1", "given_name": "Robert"}],
+                field="names",
+            )
+        )
+
+        get_kwargs = svc.people.return_value.getBatchGet.call_args.kwargs
+        batch_kwargs = svc.people.return_value.batchUpdateContacts.call_args.kwargs
+        assert get_kwargs["personFields"] == "metadata,names"
+        assert batch_kwargs["body"]["contacts"]["people/c1"] == {
+            "etag": "E1",
+            "names": self.EXPECTED_NAMES,
+        }
+
+
 # =============================================================================
 # Test 9: phones_mode="replace" vs "merge" vs "remove" behavioural difference
 # =============================================================================

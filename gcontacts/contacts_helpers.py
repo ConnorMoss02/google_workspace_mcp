@@ -14,6 +14,15 @@ from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 
+# Name fields the People API derives from the structured parts. Sending them
+# back alongside an edited part would conflict with (or override) the edit.
+_DERIVED_NAME_FIELDS = (
+    "metadata",
+    "displayName",
+    "displayNameLastFirst",
+    "unstructuredName",
+)
+
 
 def _parse_birthday(s: str) -> Dict[str, Any]:
     """Parse 'YYYY-MM-DD' or 'MM-DD' into a People API birthday object."""
@@ -512,3 +521,16 @@ def _merge_relations(
             result.append(r)
             existing_keys.add(rk)
     return result
+
+
+def _merge_names(
+    existing: List[Dict[str, Any]],
+    new_names: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """
+    Overlay the provided name parts onto the primary existing name, so changing
+    one part (e.g. givenName) keeps the rest (familyName, middleName, suffix...).
+    """
+    current = existing[0] if existing else {}
+    kept = {k: v for k, v in current.items() if k not in _DERIVED_NAME_FIELDS}
+    return [{**kept, **new_names[0]}]
