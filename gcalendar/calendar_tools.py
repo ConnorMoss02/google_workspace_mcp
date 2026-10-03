@@ -1732,6 +1732,7 @@ async def _list_ooo_events_impl(
     time_max: Optional[str] = None,
     max_results: int = 10,
     timezone: Optional[str] = None,
+    page_token: Optional[str] = None,
 ) -> str:
     """Internal implementation for listing Out of Office calendar events."""
     logger.info(
@@ -1739,6 +1740,11 @@ async def _list_ooo_events_impl(
     )
 
     formatted_time_min = _correct_time_format_for_api(time_min, "time_min", timezone)
+    if page_token and formatted_time_min is None:
+        raise ValueError(
+            "[list_ooo_events] page_token requires time_min. Pass the Pagination "
+            "time_min from the previous response to preserve the original range."
+        )
     if formatted_time_min:
         effective_time_min = formatted_time_min
     else:
@@ -1773,13 +1779,27 @@ async def _list_ooo_events_impl(
     }
     if effective_time_max:
         request_params["timeMax"] = effective_time_max
+    if page_token:
+        request_params["pageToken"] = page_token
 
     events_result = await asyncio.to_thread(
         lambda: service.events().list(**request_params).execute()
     )
     items = events_result.get("items", [])
+    next_page_token = events_result.get("nextPageToken")
+    pagination_info = ""
+    if next_page_token:
+        pagination_info = (
+            f"Next page token: {next_page_token}"
+            f"\nPagination time_min: {effective_time_min}"
+        )
 
     if not items:
+        if next_page_token:
+            return (
+                f"No out-of-office events on this page for {user_google_email}, and more pages remain."
+                f"\n{pagination_info}"
+            )
         return f"No out-of-office events found for {user_google_email}."
 
     lines = [f"Found {len(items)} out-of-office event(s) for {user_google_email}:\n"]
@@ -1803,6 +1823,8 @@ async def _list_ooo_events_impl(
         lines.append(f"   Event ID: {event_id}")
         lines.append("")
 
+    if next_page_token:
+        lines.append(pagination_info)
     return "\n".join(lines).rstrip()
 
 
@@ -1963,6 +1985,7 @@ async def manage_out_of_office(
     time_min: Optional[str] = None,
     time_max: Optional[str] = None,
     max_results: int = 10,
+    page_token: Optional[str] = None,
     event_id: Optional[str] = None,
     calendar_id: str = "primary",
 ) -> str:
@@ -1982,7 +2005,8 @@ async def manage_out_of_office(
         timezone (Optional[str]): Timezone for the event (e.g., "America/New_York", "Europe/London"). Required when using date-only values or dateTime values without an explicit UTC offset.
         time_min (Optional[str]): For "list" action: start of time range. Defaults to current time. Recurring series are expanded into individual instances in the requested range.
         time_max (Optional[str]): For "list" action: end of time range.
-        max_results (int): For "list" action: maximum events to return. Defaults to 10.
+        max_results (int): For "list" action: maximum events to return in one page. Defaults to 10.
+        page_token (Optional[str]): For "list" action: token for the next page, taken from a previous response. Also pass the response's Pagination time_min as time_min, even if omitted on the first call. Keep all other query parameters unchanged.
         event_id (Optional[str]): Event ID. Required for "update" and "delete" actions.
         calendar_id (str): Calendar ID. Defaults to 'primary'. Out of Office status events live on primary calendars, so use 'primary' or a user's primary calendar ID/email rather than a secondary calendar ID.
 
@@ -2014,6 +2038,7 @@ async def manage_out_of_office(
             time_max=time_max,
             max_results=max_results,
             timezone=timezone,
+            page_token=page_token,
         )
     elif action_lower == "update":
         if not event_id:
@@ -2185,6 +2210,7 @@ async def _list_focus_time_events_impl(
     time_max: Optional[str] = None,
     max_results: int = 10,
     timezone: Optional[str] = None,
+    page_token: Optional[str] = None,
 ) -> str:
     """Internal implementation for listing Focus Time calendar events."""
     logger.info(
@@ -2192,6 +2218,11 @@ async def _list_focus_time_events_impl(
     )
 
     formatted_time_min = _correct_time_format_for_api(time_min, "time_min", timezone)
+    if page_token and formatted_time_min is None:
+        raise ValueError(
+            "[list_focus_time_events] page_token requires time_min. Pass the Pagination "
+            "time_min from the previous response to preserve the original range."
+        )
     if formatted_time_min:
         effective_time_min = formatted_time_min
     else:
@@ -2226,13 +2257,27 @@ async def _list_focus_time_events_impl(
     }
     if effective_time_max:
         request_params["timeMax"] = effective_time_max
+    if page_token:
+        request_params["pageToken"] = page_token
 
     events_result = await asyncio.to_thread(
         lambda: service.events().list(**request_params).execute()
     )
     items = events_result.get("items", [])
+    next_page_token = events_result.get("nextPageToken")
+    pagination_info = ""
+    if next_page_token:
+        pagination_info = (
+            f"Next page token: {next_page_token}"
+            f"\nPagination time_min: {effective_time_min}"
+        )
 
     if not items:
+        if next_page_token:
+            return (
+                f"No Focus Time events on this page for {user_google_email}, and more pages remain."
+                f"\n{pagination_info}"
+            )
         return f"No Focus Time events found for {user_google_email}."
 
     lines = [f"Found {len(items)} Focus Time event(s) for {user_google_email}:\n"]
@@ -2259,6 +2304,8 @@ async def _list_focus_time_events_impl(
         lines.append(f"   Event ID: {event_id}")
         lines.append("")
 
+    if next_page_token:
+        lines.append(pagination_info)
     return "\n".join(lines).rstrip()
 
 
@@ -2437,6 +2484,7 @@ async def manage_focus_time(
     time_min: Optional[str] = None,
     time_max: Optional[str] = None,
     max_results: int = 10,
+    page_token: Optional[str] = None,
     event_id: Optional[str] = None,
     calendar_id: str = "primary",
 ) -> str:
@@ -2459,7 +2507,8 @@ async def manage_focus_time(
         timezone (Optional[str]): Timezone for the event (e.g., "America/New_York", "Europe/London"). Required when using date-only values or dateTime values without an explicit UTC offset.
         time_min (Optional[str]): For "list" action: start of time range. Defaults to current time. Recurring series are expanded into individual instances in the requested range.
         time_max (Optional[str]): For "list" action: end of time range.
-        max_results (int): For "list" action: maximum events to return. Defaults to 10.
+        max_results (int): For "list" action: maximum events to return in one page. Defaults to 10.
+        page_token (Optional[str]): For "list" action: token for the next page, taken from a previous response. Also pass the response's Pagination time_min as time_min, even if omitted on the first call. Keep all other query parameters unchanged.
         event_id (Optional[str]): Event ID. Required for "update" and "delete" actions.
         calendar_id (str): Calendar ID. Defaults to 'primary'. Focus Time status events live on primary calendars, so use 'primary' or a user's primary calendar ID/email rather than a secondary calendar ID.
 
@@ -2493,6 +2542,7 @@ async def manage_focus_time(
             time_max=time_max,
             max_results=max_results,
             timezone=timezone,
+            page_token=page_token,
         )
     elif action_lower == "update":
         if not event_id:
