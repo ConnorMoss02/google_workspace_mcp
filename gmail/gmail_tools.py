@@ -78,6 +78,7 @@ from gmail.gmail_helpers import (
     _get_send_as_signature_html_for_tool,
     _http_error_status,
     _is_email_reaction,
+    _new_attachment_id,
     _retryable_result_ids,
     _signature_html_to_text,
     _wrap_signature_html,
@@ -1500,6 +1501,14 @@ def _prepare_gmail_message(
                     subtype=sub_type,
                     filename=safe_filename,
                 )
+                # Gmail web gives every attachment a unique X-Attachment-Id and a
+                # matching Content-ID. Without them, Gmail blanks both the first
+                # time it saves the draft itself, and a draft with several
+                # attachments then serves the wrong file on download.
+                attachment_id = _new_attachment_id()
+                attachment_part = message.get_payload()[-1]
+                attachment_part["Content-ID"] = f"<{attachment_id}>"
+                attachment_part["X-Attachment-Id"] = attachment_id
                 logger.info(
                     f"Attached file: filename_len={len(safe_filename)} "
                     f"({len(file_data)} bytes)"
