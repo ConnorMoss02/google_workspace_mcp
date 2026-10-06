@@ -95,7 +95,32 @@ def get_default_credentials_dir():
 DEFAULT_CREDENTIALS_DIR = get_default_credentials_dir()
 
 
-_HTTP_TIMEOUT_SECONDS = 30
+_GOOGLE_API_TIMEOUT_ENV = "WORKSPACE_MCP_GOOGLE_API_TIMEOUT_SECONDS"
+# googleapiclient's own default, which tool calls used before connection pooling.
+_DEFAULT_GOOGLE_API_TIMEOUT_SECONDS = 60
+
+
+def get_google_api_timeout() -> int:
+    """Parse WORKSPACE_MCP_GOOGLE_API_TIMEOUT_SECONDS, defaulting when unset.
+
+    Invalid values raise instead of falling back, so a misconfigured deployment
+    fails at startup.
+    """
+    raw = os.getenv(_GOOGLE_API_TIMEOUT_ENV, "").strip()
+    if not raw:
+        return _DEFAULT_GOOGLE_API_TIMEOUT_SECONDS
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value < 1:
+        raise ValueError(
+            f"{_GOOGLE_API_TIMEOUT_ENV} must be a positive integer, got {raw!r}"
+        )
+    return value
+
+
+_HTTP_TIMEOUT_SECONDS = get_google_api_timeout()
 # httplib2 does not retry a request whose send fails on a connection the server
 # already dropped, so only reuse connections that were active recently.
 _HTTP_MAX_IDLE_SECONDS = 60

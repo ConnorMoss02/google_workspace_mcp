@@ -11,12 +11,14 @@ from auth.google_auth import (
     _build_authorized_http,
     build_google_service,
     get_authenticated_google_service,
+    get_google_api_timeout,
     get_user_info,
     recycling,
 )
 
 
-def test_build_authorized_http_uses_explicit_timeout():
+def test_build_authorized_http_uses_configured_timeout(monkeypatch):
+    monkeypatch.setattr(google_auth, "_HTTP_TIMEOUT_SECONDS", 45)
     mock_credentials = MagicMock()
     mock_http = MagicMock()
     mock_http.redirect_codes = {300, 301, 302, 303, 307, 308}
@@ -33,10 +35,27 @@ def test_build_authorized_http_uses_explicit_timeout():
     ):
         result = _build_authorized_http(mock_credentials)
 
-    mock_http_cls.assert_called_once_with(timeout=30)
+    mock_http_cls.assert_called_once_with(timeout=45)
     mock_auth_http_cls.assert_called_once_with(mock_credentials, http=mock_http)
     assert mock_http.redirect_codes == {300, 301, 302, 303, 307}
     assert result is mock_authorized
+
+
+def test_google_api_timeout_defaults_to_60(monkeypatch):
+    monkeypatch.delenv("WORKSPACE_MCP_GOOGLE_API_TIMEOUT_SECONDS", raising=False)
+    assert get_google_api_timeout() == 60
+
+
+def test_google_api_timeout_follows_env(monkeypatch):
+    monkeypatch.setenv("WORKSPACE_MCP_GOOGLE_API_TIMEOUT_SECONDS", " 120 ")
+    assert get_google_api_timeout() == 120
+
+
+@pytest.mark.parametrize("raw", ["0", "-5", "abc", "1.5"])
+def test_google_api_timeout_rejects_invalid_values(monkeypatch, raw):
+    monkeypatch.setenv("WORKSPACE_MCP_GOOGLE_API_TIMEOUT_SECONDS", raw)
+    with pytest.raises(ValueError, match="WORKSPACE_MCP_GOOGLE_API_TIMEOUT_SECONDS"):
+        get_google_api_timeout()
 
 
 def test_recycled_connection_is_reused():
