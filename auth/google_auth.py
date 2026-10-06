@@ -96,8 +96,11 @@ DEFAULT_CREDENTIALS_DIR = get_default_credentials_dir()
 
 
 _GOOGLE_API_TIMEOUT_ENV = "WORKSPACE_MCP_GOOGLE_API_TIMEOUT_SECONDS"
-# googleapiclient's own default, which tool calls used before connection pooling.
+# googleapiclient's own default socket timeout.
 _DEFAULT_GOOGLE_API_TIMEOUT_SECONDS = 60
+# Token validation holds one of a few dedicated workers, so it is not stretched
+# by a timeout raised for long tool requests.
+_USER_INFO_TIMEOUT_SECONDS = 30
 
 
 def get_google_api_timeout() -> int:
@@ -120,7 +123,6 @@ def get_google_api_timeout() -> int:
     return value
 
 
-_HTTP_TIMEOUT_SECONDS = get_google_api_timeout()
 # httplib2 does not retry a request whose send fails on a connection the server
 # already dropped, so only reuse connections that were active recently.
 _HTTP_MAX_IDLE_SECONDS = 60
@@ -139,7 +141,7 @@ def _acquire_http() -> httplib2.Http:
             http.close()
     except IndexError:
         pass
-    http = httplib2.Http(timeout=_HTTP_TIMEOUT_SECONDS)
+    http = httplib2.Http(timeout=get_google_api_timeout())
     # Drive uses 308 Resume Incomplete with Range during resumable uploads, not a redirect.
     http.redirect_codes = http.redirect_codes - {308}
     return http
@@ -1335,7 +1337,10 @@ def get_user_info(
     try:
         # Using googleapiclient discovery to get user info
         # Requires 'google-api-python-client' library
-        service = build_google_service("oauth2", "v2", credentials)
+        authorized_http = google_auth_httplib2.AuthorizedHttp(
+            credentials, http=httplib2.Http(timeout=_USER_INFO_TIMEOUT_SECONDS)
+        )
+        service = build("oauth2", "v2", http=authorized_http)
         user_info = service.userinfo().get().execute()
         logger.info(f"Successfully fetched user info: {user_info.get('email')}")
         return user_info

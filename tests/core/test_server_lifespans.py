@@ -65,3 +65,12 @@ async def test_freeze_startup_heap_exempts_startup_objects_from_gc():
             assert gc.get_freeze_count() > 0
     finally:
         gc.unfreeze()
+
+
+@pytest.mark.asyncio
+async def test_lifespan_rejects_invalid_google_api_timeout(monkeypatch):
+    monkeypatch.setenv("WORKSPACE_MCP_GOOGLE_API_TIMEOUT_SECONDS", "abc")
+
+    with pytest.raises(ValueError, match="WORKSPACE_MCP_GOOGLE_API_TIMEOUT_SECONDS"):
+        async with _google_api_executor(FastMCP("probe")):
+            pass
