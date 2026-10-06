@@ -17,7 +17,12 @@ install_startup_warning_filters()
 from auth.auth_info_middleware import AuthInfoMiddleware
 from core.camel_case_middleware import CamelCaseArgumentsMiddleware
 from core.portable_schema_middleware import PortableSchemaMiddleware
-from auth.google_auth import handle_auth_callback, start_auth_flow, check_client_secrets
+from auth.google_auth import (
+    check_client_secrets,
+    get_google_api_timeout,
+    handle_auth_callback,
+    start_auth_flow,
+)
 from auth.gateway_identity import get_verified_gateway_principal
 from auth.mcp_session_middleware import MCPSessionMiddleware
 from auth.oauth21_session_store import set_auth_provider
@@ -342,8 +347,10 @@ async def _google_api_executor(server: FastMCP):
     """Size the executor that runs blocking Google API calls, when configured.
 
     Tools run Google HTTP requests through asyncio.to_thread, so this pool caps
-    how many requests one process has in flight across all users.
+    how many requests one process has in flight across all users. The request
+    timeout is validated here too, so an invalid one fails startup.
     """
+    get_google_api_timeout()
     workers = get_google_api_workers()
     if workers:
         asyncio.get_running_loop().set_default_executor(

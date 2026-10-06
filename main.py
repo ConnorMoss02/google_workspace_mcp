@@ -67,6 +67,9 @@ def _load_startup_dependencies():
     )
 
 
+dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+load_dotenv(dotenv_path=dotenv_path)
+
 (
     get_selected_backend,
     get_credential_store,
@@ -88,9 +91,6 @@ def _load_startup_dependencies():
     wrap_server_tool_method,
     filter_server_tools,
 ) = _load_startup_dependencies()
-
-dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
-load_dotenv(dotenv_path=dotenv_path)
 
 # Suppress googleapiclient discovery cache warning
 logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.ERROR)
