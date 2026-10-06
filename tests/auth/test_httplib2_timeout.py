@@ -11,12 +11,22 @@ from auth.google_auth import (
     _build_authorized_http,
     build_google_service,
     get_authenticated_google_service,
+    get_google_api_timeout,
     get_user_info,
     recycling,
 )
 
 
-def test_build_authorized_http_uses_explicit_timeout():
+_TIMEOUT_ENV = "WORKSPACE_MCP_GOOGLE_API_TIMEOUT_SECONDS"
+
+
+@pytest.mark.parametrize(("raw", "expected"), [(None, 60), ("45", 45)])
+def test_build_authorized_http_uses_configured_timeout(monkeypatch, raw, expected):
+    # Set after import: the timeout is read per connection, not at import.
+    if raw is None:
+        monkeypatch.delenv(_TIMEOUT_ENV, raising=False)
+    else:
+        monkeypatch.setenv(_TIMEOUT_ENV, raw)
     mock_credentials = MagicMock()
     mock_http = MagicMock()
     mock_http.redirect_codes = {300, 301, 302, 303, 307, 308}
@@ -33,10 +43,22 @@ def test_build_authorized_http_uses_explicit_timeout():
     ):
         result = _build_authorized_http(mock_credentials)
 
-    mock_http_cls.assert_called_once_with(timeout=30)
+    mock_http_cls.assert_called_once_with(timeout=expected)
     mock_auth_http_cls.assert_called_once_with(mock_credentials, http=mock_http)
     assert mock_http.redirect_codes == {300, 301, 302, 303, 307}
     assert result is mock_authorized
+
+
+def test_google_api_timeout_follows_env(monkeypatch):
+    monkeypatch.setenv(_TIMEOUT_ENV, " 120 ")
+    assert get_google_api_timeout() == 120
+
+
+@pytest.mark.parametrize("raw", ["0", "-5", "abc", "1.5"])
+def test_google_api_timeout_rejects_invalid_values(monkeypatch, raw):
+    monkeypatch.setenv(_TIMEOUT_ENV, raw)
+    with pytest.raises(ValueError, match=_TIMEOUT_ENV):
+        get_google_api_timeout()
 
 
 def test_recycled_connection_is_reused():
@@ -75,22 +97,20 @@ def test_failed_block_closes_instead_of_recycling():
     assert not google_auth._idle_http
 
 
-def test_get_user_info_builds_service_with_authorized_http(monkeypatch):
+def test_get_user_info_keeps_short_timeout(monkeypatch):
+    monkeypatch.setenv(_TIMEOUT_ENV, "300")
     credentials = SimpleNamespace(valid=True)
-    authorized_http = object()
     service = MagicMock()
     service.userinfo.return_value.get.return_value.execute.return_value = {
         "email": "user@example.com"
     }
-
-    monkeypatch.setattr(
-        "auth.google_auth._build_authorized_http", lambda creds: authorized_http
-    )
     build = MagicMock(return_value=service)
     monkeypatch.setattr("auth.google_auth.build", build)
 
     assert get_user_info(credentials) == {"email": "user@example.com"}
-    build.assert_called_once_with("oauth2", "v2", http=authorized_http)
+    authorized_http = build.call_args.kwargs["http"]
+    assert authorized_http.credentials is credentials
+    assert authorized_http.http.timeout == 30
 
 
 @pytest.mark.asyncio
