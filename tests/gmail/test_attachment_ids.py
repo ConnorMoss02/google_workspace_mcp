@@ -1,13 +1,4 @@
-"""Tests for the X-Attachment-Id / Content-ID headers on regular attachments.
-
-Gmail web gives every attachment both headers. A draft created through the
-API without them looks fine at first, but the first time Gmail saves the draft
-itself (the user types in it), every attachment ends up with an empty
-X-Attachment-Id and ``Content-ID: <>``. With several attachments, Gmail can no
-longer tell them apart: the file names still look right, but downloading one
-serves another attachment's bytes. Unique ids set at creation survive Gmail's
-save.
-"""
+"""Tests for the X-Attachment-Id / Content-ID headers on regular attachments."""
 
 import base64
 from email import message_from_bytes

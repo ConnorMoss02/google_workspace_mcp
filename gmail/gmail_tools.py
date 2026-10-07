@@ -1495,20 +1495,15 @@ def _prepare_gmail_message(
                     f"filename_len={len(safe_filename)} ({len(file_data)} bytes)"
                 )
             else:
+                attachment_id = _new_attachment_id()
                 message.add_attachment(
                     file_data,
                     maintype=main_type,
                     subtype=sub_type,
                     filename=safe_filename,
+                    cid=f"<{attachment_id}>",
+                    headers=[f"X-Attachment-Id: {attachment_id}"],
                 )
-                # Gmail web gives every attachment a unique X-Attachment-Id and a
-                # matching Content-ID. Without them, Gmail blanks both the first
-                # time it saves the draft itself, and a draft with several
-                # attachments then serves the wrong file on download.
-                attachment_id = _new_attachment_id()
-                attachment_part = message.get_payload()[-1]
-                attachment_part["Content-ID"] = f"<{attachment_id}>"
-                attachment_part["X-Attachment-Id"] = attachment_id
                 logger.info(
                     f"Attached file: filename_len={len(safe_filename)} "
                     f"({len(file_data)} bytes)"
