@@ -432,6 +432,35 @@ async def test_list_ooo_respects_time_max():
 
 
 @pytest.mark.asyncio
+async def test_list_ooo_full_page_reports_next_page_token():
+    mock_service = _create_mock_service()
+    mock_service.events().list().execute = Mock(
+        return_value={
+            "items": [
+                {
+                    "id": "ooo-page-1",
+                    "start": {"dateTime": "2026-04-06T09:00:00Z"},
+                    "end": {"dateTime": "2026-04-06T11:00:00Z"},
+                    "outOfOfficeProperties": {},
+                }
+            ],
+            "nextPageToken": "tok-next",
+        }
+    )
+
+    result = await _list_ooo_events_impl(
+        service=mock_service,
+        user_google_email="user@example.com",
+        time_min="2026-04-01T00:00:00Z",
+    )
+
+    assert "ooo-page-1" in result
+    assert result.endswith(
+        "Next page token: tok-next\nPagination time_min: 2026-04-01T00:00:00Z"
+    )
+
+
+@pytest.mark.asyncio
 async def test_list_ooo_empty_page_with_token_continues_to_next_page():
     """The API can return an empty page alongside a nextPageToken."""
     mock_service = _create_mock_service()

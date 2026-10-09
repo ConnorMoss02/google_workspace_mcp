@@ -168,6 +168,35 @@ async def test_list_focus_time_passes_event_type_filter_and_expands_recurring_in
 
 
 @pytest.mark.asyncio
+async def test_list_focus_time_full_page_reports_next_page_token():
+    mock_service = _create_mock_service()
+    mock_service.events().list().execute = Mock(
+        return_value={
+            "items": [
+                {
+                    "id": "focus-page-1",
+                    "start": {"dateTime": "2026-04-06T09:00:00Z"},
+                    "end": {"dateTime": "2026-04-06T11:00:00Z"},
+                    "focusTimeProperties": {},
+                }
+            ],
+            "nextPageToken": "tok-next",
+        }
+    )
+
+    result = await _list_focus_time_events_impl(
+        service=mock_service,
+        user_google_email="user@example.com",
+        time_min="2026-04-01T00:00:00Z",
+    )
+
+    assert "focus-page-1" in result
+    assert result.endswith(
+        "Next page token: tok-next\nPagination time_min: 2026-04-01T00:00:00Z"
+    )
+
+
+@pytest.mark.asyncio
 async def test_list_focus_time_empty_page_with_token_continues_to_next_page():
     """The API can return an empty page alongside a nextPageToken."""
     mock_service = _create_mock_service()
