@@ -1985,9 +1985,9 @@ async def manage_out_of_office(
     time_min: Optional[str] = None,
     time_max: Optional[str] = None,
     max_results: int = 10,
-    page_token: Optional[str] = None,
     event_id: Optional[str] = None,
     calendar_id: str = "primary",
+    page_token: Optional[str] = None,
 ) -> str:
     """
     Manages Out of Office events on Google Calendar. These special events auto-decline
@@ -2006,9 +2006,9 @@ async def manage_out_of_office(
         time_min (Optional[str]): For "list" action: start of time range. Defaults to current time. Recurring series are expanded into individual instances in the requested range.
         time_max (Optional[str]): For "list" action: end of time range.
         max_results (int): For "list" action: maximum events to return in one page. Defaults to 10.
-        page_token (Optional[str]): For "list" action: token for the next page, taken from a previous response. Also pass the response's Pagination time_min as time_min, even if omitted on the first call. Keep all other query parameters unchanged.
         event_id (Optional[str]): Event ID. Required for "update" and "delete" actions.
         calendar_id (str): Calendar ID. Defaults to 'primary'. Out of Office status events live on primary calendars, so use 'primary' or a user's primary calendar ID/email rather than a secondary calendar ID.
+        page_token (Optional[str]): For "list" action: token for the next page, taken from a previous response. Also pass the response's Pagination time_min as time_min, even if omitted on the first call. Keep all other query parameters unchanged.
 
     Returns:
         str: Confirmation message with event details, or a formatted list of OOO events.
@@ -2484,9 +2484,9 @@ async def manage_focus_time(
     time_min: Optional[str] = None,
     time_max: Optional[str] = None,
     max_results: int = 10,
-    page_token: Optional[str] = None,
     event_id: Optional[str] = None,
     calendar_id: str = "primary",
+    page_token: Optional[str] = None,
 ) -> str:
     """
     Manages Focus Time events on Google Calendar. These special events auto-decline
@@ -2508,9 +2508,9 @@ async def manage_focus_time(
         time_min (Optional[str]): For "list" action: start of time range. Defaults to current time. Recurring series are expanded into individual instances in the requested range.
         time_max (Optional[str]): For "list" action: end of time range.
         max_results (int): For "list" action: maximum events to return in one page. Defaults to 10.
-        page_token (Optional[str]): For "list" action: token for the next page, taken from a previous response. Also pass the response's Pagination time_min as time_min, even if omitted on the first call. Keep all other query parameters unchanged.
         event_id (Optional[str]): Event ID. Required for "update" and "delete" actions.
         calendar_id (str): Calendar ID. Defaults to 'primary'. Focus Time status events live on primary calendars, so use 'primary' or a user's primary calendar ID/email rather than a secondary calendar ID.
+        page_token (Optional[str]): For "list" action: token for the next page, taken from a previous response. Also pass the response's Pagination time_min as time_min, even if omitted on the first call. Keep all other query parameters unchanged.
 
     Returns:
         str: Confirmation message with event details, or a formatted list of Focus Time events.
